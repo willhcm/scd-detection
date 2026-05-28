@@ -1,0 +1,383 @@
+import numpy as np
+import rasterio as rio
+from pathlib import Path
+from rasterio.crs import CRS
+from rasterio.warp import Resampling
+from rasterio.transform import from_bounds
+from plotting import plot_stack
+from scipy.ndimage import uniform_filter 
+from scipy.ndimage import grey_opening
+from skimage.morphology import disk
+
+class DataSource():
+
+    def __init__(self, type: str, data, res, crs, bounds, width, height, transform, band_idx=None):
+        self.type      = type
+        self.data      = data
+        self.res       = res
+        self.crs       = crs
+        self.bounds    = bounds
+        self.width     = width
+        self.height    = height
+        self.transform = transform
+        self.band_idx  = band_idx
+
+    def reproject(self, target_crs, target_bounds, target_res):
+        minx, miny, maxx, maxy = target_bounds
+        width  = max(1, int((maxx - minx) / target_res))
+        height = max(1, int((maxy - miny) / target_res))
+
+        transform = from_bounds(minx, miny, maxx, maxy, width, height)
+        out = np.empty((height, width), dtype=self.data.dtype)
+
+        rio.warp.reproject(
+            source=self.data,
+            destination=out,
+            src_transform=self.transform,
+            src_crs=self.crs,
+            dst_transform=transform,
+            dst_crs=target_crs,
+            resampling=Resampling.nearest if self.type == 'LABELS' else Resampling.cubic,
+        )
+        return out
+
+    @classmethod
+    def from_tiff(cls, path, type, band_idx: int = 1):
+        """reads pixel data and metadata from a tiff.
+        Use band_idx for multi-band files (e.g. composite.tif).
+        """
+        with rio.open(path) as src:
+            data = src.read(band_idx)
+            return cls(
+                type=type,
+                data=data,
+                res=src.res[0],
+                crs=src.crs,
+                bounds=src.bounds,
+                width=src.width,
+                height=src.height,
+                transform=src.transform,
+                band_idx=band_idx,
+            )
+
+    @classmethod
+    def from_reference(cls, type, data, ref, band_idx: int = 1):
+        """makes datasource using spatial metadata from another DataSource."""
+        return cls(
+            type=type,
+            data=data,
+            res=ref.res,
+            crs=ref.crs,
+            bounds=ref.bounds,
+            width=ref.width,
+            height=ref.height,
+            transform=ref.transform,
+            band_idx=band_idx,
+        )
+
+
+class Tile():
+    def __init__(self, data: np.ndarray, layer_index: dict, size: int, utm_bounds: tuple, labels=None):
+        self.data        = data
+        self.layer_index = layer_index
+        self.labels      = labels
+        self.size        = size
+        self.utm_bounds  = utm_bounds
+
+        rgb = np.stack([
+            self.data[self.layer_index['R']],
+            self.data[self.layer_index['G']],
+            self.data[self.layer_index['B']],
+        ], axis=-1).astype(np.float32)
+        rgb_min, rgb_max = rgb.min(), rgb.max()
+        self.sat = (rgb - rgb_min) / (rgb_max - rgb_min + 1e-8)
+
+    def view(self, figsize=(8, 8)):
+        plot_stack(self.data, self.layer_index, figsize=figsize)
+
+    @property
+    def shape(self):
+        return self.data.shape
+
+    def save(self, out_path: str):
+        np.savez_compressed(out_path, image=self.data, labels=self.labels, layer_idx=self.layer_index)
+
+# DataStack DEM derivatives
+def compute_slope(dem):
+    """Returns np.gradient(input), not sobel slope!"""
+    return np.gradient(dem)
+
+
+def compute_tpi(dem: np.ndarray, radius: int):
+    """ Topographic position index"""
+    tpi  = dem - uniform_filter(dem, size=radius * 2 + 1)
+    return tpi
+
+
+def compute_dem_ground(dem: np.ndarray, radius: int = 15):
+    """Morphological opening — removes structures narrower than radius px."""
+    return grey_opening(dem, footprint=disk(radius)).astype(np.float32)
+
+
+def compute_dem_features(dem: np.ndarray):
+    return {
+        'DEM_SLOPE': compute_slope(dem),
+        'TPI_75': compute_tpi(dem, radius=75),
+        'TPI_150': compute_tpi(dem, radius=150),
+        'DEM_GROUND': compute_dem_ground(dem, radius=15),
+    }
+
+
+class DataStack():
+
+
+    def __init__(self, sources: dict, crs, res, bounds, labelled=True):
+        """
+        Holds references to DataSource objects only — no reprojection or
+        stacking happens at init time. All heavy work is deferred to
+        tile_and_export(), keeping RAM usage minimal.
+        """
+        self.sources = sources
+        self.target_crs = crs
+        self.target_res = res
+        self.target_bounds = bounds
+        self.labelled = labelled
+        self._rgb_percentiles = self._compute_rgb_percentiles()
+
+        self.layer_names = ['DEM', 'NDVI', 'R', 'G', 'B']
+        self.layer_names += ['DEM_SLOPE', 'TPI_75', 'TPI_150', 'DEM_GROUND']
+        if self.labelled:
+            self.layer_names.append('LABELS')
+
+        self.layer_index = {name: i for i, name in enumerate(self.layer_names)}
+
+    def tile_and_export(
+        self,
+        tile_size: int,
+        out_path: str,
+        empty_threshold: float = 0.2,
+        overlap: float = 0.15,
+    ):
+
+        Path(out_path).mkdir(parents=True, exist_ok=True)
+        tile_bounds_list = list(self._generate_tile_bounds(tile_size, overlap))
+
+        print(f"Exporting {len(tile_bounds_list)} tiles ")
+
+        exported = 0
+        skipped  = 0
+
+        for tile_bounds in tile_bounds_list:
+            name = self._tile_name(tile_bounds)
+            tile_data = self._build_tile_stack(tile_bounds)
+
+            if self._is_mostly_empty(tile_data, empty_threshold):
+                del tile_data
+                skipped += 1
+                continue
+
+            if self.labelled:
+                label_idx = self.layer_index['LABELS']
+                labels = tile_data[label_idx].astype(np.uint8)
+                scd_present = bool(labels.sum() != 0)
+                scd_pixel_fraction = float(labels.sum()) / float(labels.size)
+                confirmed = True
+
+                np.savez_compressed(
+                    str(Path(out_path) / name),
+                    image=tile_data,
+                    labels=labels,
+                    scd_present=np.array(scd_present),
+                    scd_pixel_fraction=np.array(scd_pixel_fraction),
+                    confirmed=np.array(confirmed),
+                    tile_bounds=np.array(tile_bounds),
+                    layer_names=np.array(self.layer_names),
+                )
+
+            else:
+
+                np.savez_compressed(
+                    str(Path(out_path) / name),
+                    image=tile_data,
+                    tile_bounds=np.array(tile_bounds),
+                    layer_names=np.array(self.layer_names),
+                )
+
+            del tile_data
+            exported += 1
+            if exported % 10 == 0:
+                print(f"  {exported} / {len(tile_bounds_list)} tiles saved...")
+
+        print(f"Done. {exported} tiles exported, {skipped} skipped (>{empty_threshold:.0%} empty).")
+
+    def view(self, figsize=(8, 8)):
+        stack, layer_index = self._build_full_stack()
+        plot_stack(stack, layer_index, figsize=figsize)
+        del stack
+
+    def view_region(self, cx: float, cy: float, size: int, figsize=(10, 10)):
+        minx, miny, maxx, maxy = self.target_bounds
+        half   = (size * self.target_res) / 2
+        bounds = (
+            max(cx - half, minx), max(cy - half, miny),
+            min(cx + half, maxx), min(cy + half, maxy),
+        )
+        print(f"Viewing UTM region: {bounds}")
+        tile_data = self._build_tile_stack(bounds)
+        plot_stack(tile_data, self.layer_index, figsize=figsize)
+        del tile_data
+
+    def _generate_tile_bounds(self, tile_size: int, overlap: float = 0.0,
+                               min_fraction: float = 0.5):
+        """
+        Generate tile bounding boxes across the full stack extent."""
+        minx, miny, maxx, maxy = self.target_bounds
+        tile_width = tile_size * self.target_res
+        stride = tile_width * (1.0 - overlap)
+        min_size = tile_width * min_fraction
+
+        y = miny
+        while y < maxy:
+            x = minx
+            while x < maxx:
+                x1 = x
+                y1 = y
+                x2 = min(x + tile_width, maxx)
+                y2 = min(y + tile_width, maxy)
+
+                # Drop boundary slivers that are too small to be useful (i.e. outside raster bounds)
+                if (x2 - x1) >= min_size and (y2 - y1) >= min_size:
+                    yield (x1, y1, x2, y2)
+
+                x += stride
+            y += stride
+
+    def _build_tile_stack(self, tile_bounds) -> np.ndarray:
+
+        def reproj(name):
+            return self.sources[name].reproject(
+                self.target_crs, tile_bounds, self.target_res
+            ).astype(np.float32)
+
+        dem = reproj('DEM')
+        r = reproj('R')
+        g = reproj('G')
+        b = reproj('B')
+        nir = reproj('NIR')
+
+        ndvi = np.where(nir + r == 0, 0, (nir - r) / (nir + r + 1e-8))
+
+        # Base layers
+        layers = [dem, ndvi, r, g, b]
+
+        # DEM-derived features
+        dem_features = compute_dem_features(dem)
+        for name in self._DEM_FEATURE_NAMES:
+            layers.append(dem_features[name])
+
+        if self.labelled:
+            layers.append(
+                self.sources['LABELS'].reproject(self.target_crs, tile_bounds, self.target_res)
+            )
+
+        return np.stack(layers, axis=0)
+
+    def _build_full_stack(self):
+        # very expensive for large region
+        return self._build_tile_stack(self.target_bounds), self.layer_index
+
+
+    def _empty_fraction(self, tile_data: np.ndarray) -> float:
+        optical_indices = [
+            self.layer_index[name]
+            for name in ('R', 'G', 'B', 'NDVI')
+            if name in self.layer_index
+        ]
+        dem_indices = [self.layer_index['DEM']]
+
+        optical_data = tile_data[optical_indices]
+        dem_data = tile_data[dem_indices]
+
+        optical_empty = np.all((optical_data == 0) | np.isnan(optical_data), axis=0)
+        dem_empty = np.all((dem_data == 0) | np.isnan(dem_data), axis=0)
+
+        return max(
+            float(optical_empty.sum()) / optical_empty.size,
+            float(dem_empty.sum()) / dem_empty.size,
+        )
+
+    def _is_mostly_empty(self, tile_data: np.ndarray, empty_threshold: float = 0.5):
+        return self._empty_fraction(tile_data) > empty_threshold
+
+    def _tile_name(self, tile_bounds: tuple):
+        minx, miny, maxx, maxy = tile_bounds
+        return f"tile_{int(minx)}_{int(miny)}_{int(maxx)}_{int(maxy)}"
+
+    def _compute_rgb_percentiles(self, sample_size=10_000):
+        """Per-band scene-wide percentiles for display normalisation."""
+        percentiles = {}
+        for band in ('R', 'G', 'B'):
+            data = self.sources[band].data.ravel().astype(np.float32)
+            step = max(1, len(data) // sample_size)
+            sample = data[::step]
+            percentiles[band] = (np.percentile(sample, 2), np.percentile(sample, 98))
+        return percentiles
+
+class Tile():
+
+    def __init__(self, centre, sources, crs, res):
+        self.centre = centre
+        self.sources = sources
+        self.crs = crs
+        self.res = res
+        self.bounds = self._build_bounds()
+
+    def _build_bounds(self):
+        cx, cy = self.centre
+        half = (512 / 2) * self.res
+
+        return rio.coords.BoundingBox(
+            left=cx - half,
+            bottom=cy - half,
+            right=cx + half,
+            top=cy + half
+        )
+    
+    def _single_tile_stack(self):
+
+        def reproj(name):
+            return self.sources[name].reproject(
+                self.target_crs, self.bounds, self.target_res
+            ).astype(np.float32)
+
+        dem = reproj('DEM')
+        r   = reproj('R')
+        g   = reproj('G')
+        b   = reproj('B')
+        nir = reproj('NIR')
+
+        ndvi = np.where(nir + r == 0, 0, (nir - r) / (nir + r + 1e-8))
+
+        # Base layers
+        layers = [dem, ndvi, r, g, b]
+
+        # DEM-derived features
+        dem_features = compute_dem_features(dem)
+        for name in self._DEM_FEATURE_NAMES:
+            layers.append(dem_features[name])
+
+        return np.stack(layers, axis=0)
+    
+    @property
+    def image(self):
+        return self._single_tile_stack(self)
+    
+    def export(self, out_path, name):
+        tile_data = self._single_tile_stack
+
+        np.savez_compressed(
+                    str(Path(out_path) / name),
+                    image=tile_data,
+                    tile_bounds=np.array(self.tile_bounds),
+                    layer_names=np.array(self.layer_names),
+                )
