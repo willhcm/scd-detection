@@ -5,7 +5,7 @@ from rasterio.crs import CRS
 from rasterio.warp import Resampling
 from rasterio.transform import from_bounds
 from plotting import plot_stack
-from scipy.ndimage import uniform_filter 
+from scipy.ndimage import uniform_filter, sobel
 from scipy.ndimage import grey_opening
 from skimage.morphology import disk
 
@@ -103,9 +103,11 @@ class Tile():
         np.savez_compressed(out_path, image=self.data, labels=self.labels, layer_idx=self.layer_index)
 
 # DataStack DEM derivatives
-def compute_slope(dem):
-    """Returns np.gradient(input), not sobel slope!"""
-    return np.gradient(dem)
+def compute_slope(dem: np.ndarray):
+    sx = sobel(dem, axis=0)
+    sy = sobel(dem, axis=1)
+    return np.sqrt(sx**2 + sy**2).astype(np.float32)
+
 
 
 def compute_tpi(dem: np.ndarray, radius: int):
@@ -115,27 +117,44 @@ def compute_tpi(dem: np.ndarray, radius: int):
 
 
 def compute_dem_ground(dem: np.ndarray, radius: int = 15):
-    """Morphological opening — removes structures narrower than radius px."""
+    """Change to median filter ? """
     return grey_opening(dem, footprint=disk(radius)).astype(np.float32)
 
 
+
+def multidirectional_hillshade(dem, cell_size=1.0, altitude_deg=45.0, z_factor=1.0):
+    azimuths = [0, 45, 90, 135, 180, 225, 270, 315]
+    alt = np.radians(altitude_deg)
+    dz_dx = np.gradient(dem * z_factor, cell_size, axis=1)
+    dz_dy = np.gradient(dem * z_factor, cell_size, axis=0)
+    slope  = np.arctan(np.sqrt(dz_dx**2 + dz_dy**2))
+    aspect = np.arctan2(-dz_dy, dz_dx)
+    hs = np.zeros_like(dem, dtype=np.float64)
+    for az_deg in azimuths:
+        az = np.radians(360 - az_deg + 90)
+        hs += np.cos(alt) * np.cos(slope) + np.sin(alt) * np.sin(slope) * np.cos(az - aspect)
+    return np.clip(hs / len(azimuths), 0, 1)
+
+
+
 def compute_dem_features(dem: np.ndarray):
+    """ Add a parameter for scale (changed radius etc)"""
     return {
         'DEM_SLOPE': compute_slope(dem),
         'TPI_75': compute_tpi(dem, radius=75),
         'TPI_150': compute_tpi(dem, radius=150),
         'DEM_GROUND': compute_dem_ground(dem, radius=15),
+        'HILLSHADE': multidirectional_hillshade(dem, 3)
     }
 
 
 class DataStack():
 
-
-    def __init__(self, sources: dict, crs, res, bounds, labelled=True):
+    def __init__(self, sources: dict, crs, res, bounds, labelled=True, features=None):
         """
         Holds references to DataSource objects only — no reprojection or
-        stacking happens at init time. All heavy work is deferred to
-        tile_and_export(), keeping RAM usage minimal.
+        stacking happens at init time.heavy work is deferred to
+        tile_and_export, keeping RAM usage low.
         """
         self.sources = sources
         self.target_crs = crs
@@ -145,7 +164,10 @@ class DataStack():
         self._rgb_percentiles = self._compute_rgb_percentiles()
 
         self.layer_names = ['DEM', 'NDVI', 'R', 'G', 'B']
-        self.layer_names += ['DEM_SLOPE', 'TPI_75', 'TPI_150', 'DEM_GROUND']
+        
+        self._DEM_FEATURE_NAMES = ['DEM_SLOPE', 'TPI_75', 'TPI_150', 'DEM_GROUND', 'HILLSHADE']
+        self.layer_names += self._DEM_FEATURE_NAMES
+
         if self.labelled:
             self.layer_names.append('LABELS')
 
@@ -322,6 +344,14 @@ class DataStack():
             sample = data[::step]
             percentiles[band] = (np.percentile(sample, 2), np.percentile(sample, 98))
         return percentiles
+    
+    def view_tile(self, index=0):
+        tile_generator = self._generate_tile_bounds(512)
+        tiles = list(tile_generator)
+        print(f"{len(tiles)} tiles available")
+        tile_bounds = tiles[index]
+        stack = self._build_tile_stack(tile_bounds)
+        plot_stack(stack, self.layer_index, labels=False)
 
 class Tile():
 

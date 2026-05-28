@@ -17,8 +17,10 @@ CMAPS = {
     'DEM_GROUND': 'terrain',
 }
 
-def plot_stack(stack, layer_index, figsize=(8, 8)):
-    no_plot     = {'R', 'G', 'B'}
+def plot_stack(stack, layer_index, figsize=(8, 8), labels=True):
+    no_plot = {'R', 'G', 'B'}
+    if not labels:
+        no_plot = {'R', 'G', 'B', 'LABELS'}
     plot_layers = [(name, i) for name, i in layer_index.items() if name not in no_plot]
 
     n     = len(plot_layers) + 1 # +1 for RGB
