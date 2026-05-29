@@ -137,18 +137,21 @@ def multidirectional_hillshade(dem, cell_size=1.0, altitude_deg=45.0, z_factor=1
 
 
 
-def compute_dem_features(dem: np.ndarray):
-    """ Add a parameter for scale (changed radius etc)"""
-    return {
-        'DEM_SLOPE': compute_slope(dem),
-        'TPI_75': compute_tpi(dem, radius=75),
-        'TPI_150': compute_tpi(dem, radius=150),
-        'DEM_GROUND': compute_dem_ground(dem, radius=15),
-        'HILLSHADE': multidirectional_hillshade(dem, 3)
-    }
-
-
 class DataStack():
+
+    # acts an attribute 
+    DEFAULT_LAYERS = [
+    'DEM',
+    'NDVI',
+    'R',
+    'G',
+    'B',
+    'DEM_SLOPE',
+    'TPI_75',
+    'TPI_150',
+    'DEM_GROUND',
+    'HILLSHADE',
+]
 
     def __init__(self, sources: dict, crs, res, bounds, labelled=True, features=None):
         """
@@ -163,15 +166,14 @@ class DataStack():
         self.labelled = labelled
         self._rgb_percentiles = self._compute_rgb_percentiles()
 
-        self.layer_names = ['DEM', 'NDVI', 'R', 'G', 'B']
-        
-        self._DEM_FEATURE_NAMES = ['DEM_SLOPE', 'TPI_75', 'TPI_150', 'DEM_GROUND', 'HILLSHADE']
-        self.layer_names += self._DEM_FEATURE_NAMES
+        self.layer_names = features or self.DEFAULT_LAYERS.copy()
 
         if self.labelled:
             self.layer_names.append('LABELS')
 
-        self.layer_index = {name: i for i, name in enumerate(self.layer_names)}
+        self.layer_index = {
+        name: i for i, name in enumerate(self.layer_names)
+    }
 
     def tile_and_export(
         self,
@@ -274,35 +276,67 @@ class DataStack():
                 x += stride
             y += stride
 
-    def _build_tile_stack(self, tile_bounds) -> np.ndarray:
-
+    def _build_tile_stack(self, tile_bounds):
+        # assistance from ChatGPT in making features selectable
         def reproj(name):
             return self.sources[name].reproject(
-                self.target_crs, tile_bounds, self.target_res
+                self.target_crs,
+                tile_bounds,
+                self.target_res
             ).astype(np.float32)
 
+        # Always compute core layers
         dem = reproj('DEM')
-        r = reproj('R')
-        g = reproj('G')
-        b = reproj('B')
+        r   = reproj('R')
+        g   = reproj('G')
+        b   = reproj('B')
         nir = reproj('NIR')
 
-        ndvi = np.where(nir + r == 0, 0, (nir - r) / (nir + r + 1e-8))
+        ndvi = np.where(
+            nir + r == 0,
+            0,
+            (nir - r) / (nir + r + 1e-8)
+        )
 
-        # Base layers
-        layers = [dem, ndvi, r, g, b]
+        # derived features (only comput if specified in __init__!)
+        dem_features = {}
 
-        # DEM-derived features
-        dem_features = compute_dem_features(dem)
-        for name in self._DEM_FEATURE_NAMES:
-            layers.append(dem_features[name])
+        if 'DEM_SLOPE' in self.layer_names:
+            dem_features['DEM_SLOPE'] = compute_slope(dem)
+
+        if 'TPI_75' in self.layer_names:
+            dem_features['TPI_75'] = compute_tpi(dem, radius=75)
+
+        if 'TPI_150' in self.layer_names:
+            dem_features['TPI_150'] = compute_tpi(dem, radius=150)
+
+        if 'DEM_GROUND' in self.layer_names:
+            dem_features['DEM_GROUND'] = compute_dem_ground(dem, radius=15)
+
+        if 'HILLSHADE' in self.layer_names:
+            dem_features['HILLSHADE'] = multidirectional_hillshade(dem, 3)
+
+        # master lookup
+        available = {
+            'DEM': dem,
+            'NDVI': ndvi,
+            'R': r,
+            'G': g,
+            'B': b,
+            **dem_features
+        }
 
         if self.labelled:
-            layers.append(
-                self.sources['LABELS'].reproject(self.target_crs, tile_bounds, self.target_res)
+            available['LABELS'] = self.sources['LABELS'].reproject(
+                self.target_crs,
+                tile_bounds,
+                self.target_res
             )
 
+        layers = [available[name] for name in self.layer_names]
+
         return np.stack(layers, axis=0)
+    
 
     def _build_full_stack(self):
         # very expensive for large region

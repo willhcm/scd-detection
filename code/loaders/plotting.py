@@ -18,12 +18,25 @@ CMAPS = {
 }
 
 def plot_stack(stack, layer_index, figsize=(8, 8), labels=True):
-    no_plot = {'R', 'G', 'B'}
+
+    # define empty set so plot_layers doens't break (lazy)
+    no_plot = set()
+
+    # checks if any of RGB are in layer_index (should only be all or none in theory but handles it)
+    if any(k in layer_index for k in ['R', 'G', 'B']):
+        # add all to set, shouldn't break if they aren't in layer_index either
+        is_rgb = True
+        no_plot.update(['R', 'G', 'B'])
+    else:
+        is_rgb = False
+
+    # checks labels too
     if not labels:
-        no_plot = {'R', 'G', 'B', 'LABELS'}
+        no_plot.add('LABELS')
+
     plot_layers = [(name, i) for name, i in layer_index.items() if name not in no_plot]
 
-    n     = len(plot_layers) + 1 # +1 for RGB
+    n = len(plot_layers) + 1 if is_rgb else len(plot_layers) # +1 for RGB
     ncols = 3
     nrows = math.ceil(n / ncols)
 
@@ -37,17 +50,18 @@ def plot_stack(stack, layer_index, figsize=(8, 8), labels=True):
         ax.axis('off')
         fig.colorbar(im, ax=ax, shrink=0.8)
 
+    if is_rgb:
     # RGB composite
-    rgb = np.stack([
-        stack[layer_index['R']],
-        stack[layer_index['G']],
-        stack[layer_index['B']],
-    ], axis=-1).astype(np.float32)
-    p2, p98 = np.percentile(rgb[..., 0], 2), np.percentile(rgb[..., 0], 98)
-    rgb_norm = np.clip((rgb - p2) / (p98 - p2 + 1e-8), 0, 1)
-    axes[len(plot_layers)].imshow(rgb_norm)
-    axes[len(plot_layers)].set_title('RGB')
-    axes[len(plot_layers)].axis('off')
+        rgb = np.stack([
+            stack[layer_index['R']],
+            stack[layer_index['G']],
+            stack[layer_index['B']],
+        ], axis=-1).astype(np.float32)
+        p2, p98 = np.percentile(rgb[..., 0], 2), np.percentile(rgb[..., 0], 98)
+        rgb_norm = np.clip((rgb - p2) / (p98 - p2 + 1e-8), 0, 1)
+        axes[len(plot_layers)].imshow(rgb_norm)
+        axes[len(plot_layers)].set_title('RGB')
+        axes[len(plot_layers)].axis('off')
 
     for j in range(n, len(axes)):
         axes[j].set_visible(False)
