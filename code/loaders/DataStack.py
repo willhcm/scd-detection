@@ -135,8 +135,6 @@ def multidirectional_hillshade(dem, cell_size=1.0, altitude_deg=45.0, z_factor=1
         hs += np.cos(alt) * np.cos(slope) + np.sin(alt) * np.sin(slope) * np.cos(az - aspect)
     return np.clip(hs / len(azimuths), 0, 1)
 
-
-
 class DataStack():
 
     # acts an attribute 
@@ -164,8 +162,6 @@ class DataStack():
         self.target_res = res
         self.target_bounds = bounds
         self.labelled = labelled
-        self._rgb_percentiles = self._compute_rgb_percentiles()
-
         self.layer_names = features or self.DEFAULT_LAYERS.copy()
 
         if self.labelled:
@@ -174,6 +170,15 @@ class DataStack():
         self.layer_index = {
         name: i for i, name in enumerate(self.layer_names)
     }
+        
+        if any(k in self.layer_index for k in ['R', 'G', 'B']):
+            # add all to set, shouldn't break if they aren't in layer_index either
+            self.is_rgb = True
+        
+        self.is_rgb = False
+
+        if self.is_rgb:
+            self._rgb_percentiles = self._compute_rgb_percentiles()
 
     def tile_and_export(
         self,
@@ -190,8 +195,10 @@ class DataStack():
 
         exported = 0
         skipped  = 0
-
+        i = 0
         for tile_bounds in tile_bounds_list:
+            i += 1
+            print(i)
             name = self._tile_name(tile_bounds)
             tile_data = self._build_tile_stack(tile_bounds)
 
@@ -285,46 +292,40 @@ class DataStack():
                 self.target_res
             ).astype(np.float32)
 
-        # Always compute core layers
+        # Always compute DEM
         dem = reproj('DEM')
-        r   = reproj('R')
-        g   = reproj('G')
-        b   = reproj('B')
-        nir = reproj('NIR')
 
-        ndvi = np.where(
-            nir + r == 0,
-            0,
-            (nir - r) / (nir + r + 1e-8)
-        )
+        available = {'DEM': dem}
 
-        # derived features (only comput if specified in __init__!)
-        dem_features = {}
+        if self.is_rgb:
+            r   = reproj('R')
+            g   = reproj('G')
+            b   = reproj('B')
+            nir = reproj('NIR')
 
+            ndvi = np.where(
+                nir + r == 0,
+                0,
+                (nir - r) / (nir + r + 1e-8)
+            )
+
+            available.update({'R': r, 'G': g, 'B': b, 'NIR': nir, 'NDVI': ndvi})
+
+        # derived features (only compute if specified in __init__!)
         if 'DEM_SLOPE' in self.layer_names:
-            dem_features['DEM_SLOPE'] = compute_slope(dem)
+            available['DEM_SLOPE'] = compute_slope(dem)
 
         if 'TPI_75' in self.layer_names:
-            dem_features['TPI_75'] = compute_tpi(dem, radius=75)
+            available['TPI_75'] = compute_tpi(dem, radius=75)
 
         if 'TPI_150' in self.layer_names:
-            dem_features['TPI_150'] = compute_tpi(dem, radius=150)
+            available['TPI_150'] = compute_tpi(dem, radius=150)
 
         if 'DEM_GROUND' in self.layer_names:
-            dem_features['DEM_GROUND'] = compute_dem_ground(dem, radius=15)
+            available['DEM_GROUND'] = compute_dem_ground(dem, radius=15)
 
         if 'HILLSHADE' in self.layer_names:
-            dem_features['HILLSHADE'] = multidirectional_hillshade(dem, 3)
-
-        # master lookup
-        available = {
-            'DEM': dem,
-            'NDVI': ndvi,
-            'R': r,
-            'G': g,
-            'B': b,
-            **dem_features
-        }
+            available['HILLSHADE'] = multidirectional_hillshade(dem, 3)
 
         if self.labelled:
             available['LABELS'] = self.sources['LABELS'].reproject(
@@ -342,25 +343,14 @@ class DataStack():
         # very expensive for large region
         return self._build_tile_stack(self.target_bounds), self.layer_index
 
-
-    def _empty_fraction(self, tile_data: np.ndarray) -> float:
-        optical_indices = [
-            self.layer_index[name]
-            for name in ('R', 'G', 'B', 'NDVI')
-            if name in self.layer_index
-        ]
-        dem_indices = [self.layer_index['DEM']]
-
-        optical_data = tile_data[optical_indices]
-        dem_data = tile_data[dem_indices]
-
-        optical_empty = np.all((optical_data == 0) | np.isnan(optical_data), axis=0)
-        dem_empty = np.all((dem_data == 0) | np.isnan(dem_data), axis=0)
-
-        return max(
-            float(optical_empty.sum()) / optical_empty.size,
-            float(dem_empty.sum()) / dem_empty.size,
-        )
+    def _empty_fraction(self, tile_data: np.ndarray):
+        fractions = []
+        for name in self.layer_names:
+            idx = self.layer_index[name]
+            layer = tile_data[idx]
+            empty = (layer == 0) | np.isnan(layer)
+            fractions.append(float(empty.sum()) / empty.size)
+        return max(fractions)
 
     def _is_mostly_empty(self, tile_data: np.ndarray, empty_threshold: float = 0.5):
         return self._empty_fraction(tile_data) > empty_threshold
