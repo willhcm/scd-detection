@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import math
 import numpy as np
 
+# CMAPS from chatGPT (couldnt be bothered to go through mpl docs to find cmaps which work well for each case.)
 CMAPS = {
     'DEM':        'terrain',
     'FIR':        'coolwarm',

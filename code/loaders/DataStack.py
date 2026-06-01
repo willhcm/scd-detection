@@ -12,19 +12,19 @@ from skimage.morphology import disk
 class DataSource():
 
     def __init__(self, type: str, data, res, crs, bounds, width, height, transform, band_idx=None):
-        self.type      = type
-        self.data      = data
-        self.res       = res
-        self.crs       = crs
-        self.bounds    = bounds
-        self.width     = width
-        self.height    = height
+        self.type = type
+        self.data = data
+        self.res = res
+        self.crs = crs
+        self.bounds = bounds
+        self.width = width
+        self.height = height
         self.transform = transform
-        self.band_idx  = band_idx
+        self.band_idx = band_idx
 
     def reproject(self, target_crs, target_bounds, target_res):
         minx, miny, maxx, maxy = target_bounds
-        width  = max(1, int((maxx - minx) / target_res))
+        width = max(1, int((maxx - minx) / target_res))
         height = max(1, int((maxy - miny) / target_res))
 
         transform = from_bounds(minx, miny, maxx, maxy, width, height)
@@ -76,38 +76,11 @@ class DataSource():
         )
 
 
-class Tile():
-    def __init__(self, data: np.ndarray, layer_index: dict, size: int, utm_bounds: tuple, labels=None):
-        self.data        = data
-        self.layer_index = layer_index
-        self.labels      = labels
-        self.size        = size
-        self.utm_bounds  = utm_bounds
-
-        rgb = np.stack([
-            self.data[self.layer_index['R']],
-            self.data[self.layer_index['G']],
-            self.data[self.layer_index['B']],
-        ], axis=-1).astype(np.float32)
-        rgb_min, rgb_max = rgb.min(), rgb.max()
-        self.sat = (rgb - rgb_min) / (rgb_max - rgb_min + 1e-8)
-
-    def view(self, figsize=(8, 8)):
-        plot_stack(self.data, self.layer_index, figsize=figsize)
-
-    @property
-    def shape(self):
-        return self.data.shape
-
-    def save(self, out_path: str):
-        np.savez_compressed(out_path, image=self.data, labels=self.labels, layer_idx=self.layer_index)
-
 # DataStack DEM derivatives
 def compute_slope(dem: np.ndarray):
     sx = sobel(dem, axis=0)
     sy = sobel(dem, axis=1)
     return np.sqrt(sx**2 + sy**2).astype(np.float32)
-
 
 
 def compute_tpi(dem: np.ndarray, radius: int):
@@ -127,13 +100,14 @@ def multidirectional_hillshade(dem, cell_size=1.0, altitude_deg=45.0, z_factor=1
     alt = np.radians(altitude_deg)
     dz_dx = np.gradient(dem * z_factor, cell_size, axis=1)
     dz_dy = np.gradient(dem * z_factor, cell_size, axis=0)
-    slope  = np.arctan(np.sqrt(dz_dx**2 + dz_dy**2))
+    slope = np.arctan(np.sqrt(dz_dx**2 + dz_dy**2))
     aspect = np.arctan2(-dz_dy, dz_dx)
     hs = np.zeros_like(dem, dtype=np.float64)
     for az_deg in azimuths:
         az = np.radians(360 - az_deg + 90)
         hs += np.cos(alt) * np.cos(slope) + np.sin(alt) * np.sin(slope) * np.cos(az - aspect)
     return np.clip(hs / len(azimuths), 0, 1)
+
 
 class DataStack():
 
@@ -162,6 +136,8 @@ class DataStack():
         self.target_res = res
         self.target_bounds = bounds
         self.labelled = labelled
+
+        # always for custom definition of what features to use - developed for hillshade model.
         self.layer_names = features or self.DEFAULT_LAYERS.copy()
 
         if self.labelled:
@@ -195,10 +171,8 @@ class DataStack():
 
         exported = 0
         skipped  = 0
-        i = 0
+
         for tile_bounds in tile_bounds_list:
-            i += 1
-            print(i)
             name = self._tile_name(tile_bounds)
             tile_data = self._build_tile_stack(tile_bounds)
 
@@ -278,13 +252,17 @@ class DataStack():
 
                 # Drop boundary slivers that are too small to be useful (i.e. outside raster bounds)
                 if (x2 - x1) >= min_size and (y2 - y1) >= min_size:
+                    # help from AI on this function (wanted to make it clean and efficient, and a generator seemed like the
+                    # best way of doing this)
                     yield (x1, y1, x2, y2)
 
                 x += stride
             y += stride
 
     def _build_tile_stack(self, tile_bounds):
-        # assistance from ChatGPT in making features selectable
+        # assistance from ChatGPT in making features selectable.
+        # this runs very slowly still, need to optimise for future usage on large areas.
+        # definetly dont need to redefine reproj every time ...
         def reproj(name):
             return self.sources[name].reproject(
                 self.target_crs,
@@ -344,6 +322,7 @@ class DataStack():
         return self._build_tile_stack(self.target_bounds), self.layer_index
 
     def _empty_fraction(self, tile_data: np.ndarray):
+        # changed from computing empty frac for optical and DEM to now being dynamic with layers used/selected.
         fractions = []
         for name in self.layer_names:
             idx = self.layer_index[name]
@@ -377,6 +356,8 @@ class DataStack():
         stack = self._build_tile_stack(tile_bounds)
         plot_stack(stack, self.layer_index, labels=False)
 
+
+# this is now broken since changing DataStack, need to fix soon.
 class Tile():
 
     def __init__(self, centre, sources, crs, res):
@@ -405,9 +386,9 @@ class Tile():
             ).astype(np.float32)
 
         dem = reproj('DEM')
-        r   = reproj('R')
-        g   = reproj('G')
-        b   = reproj('B')
+        r = reproj('R')
+        g = reproj('G')
+        b = reproj('B')
         nir = reproj('NIR')
 
         ndvi = np.where(nir + r == 0, 0, (nir - r) / (nir + r + 1e-8))
@@ -416,6 +397,7 @@ class Tile():
         layers = [dem, ndvi, r, g, b]
 
         # DEM-derived features
+        # broken
         dem_features = compute_dem_features(dem)
         for name in self._DEM_FEATURE_NAMES:
             layers.append(dem_features[name])
