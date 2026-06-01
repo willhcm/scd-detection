@@ -14,7 +14,6 @@ _BANDS_TO_LOAD = ['HILLSHADE']
 # Bands normalised per-tile (z-score)
 _PER_TILE_NORM = {'HILLSHADE'}
 
-
 class TestSCDDataset(Dataset):
 
     def __init__(self, paths, tile_size=512, skip_partial=True):
