@@ -8,6 +8,8 @@ from plotting import plot_stack
 from scipy.ndimage import uniform_filter, sobel
 from scipy.ndimage import grey_opening
 from skimage.morphology import disk
+import os
+os.environ["PROJ_DATA"] = "/opt/anaconda3/envs/IRP/share/proj"
 
 class DataSource():
 
@@ -94,7 +96,6 @@ def compute_dem_ground(dem: np.ndarray, radius: int = 15):
     return grey_opening(dem, footprint=disk(radius)).astype(np.float32)
 
 
-
 def multidirectional_hillshade(dem, cell_size=1.0, altitude_deg=45.0, z_factor=1.0):
     azimuths = [0, 45, 90, 135, 180, 225, 270, 315]
     alt = np.radians(altitude_deg)
@@ -107,7 +108,6 @@ def multidirectional_hillshade(dem, cell_size=1.0, altitude_deg=45.0, z_factor=1
         az = np.radians(360 - az_deg + 90)
         hs += np.cos(alt) * np.cos(slope) + np.sin(alt) * np.sin(slope) * np.cos(az - aspect)
     return np.clip(hs / len(azimuths), 0, 1)
-
 
 class DataStack():
 
@@ -305,6 +305,12 @@ class DataStack():
         if 'HILLSHADE' in self.layer_names:
             available['HILLSHADE'] = multidirectional_hillshade(dem, 3)
 
+        if 'FILL_DIFF' in self.layer_names:
+            available['FILL_DIFF'] = reproj('FILL_DIFF')
+
+        if 'FLOW_ACC' in self.layer_names:
+            available['FLOW_ACC'] = reproj('FLOW_ACC')
+
         if self.labelled:
             available['LABELS'] = self.sources['LABELS'].reproject(
                 self.target_crs,
@@ -324,7 +330,13 @@ class DataStack():
     def _empty_fraction(self, tile_data: np.ndarray):
         # changed from computing empty frac for optical and DEM to now being dynamic with layers used/selected.
         fractions = []
+
+        # labels often 0, so need to ignore here.
         for name in self.layer_names:
+            if name == 'LABELS':
+                continue
+
+
             idx = self.layer_index[name]
             layer = tile_data[idx]
             empty = (layer == 0) | np.isnan(layer)
