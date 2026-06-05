@@ -3,6 +3,8 @@ import geopandas as gpd
 import rasterio as rio
 import matplotlib.pyplot as plt
 
+# will add into dataloader as a class method in time, just simple for now. 
+
 def make_labels(SHAPE_PATH, OUTPUT_PATH, height, width, transform, profile):
 
     gdf = gpd.read_file(SHAPE_PATH)
@@ -12,9 +14,9 @@ def make_labels(SHAPE_PATH, OUTPUT_PATH, height, width, transform, profile):
         shapes=shapes,
         out_shape=(height, width),
         transform=transform,
-        fill=0,              # background
+        fill=0, 
         dtype="uint8",
-        all_touched=False    # set True if features are thin
+        all_touched=False
     )
 
     plt.imshow(label_raster)

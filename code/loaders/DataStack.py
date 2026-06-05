@@ -9,6 +9,7 @@ from scipy.ndimage import uniform_filter, sobel
 from scipy.ndimage import grey_opening
 from skimage.morphology import disk
 import os
+from label_loader import make_labels
 os.environ["PROJ_DATA"] = "/opt/anaconda3/envs/IRP/share/proj"
 
 class DataSource():
@@ -76,7 +77,25 @@ class DataSource():
             transform=ref.transform,
             band_idx=band_idx,
         )
+    
+    @classmethod
+    def labels_from_tiff(cls, path, out_path, height, width, transform, profile):
 
+        make_labels(path, out_path, height, width, transform, profile)
+
+        with rio.open(path) as src:
+            data = src.read(1)
+            return cls(
+                type='LABELS',
+                data=data,
+                res=src.res[0],
+                crs=src.crs,
+                bounds=src.bounds,
+                width=src.width,
+                height=src.height,
+                transform=src.transform,
+                band_idx=1,
+            )
 
 # DataStack DEM derivatives
 def compute_slope(dem: np.ndarray):
