@@ -14,6 +14,7 @@ import rasterio
 from rasterio.merge import merge
 from pathlib import Path
 import glob
+from scipy.ndimage import uniform_filter
 
 
 def plot_coverage(dirs: list):
@@ -121,6 +122,28 @@ def merge_tifs(dir_path: list, out_path: str, file_name: str):
     print("Saved")
         
 
+def tpi(dem, r):
+  """Topographic Position Index (with radius r)"""
+  neighbourhood_mean = uniform_filter(
+        dem,
+        size=r,
+        mode="nearest")
+
+  return dem - neighbourhood_mean
+
+def multidirectional_hillshade(dem, cell_size=1.0, altitude_deg=45.0, z_factor=1.0):
+    """Calculates muldirectional hillshade for a DEM array"""
+    azimuths = [0, 45, 90, 135, 180, 225, 270, 315]
+    alt = np.radians(altitude_deg)
+    dz_dx = np.gradient(dem * z_factor, cell_size, axis=1)
+    dz_dy = np.gradient(dem * z_factor, cell_size, axis=0)
+    slope = np.arctan(np.sqrt(dz_dx**2 + dz_dy**2))
+    aspect = np.arctan2(-dz_dy, dz_dx)
+    hs = np.zeros_like(dem, dtype=np.float64)
+    for az_deg in azimuths:
+        az = np.radians(360 - az_deg + 90)
+        hs += np.cos(alt) * np.cos(slope) + np.sin(alt) * np.sin(slope) * np.cos(az - aspect)
+    return np.clip(hs / len(azimuths), 0, 1)
 
 
 
