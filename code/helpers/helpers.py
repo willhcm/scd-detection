@@ -60,6 +60,7 @@ def merge_tifs(dir_path: list, out_path: str, file_name: str):
     add docstring
     '''
 
+    # needs to be a posix path or will fail on mkdir (string has no method .mkdir)
     if not isinstance(out_path, PosixPath):
         try:
             out_path = Path(out_path)
@@ -71,9 +72,12 @@ def merge_tifs(dir_path: list, out_path: str, file_name: str):
 
     out_path.mkdir(parents=True, exist_ok=True)
 
+    # clean no data value.
     NODATA = -9999
     clipped_paths = []
 
+    # AI assistance with tempfile functionality, this was new to me but efficient when opening
+    # many large DEM tiles.
     with tempfile.TemporaryDirectory() as tmpdir:
         for f in dem_files:
             out_name = Path(f).stem + '_clean.tif'
