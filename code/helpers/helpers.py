@@ -54,72 +54,73 @@ def plot_coverage(dirs: list):
     gpd.GeoSeries([gaps]).plot(ax=ax, color='red', alpha=0.5, label='gaps')
     ax.legend()
     plt.show()
+    
+def get_tifs(dir_path):
+    file_names = set()
+    paths = []
+    duplicates = []
+
+    files = glob.glob(dir_path)
+    for p in files:
+        with rasterio.open(p) as src:
+            file_ = src.name[-17:-4]
+            if file_ not in file_names:
+                file_names.update([file_])
+                paths.append(p)
+            else:
+                duplicates.append(p)
+
+    return paths, file_names, duplicates
 
 
-def merge_tifs(dir_path: list, out_path: str, file_name: str):
-    '''
-    add docstring
-    '''
-
-    # needs to be a posix path or will fail on mkdir (string has no method .mkdir)
-    if not isinstance(out_path, PosixPath):
-        try:
-            out_path = Path(out_path)
-        except:
-            raise TypeError('out_path must be type PosixPath or string!')
-
-
-    dem_files = glob.glob(dir_path)
-
-    out_path.mkdir(parents=True, exist_ok=True)
-
-    # clean no data value.
+# assistance with tempfile from ChatGPT / claude
+def merge_dems(dem_paths):
     NODATA = -9999
-    clipped_paths = []
+    cleaned_srcs = []
 
-    # AI assistance with tempfile functionality, this was new to me but efficient when opening
-    # many large DEM tiles.
     with tempfile.TemporaryDirectory() as tmpdir:
-        for f in dem_files:
-            out_name = Path(f).stem + '_clean.tif'
+        for f_path in dem_paths:
+            out_name = Path(f_path).stem + '_clean.tif'
             out_path = os.path.join(tmpdir, out_name)
 
-            with rasterio.open(f) as src:
+            with rasterio.open(f_path) as src:
+                # float64 not needed
                 data = src.read(1).astype('float32')
 
                 if src.nodata is not None:
                     data[data == src.nodata] = NODATA
-
-                data[data < -9000] = NODATA
+                data[data < -9000] = NODATA 
 
                 profile = src.profile.copy()
-                profile.update(dtype='float32', nodata=NODATA)
+                profile.update(dtype='float32', nodata=NODATA, count=1)
 
                 with rasterio.open(out_path, 'w', **profile) as dst:
                     dst.write(data, 1)
 
-            clipped_paths.append(out_path)
+            # Open the cleaned temporary file for merging
+            cleaned_srcs.append(rasterio.open(out_path))
 
-        # Merge
-        datasets = [rasterio.open(p) for p in clipped_paths]
-        mosaic, transform = merge(datasets, nodata=NODATA, method='max')
+        # merge
+        mosaic, transform = merge(cleaned_srcs, nodata=NODATA, method='max')
 
-        profile = datasets[0].profile
-        profile.update(
-            width=mosaic.shape[2],
-            height=mosaic.shape[1],
-            transform=transform,
-            dtype='float32',
-            nodata=NODATA,
-        )
+        # Update metadata based on the merged mosaic
+        # arbitrary choosing first source and editing to match new merged DEM
+        meta = cleaned_srcs[0].profile.copy()
+        meta.update({
+            "height": mosaic.shape[1],
+            "width": mosaic.shape[2],
+            "transform": transform,
+            "count": 1,
+            "dtype": 'float32',
+            "nodata": NODATA
+        })
 
-        with rasterio.open(out_path / file_name, 'w', **profile) as dst:
-            dst.write(mosaic)
+        # Close all opened cleaned source datasets
+        for src in cleaned_srcs:
+            src.close()
 
-        for ds in datasets:
-            ds.close()
-
-    print("Saved")
+    # Return the merged data and the updated metadata
+    return mosaic[0], meta
         
 
 def tpi(dem, r):
