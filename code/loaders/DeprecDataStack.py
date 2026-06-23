@@ -12,6 +12,9 @@ import os
 from label_loader import make_labels
 os.environ["PROJ_DATA"] = "/opt/anaconda3/envs/IRP/share/proj"
 
+# redundant, keeping for reference for time being.
+
+
 class DataSource():
 
     def __init__(self, type: str, data, res, crs, bounds, width, height, transform, band_idx=None):
@@ -175,6 +178,8 @@ class DataStack():
         if self.is_rgb:
             self._rgb_percentiles = self._compute_rgb_percentiles()
 
+
+    # change to only export certain tile types (e.g. has labels and centered i.e. without edge artefact?)
     def tile_and_export(
         self,
         tile_size: int,
@@ -386,65 +391,3 @@ class DataStack():
         tile_bounds = tiles[index]
         stack = self._build_tile_stack(tile_bounds)
         plot_stack(stack, self.layer_index, labels=False)
-
-
-# this is now broken since changing DataStack, need to fix soon.
-class Tile():
-
-    def __init__(self, centre, sources, crs, res):
-        self.centre = centre
-        self.sources = sources
-        self.crs = crs
-        self.res = res
-        self.bounds = self._build_bounds()
-
-    def _build_bounds(self):
-        cx, cy = self.centre
-        half = (512 / 2) * self.res
-
-        return rio.coords.BoundingBox(
-            left=cx - half,
-            bottom=cy - half,
-            right=cx + half,
-            top=cy + half
-        )
-    
-    def _single_tile_stack(self):
-
-        def reproj(name):
-            return self.sources[name].reproject(
-                self.target_crs, self.bounds, self.target_res
-            ).astype(np.float32)
-
-        dem = reproj('DEM')
-        r = reproj('R')
-        g = reproj('G')
-        b = reproj('B')
-        nir = reproj('NIR')
-
-        ndvi = np.where(nir + r == 0, 0, (nir - r) / (nir + r + 1e-8))
-
-        # Base layers
-        layers = [dem, ndvi, r, g, b]
-
-        # DEM-derived features
-        # broken
-        dem_features = compute_dem_features(dem)
-        for name in self._DEM_FEATURE_NAMES:
-            layers.append(dem_features[name])
-
-        return np.stack(layers, axis=0)
-    
-    @property
-    def image(self):
-        return self._single_tile_stack(self)
-    
-    def export(self, out_path, name):
-        tile_data = self._single_tile_stack
-
-        np.savez_compressed(
-                    str(Path(out_path) / name),
-                    image=tile_data,
-                    tile_bounds=np.array(self.tile_bounds),
-                    layer_names=np.array(self.layer_names),
-                )
