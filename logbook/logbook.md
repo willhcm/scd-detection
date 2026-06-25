@@ -25,6 +25,9 @@ Aim:
 - Pre-field trip meeting to discuss logistics, field target selection and specific objectives of fieldwork.
 - Discuss my desk study findings in this regard.
 
-Notes:
+## Field Trip 
+
+- 7 Day field trip.
+- Considerable discussion on project direction informed by soil gas campaign results.
 
 
