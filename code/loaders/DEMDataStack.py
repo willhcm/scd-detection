@@ -7,7 +7,7 @@ from rasterio.crs import CRS
 from rasterio.transform import from_bounds, array_bounds
 from rasterio.features import rasterize
 from shapely.geometry import box
-from scipy.ndimage import uniform_filter, sobel
+from scipy.ndimage import uniform_filter, sobel, median_filter, gaussian_filter, laplace
 from skimage.morphology import disk
 from scipy.ndimage import label as scipy_label
 from pyproj import Transformer
@@ -15,6 +15,10 @@ from sklearn.cluster import DBSCAN
 
 # Claude help with ShapeLabels Class, code formatting and adaption of pre-exising DataStack.py to centre tiles around positive labels
 # and cluster adjacent scds into one tile to avoid tile repetition.
+# FEATURE REGISTRY idea also aided by GenAI. 
+
+OVERLAP_SIGMA_MULTIPLIER = 3
+
 
 class ShapeLabels:
     """
@@ -156,10 +160,12 @@ class DataSource:
             band_idx=band_idx,
         )
 
+
 def _slope(a):
     sx = sobel(a['DEM'], axis=0)
     sy = sobel(a['DEM'], axis=1)
     return np.sqrt(sx**2 + sy**2).astype(np.float32)
+
 
 def _hillshade(cell_size=1.0, altitude_deg=45.0, z_factor=1.0):
     def _fn(a):
@@ -176,10 +182,27 @@ def _hillshade(cell_size=1.0, altitude_deg=45.0, z_factor=1.0):
         return np.clip(hs / 8, 0, 1).astype(np.float32)
     return _fn
 
-FEATURE_REGISTRY: dict[str, dict] = {
-    'DEM_SLOPE':  {'deps': ['DEM'], 'fn': _slope},
-    'HILLSHADE':  {'deps': ['DEM'], 'fn': _hillshade(cell_size=1.0)},
-}
+
+def _make_rr(sigma_px):
+    """Residual relief: local DEM minus gaussian-smoothed regional trend."""
+    def _fn(a):
+        smoothed = gaussian_filter(a['DEM'].astype(np.float64), sigma=sigma_px)
+        return (a['DEM'] - smoothed).astype(np.float32)
+    return _fn
+
+
+def _laplace(a):
+    return laplace(a['DEM'])
+
+
+def _build_feature_registry(sigma_px):
+    return {
+        'DEM_SLOPE': {'deps': ['DEM'],        'fn': _slope},
+        'HILLSHADE': {'deps': ['DEM'],        'fn': _hillshade(cell_size=1.0)},
+        'RR':        {'deps': ['DEM'],        'fn': _make_rr(sigma_px)},
+        'LAPLACE': {'deps': ['DEM'],        'fn': _laplace},
+    }
+
 
 def _centred_bounds(cx, cy, tile_size, res, global_bounds):
     half = (tile_size * res) / 2
@@ -189,21 +212,25 @@ def _centred_bounds(cx, cy, tile_size, res, global_bounds):
         min(cx + half, maxx), min(cy + half, maxy),
     )
 
+
 class DataStack:
 
     DEFAULT_LAYERS = [
         'DEM',
         'DEM_SLOPE',
         'HILLSHADE',
-        'DEM_GROUND'
+        'RR',
+        'LAPLACE'
     ]
 
     def __init__(self, dem_source: DataSource, label_shp: ShapeLabels = None,
-                 features=None):
-        
+                 features=None, sigma_px: int = 10):
+
         self.dem_source = dem_source
         self.label_shp = label_shp
         self.labelled = label_shp is not None
+        self.sigma_px = sigma_px
+        self.feature_registry = _build_feature_registry(sigma_px)
 
         self.target_crs = dem_source.crs
         self.target_res = dem_source.res
@@ -227,20 +254,19 @@ class DataStack:
         empty_threshold: float = 0.2,
         negative: float = 0.15,
         seed: int = 42,
+        cluster = True
     ):
         Path(out_path).mkdir(parents=True, exist_ok=True)
         rng = np.random.default_rng(seed)
 
         if self.labelled:
-            self._export_labelled(tile_size, out_path, empty_threshold, negative, rng)
+            self._export_labelled(tile_size, out_path, empty_threshold, negative, rng, cluster=cluster)
         else:
             self._export_unlabelled(tile_size, out_path, empty_threshold)
 
-
     def _cluster_centroids(self, tile_size, small_area_fraction=0.1):
-        """
-        Small objects are clustered with DBSCAN so tight groups don't produce near-identical tiles.
-        """
+        
+        # small objects are clustered with DBSCAN so tight groups don't produce near-identical tiles.
 
         gdf = self.label_shp.gdf.to_crs(self.target_crs)
         tile_width = tile_size * self.target_res
@@ -249,10 +275,8 @@ class DataStack:
         large = gdf[gdf.geometry.area >= size_threshold]
         small = gdf[gdf.geometry.area <  size_threshold]
 
-        # large objects, one centroid each, no clustering
         large_centroids = [(g.centroid.x, g.centroid.y) for g in large.geometry if g is not None]
 
-        # small objects, cluster by proximity, one tile per cluster
         clustered_small = []
         if len(small) > 0:
             coords = np.array([(g.centroid.x, g.centroid.y) for g in small.geometry if g is not None])
@@ -263,14 +287,17 @@ class DataStack:
 
         return large_centroids + clustered_small
 
-    def _export_labelled(self, tile_size, out_path, empty_threshold, negative, rng):
-        raw_centroids = self.label_shp.centroids(self.target_crs)
-        centroids = self._cluster_centroids(tile_size)
-        print(f"Found {len(raw_centroids)} positive tiles")
+    def _export_labelled(self, tile_size, out_path, empty_threshold, negative, rng, cluster=True):
+        centroids = self.label_shp.centroids(self.target_crs)
+        print(f"Found {len(centroids)} positive tiles")
 
+        # somtimes i want to have repeated, translated tiles for training.
+        if cluster:
+            centroids = self._cluster_centroids(tile_size)
+        
         exported_pos = skipped = 0
         for cx, cy in centroids:
-            bounds = _centred_bounds(cx, cy, tile_size, self.target_res, self.target_bounds)
+            bounds = _centred_bounds(cx, cy, tile_size, self.target_res, self.dem_source.bounds)
             tile = self._build_tile(bounds, tile_size)
 
             if tile is None or self._is_mostly_empty(tile, empty_threshold):
@@ -285,7 +312,6 @@ class DataStack:
                 continue
 
             edge_threshold = 0.2
-
             top    = label[0, :].sum()  / label.shape[1]
             bottom = label[-1, :].sum() / label.shape[1]
             left   = label[:, 0].sum()  / label.shape[0]
@@ -295,12 +321,10 @@ class DataStack:
                 skipped += 1
                 continue
 
-        
             self._save_tile(tile, bounds, out_path, self._tile_name(bounds, 'pos'))
             del tile
             exported_pos += 1
 
-        # negatives
         n_neg = max(1, int(exported_pos * negative))
         print(f"Sampling {n_neg} negative tiles")
 
@@ -321,10 +345,7 @@ class DataStack:
             del tile
             exported_neg += 1
 
-        print(
-            f"Done. {exported_pos} positive, {exported_neg} negative,"
-        )
-
+        print(f"Done. {exported_pos} positive, {exported_neg} negative.")
 
     def _export_unlabelled(self, tile_size, out_path, empty_threshold):
         bounds_list = list(self._grid_tile_bounds(tile_size))
@@ -344,24 +365,45 @@ class DataStack:
 
         print(f"Done. {exported} exported, {skipped} skipped.")
 
-
     def _build_tile(self, tile_bounds, tile_size):
-        def reproj(src):
-            arr = src.reproject(self.target_crs, tile_bounds, self.target_res).astype(np.float32)
-            return self._pad(arr, tile_size)
+        # Expand bounds by overlap so gaussian filter has context beyond tile edges
+        # avoids edge artefacts
+        overlap_px = OVERLAP_SIGMA_MULTIPLIER * self.sigma_px
+        overlap_m  = overlap_px * self.target_res
+        padded_size = tile_size + 2 * overlap_px
 
-        dem = reproj(self.dem_source)
-        if dem.size == 0:
+        minx, miny, maxx, maxy = tile_bounds
+        padded_bounds = (
+            minx - overlap_m, miny - overlap_m,
+            maxx + overlap_m, maxy + overlap_m,
+        )
+
+        dem_padded = self.dem_source.reproject(
+            self.target_crs, padded_bounds, self.target_res
+        ).astype(np.float32)
+        dem_padded = self._pad(dem_padded, padded_size)
+
+        if dem_padded.size == 0:
             return None
 
-        available = {'DEM': dem}
-
+        # Compute all features on the padded array
+        available = {'DEM': dem_padded}
         for name in self.layer_names:
             if name in available or name == 'LABELS':
                 continue
-            if name not in FEATURE_REGISTRY:
-                raise ValueError(f"Unknown feature")
-            available[name] = FEATURE_REGISTRY[name]['fn'](available)
+            if name not in self.feature_registry:
+                raise ValueError(f"Unknown feature: {name}")
+            available[name] = self.feature_registry[name]['fn'](available)
+
+        # Crop back to tile_size 
+        s, e = overlap_px, overlap_px + tile_size
+        available = {k: v[s:e, s:e] for k, v in available.items()}
+
+        # Replace padded DEM with a clean unpadded read for the actual DEM channel
+        dem_clean = self.dem_source.reproject(
+            self.target_crs, tile_bounds, self.target_res
+        ).astype(np.float32)
+        available['DEM'] = self._pad(dem_clean, tile_size)
 
         if self.labelled:
             available['LABELS'] = self.label_shp.rasterise(
@@ -378,7 +420,6 @@ class DataStack:
         out = np.zeros((tile_size, tile_size), dtype=arr.dtype)
         out[:min(h, tile_size), :min(w, tile_size)] = arr[:tile_size, :tile_size]
         return out
-
 
     def _save_tile(self, tile_data, tile_bounds, out_path, name):
         kwargs = dict(
@@ -398,7 +439,7 @@ class DataStack:
         np.savez_compressed(str(Path(out_path) / name), **kwargs)
 
     def _random_tile_bounds(self, tile_size, rng):
-        minx, miny, maxx, maxy = self.target_bounds
+        minx, miny, maxx, maxy = self.dem_source.bounds
         half = (tile_size * self.target_res) / 2
         cx = rng.uniform(minx + half, maxx - half)
         cy = rng.uniform(miny + half, maxy - half)
