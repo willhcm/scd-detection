@@ -272,13 +272,19 @@ class DataStack:
         negative: float = 0.15,
         seed: int = 42,
         cluster = True,
-        jitter_margin_frac=0.20
+        jitter_margin_frac=0.20,
+        edge_tolerance = 0.1
     ):
         Path(out_path).mkdir(parents=True, exist_ok=True)
         rng = np.random.default_rng(seed)
 
         if self.labelled:
-            self._export_labelled(tile_size, out_path, empty_threshold, negative, rng, cluster=cluster, jitter_margin_frac=jitter_margin_frac)
+            self._export_labelled(tile_size, out_path,
+                                  empty_threshold,
+                                  negative, rng,
+                                  cluster=cluster,
+                                  jitter_margin_frac=jitter_margin_frac,
+                                  edge_tolerance=edge_tolerance)
         else:
             self._export_unlabelled(tile_size, out_path, empty_threshold)
 
@@ -305,7 +311,7 @@ class DataStack:
 
         return large_centroids + clustered_small
 
-    def _export_labelled(self, tile_size, out_path, empty_threshold, negative, rng, cluster=True, jitter_margin_frac=0.20):
+    def _export_labelled(self, tile_size, out_path, empty_threshold, negative, rng, cluster=True, jitter_margin_frac=0.20, edge_tolerance=0.1):
         centroids = self.label_shp.centroids(self.target_crs)
         print(f"Found {len(centroids)} positive tiles")
 
@@ -346,13 +352,12 @@ class DataStack:
                 skipped += 1
                 continue
 
-            edge_threshold = 0.2
             top    = label[0, :].sum()  / label.shape[1]
             bottom = label[-1, :].sum() / label.shape[1]
             left   = label[:, 0].sum()  / label.shape[0]
             right  = label[:, -1].sum() / label.shape[0]
 
-            if max(top, bottom, left, right) > edge_threshold:
+            if max(top, bottom, left, right) > edge_tolerance:
                 skipped += 1
                 continue
 
