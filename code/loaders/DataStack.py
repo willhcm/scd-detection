@@ -159,6 +159,23 @@ class DataSource:
             transform=ref.transform,
             band_idx=band_idx,
         )
+    
+
+def _jitter_centroid(cx, cy, tile_size, res, rng, max_offset_frac=0.20):
+    """
+    Randomly move the tile centre around the SCD centroid.
+
+    max_offset_frac is a fraction of HALF the tile width.
+    e.g. 0.2 on a 512 px tile = ±51 px.
+    """
+
+    half = (tile_size * res) / 2
+    max_offset = half * max_offset_frac
+
+    dx = rng.uniform(-max_offset, max_offset)
+    dy = rng.uniform(-max_offset, max_offset)
+
+    return cx + dx, cy + dy
 
 
 def _slope(a):
@@ -254,13 +271,14 @@ class DataStack:
         empty_threshold: float = 0.2,
         negative: float = 0.15,
         seed: int = 42,
-        cluster = True
+        cluster = True,
+        jitter_margin_frac=0.20
     ):
         Path(out_path).mkdir(parents=True, exist_ok=True)
         rng = np.random.default_rng(seed)
 
         if self.labelled:
-            self._export_labelled(tile_size, out_path, empty_threshold, negative, rng, cluster=cluster)
+            self._export_labelled(tile_size, out_path, empty_threshold, negative, rng, cluster=cluster, jitter_margin_frac=jitter_margin_frac)
         else:
             self._export_unlabelled(tile_size, out_path, empty_threshold)
 
@@ -287,7 +305,7 @@ class DataStack:
 
         return large_centroids + clustered_small
 
-    def _export_labelled(self, tile_size, out_path, empty_threshold, negative, rng, cluster=True):
+    def _export_labelled(self, tile_size, out_path, empty_threshold, negative, rng, cluster=True, jitter_margin_frac=0.20):
         centroids = self.label_shp.centroids(self.target_crs)
         print(f"Found {len(centroids)} positive tiles")
 
@@ -296,8 +314,25 @@ class DataStack:
             centroids = self._cluster_centroids(tile_size)
         
         exported_pos = skipped = 0
+
+        # small jitter (left right, up down) to un-centre SCDs
+        # makes for multi-head UNET to not just predict SCDs in the centre of the tile (shortcutting)
         for cx, cy in centroids:
-            bounds = _centred_bounds(cx, cy, tile_size, self.target_res, self.dem_source.bounds)
+            cx, cy = _jitter_centroid(
+                        cx,
+                        cy,
+                        tile_size,
+                        self.target_res,
+                        rng,
+                        max_offset_frac=jitter_margin_frac
+                    )
+            bounds = _centred_bounds(cx,
+                                    cy,
+                                    tile_size,
+                                    self.target_res,
+                                    self.dem_source.bounds
+                                )
+            
             tile = self._build_tile(bounds, tile_size)
 
             if tile is None or self._is_mostly_empty(tile, empty_threshold):
@@ -443,7 +478,7 @@ class DataStack:
         half = (tile_size * self.target_res) / 2
         cx = rng.uniform(minx + half, maxx - half)
         cy = rng.uniform(miny + half, maxy - half)
-        return _centred_bounds(cx, cy, tile_size, self.target_res, self.target_bounds)
+        return _centred_bounds(cx, cy, tile_size, self.target_res, self.dem_source.bounds)
 
     def _grid_tile_bounds(self, tile_size, min_fraction=0.5):
         minx, miny, maxx, maxy = self.target_bounds
