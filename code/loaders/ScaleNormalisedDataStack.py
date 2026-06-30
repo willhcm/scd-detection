@@ -392,6 +392,7 @@ class ScaleNormalisedDataStack:
         while exported_neg < n_neg and attempts < n_neg * 100:
             attempts += 1
             if positive_resolutions:
+                # chooses a similar resolution for negative to whats already been chosen for positive tiles
                 res = float(rng.choice(positive_resolutions))
             else:
                 res = float(self.dem_source.res)
@@ -582,7 +583,7 @@ class ScaleNormalisedDataStack:
         return np.stack([available[name] for name in self.layer_names], axis=0).astype(np.float32)
 
 
-    def _save_tile(self, tile_data, req, out_path, name):
+    def _save_tile(self, tile_data, req, out_path, name, Positive=True):
         
         # no longer need to worry about self.labelled, as this will not be used to produce deployment tiles!
         # that will be done using image pyramid.
@@ -595,7 +596,8 @@ class ScaleNormalisedDataStack:
                             target_fraction=np.array(req["target_fraction"], dtype=np.float32),
                             labels=labels,
                             scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)),
-                            object_ids = np.array(req['object_ids']))
+                            object_ids = np.array(req['object_ids']),
+                            positive=np.array(Positive))
 
 
     # how much of the tile edges have label=1
