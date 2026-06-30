@@ -30,4 +30,9 @@ Aim:
 - 7 Day field trip.
 - Considerable discussion on project direction informed by soil gas campaign results.
 
+## Direction Notes:
+
+- Experimenting with UNET/CentreNet in colab, using dataset created from DataStack. At inference, the model will need to see both 50m SCDs and km-scale SCDs, this scale problem is not solvable with an FPN or aggressive ASPP.
+- Instead, I've read a few papers on SNIP (Scale Normalised Image Pyramids), and think this is a really good way to learn object detection irrespective of scale. At inference, a Image pyramid is used. This will be slow, but accuracy will be unrivalled from other methods from what I've seen so far in my experimentation.
+
 
