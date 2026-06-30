@@ -31,6 +31,7 @@ class ShapeLabels:
     def centroids(self, target_crs):
         """(cx, cy) in target_crs for each polygon centroid."""
         gdf = self.gdf.to_crs(target_crs)
+        # return centroid ([x, y], area (m2))
         return [(geom.centroid.x, geom.centroid.y)
                 for geom in gdf.geometry if geom is not None]
 
