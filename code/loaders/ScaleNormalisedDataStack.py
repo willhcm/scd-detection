@@ -560,9 +560,11 @@ class ScaleNormalisedDataStack:
         available = {"DEM": dem_padded}
         registry = _build_feature_registry(sigma_px=sigma_px, cell_size=target_res)
 
-        
+        # build available from registry
         for name in self.layer_names:
-            available[name] = registry[name]["fn"](available)
+            if name in available or name == 'LABELS':
+                continue
+            available[name] = registry[name]['fn'](available)
 
         s = overlap_px
         e = overlap_px + tile_size
