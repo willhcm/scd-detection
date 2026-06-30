@@ -583,7 +583,7 @@ class ScaleNormalisedDataStack:
         return np.stack([available[name] for name in self.layer_names], axis=0).astype(np.float32)
 
 
-    def _save_tile(self, tile_data, req, out_path, name, Positive=True):
+    def _save_tile(self, tile_data, req, out_path, name, positive=True):
         
         # no longer need to worry about self.labelled, as this will not be used to produce deployment tiles!
         # that will be done using image pyramid.
@@ -593,11 +593,10 @@ class ScaleNormalisedDataStack:
                             image=self._tile_name, 
                             layer_names=np.array(self.layer_names),
                             res=np.array(req["res"], dtype=np.float32),
-                            target_fraction=np.array(req["target_fraction"], dtype=np.float32),
                             labels=labels,
                             scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)),
                             object_ids = np.array(req['object_ids']),
-                            positive=np.array(Positive))
+                            positive=np.array(positive))
 
 
     # how much of the tile edges have label=1
