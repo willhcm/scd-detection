@@ -263,32 +263,30 @@ class UnionFind:
 # but that didnt fit the new SNIP approach I am attempting (and confidenw with), so i got assistance from ChatGPT on how to 
 # pivot to variable res, which required some architectural change as opposed to just changing functions which i have done before.
 class ScaleNormalisedDataStack:
-    """
-    Exports labelled SCD tiles with variable metres/pixel so labelled objects
-    occupy a target fraction of the fixed pixel tile.
+    """ SNIP DataStack V1 
 
-    The model sees roughly consistent object pixel sizes; .npz metadata stores
-    the actual per-tile resolution and physical extent.
-    """
+    No longer needs any unlabelled functionality. inference done using image pyramid.
+    Just for scale normalised (and when appropriate, grouped) tile exportation.
 
+    """
     DEFAULT_LAYERS = ["DEM", "DEM_SLOPE", "HILLSHADE", "RR", "LAPLACE"]
 
+    # keep features functionality if want to change anything for experimentation.
     def __init__(self, dem_source: DataSource, label_shp: ShapeLabels = None,
-                 features=None, rr_sigma_m: float = None):
+                 features=None):
         self.dem_source = dem_source
         self.label_shp = label_shp
-        self.labelled = label_shp is not None
         self.target_crs = dem_source.crs
         self.dem_bounds = dem_source.bounds
 
         # Residual-relief smoothing scale is physical, not pixels, so it stays
         # comparable across variable-resolution tiles.
-        self.rr_sigma_m = float(rr_sigma_m) if rr_sigma_m is not None else 10.0 * dem_source.res
+        # needs to depend on res
+        # manual is probably overkill, just automatic 10 * res. can change later if needed.
+        self.rr_sigma_m = 10.0 * dem_source.res
 
         self.layer_names = features or self.DEFAULT_LAYERS.copy()
-        if self.labelled:
-            self.layer_names = [l for l in self.layer_names if l != "LABELS"]
-            self.layer_names.append("LABELS")
+        self.layer_names.append("LABELS")
         self.layer_index = {name: i for i, name in enumerate(self.layer_names)}
 
     def tile_and_export(
@@ -576,8 +574,7 @@ class ScaleNormalisedDataStack:
         ).astype(np.float32)
         available["DEM"] = dem_clean
 
-        if self.labelled:
-            available["LABELS"] = self.label_shp.rasterise(tile_bounds, tile_size, self.target_crs)
+        available["LABELS"] = self.label_shp.rasterise(tile_bounds, tile_size, self.target_crs)
 
         return np.stack([available[name] for name in self.layer_names], axis=0).astype(np.float32)
 
