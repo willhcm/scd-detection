@@ -274,6 +274,7 @@ class ScaleNormalisedDataStack:
     # keep features functionality if want to change anything for experimentation.
     def __init__(self, dem_source: DataSource, label_shp: ShapeLabels = None,
                  features=None):
+        
         self.dem_source = dem_source
         self.label_shp = label_shp
         self.target_crs = dem_source.crs
