@@ -187,10 +187,14 @@ def _hillshade(cell_size=1.0, altitude_deg=45.0, z_factor=1.0):
     return _fn
 
 # residual relief
-def _make_rr(sigma_px):
+def _make_rr(rr_sigma_m, tile_res):
+    sigma_px = max(1.0, rr_sigma_m / tile_res)
+
     def _fn(a):
-        smoothed = gaussian_filter(a["DEM"].astype(np.float64), sigma=sigma_px)
-        return (a["DEM"] - smoothed).astype(np.float32)
+        dem = a["DEM"].astype(np.float64)
+        smooth = gaussian_filter(dem, sigma=sigma_px)
+        return (dem - smooth).astype(np.float32)
+
     return _fn
 
 # curvature
@@ -198,11 +202,11 @@ def _laplace(a):
     return laplace(a["DEM"]).astype(np.float32)
 
 
-def _build_feature_registry(sigma_px, cell_size):
+def _build_feature_registry(sigma_px, cell_size, tile_res):
     return {
         "DEM_SLOPE": {"deps": ["DEM"], "fn": _slope},
         "HILLSHADE": {"deps": ["DEM"], "fn": _hillshade(cell_size=cell_size)},
-        "RR": {"deps": ["DEM"], "fn": _make_rr(sigma_px)},
+        "RR": {"deps": ["DEM"], "fn": _make_rr(sigma_px, tile_res)},
         "LAPLACE": {"deps": ["DEM"], "fn": _laplace},
     }
 
@@ -221,13 +225,11 @@ def _combined_bounds(objs):
     b = np.array([o["bounds"] for o in objs], dtype=float)
     return (b[:, 0].min(), b[:, 1].min(), b[:, 2].max(), b[:, 3].max())
 
-
 def _area_weighted_centroid(objs):
     areas = np.array([max(o["area"], 1e-6) for o in objs], dtype=float)
     xs = np.array([o["cx"] for o in objs], dtype=float)
     ys = np.array([o["cy"] for o in objs], dtype=float)
     return float((xs * areas).sum() / areas.sum()), float((ys * areas).sum() / areas.sum())
-
 
 def _group_diameter(objs):
     minx, miny, maxx, maxy = _combined_bounds(objs)
@@ -257,6 +259,38 @@ class UnionFind:
             r = self.find(i)
             out.setdefault(r, []).append(i)
         return list(out.values())
+    
+# smart tile bounds moving to avoid edge artefacts. 
+# moves up, down, left, right depending on where the edge artefacts are.
+def _edge_shift(label, tile_bounds, res, shift_px=32):
+
+    minx, miny, maxx, maxy = tile_bounds
+
+    dx = 0.0
+    dy = 0.0
+
+    # top
+    if label[0].any():
+        dy += shift_px * res
+
+    # bottom
+    if label[-1].any():
+        dy -= shift_px * res
+
+    # left
+    if label[:, 0].any():
+        dx += shift_px * res
+
+    # right
+    if label[:, -1].any():
+        dx -= shift_px * res
+
+    return (
+        minx + dx,
+        miny + dy,
+        maxx + dx,
+        maxy + dy,
+    )
 
 
 # GenAI assistance with 'request' format. The previous datastack.py was purpose-built for fixed res exportation,
@@ -294,7 +328,7 @@ class ScaleNormalisedDataStack:
         self,
         tile_size: int,
         out_path: str,
-        obj_frac_range=(0.20, 0.30),
+        obj_frac_range=(0.3, 0.55),
         negative: float = 0.15,
         seed: int = 42,
         empty_threshold: float = 0.2,
@@ -345,45 +379,91 @@ class ScaleNormalisedDataStack:
         exported_pos = skipped = 0
         positive_resolutions = []
 
+        MAX_ATTEMPTS = 10
+
         for group_id, group in enumerate(groups):
-            req = self._make_scale_normalised_request(
-                group=group,
-                tile_size=tile_size,
-                rng=rng,
-                obj_frac_range=obj_frac_range,
-                min_res=min_res,
-                max_res=max_res,
-                jitter_frac=jitter_frac,
-                skip_edge_tiles=skip_edge_tiles,
-            )
 
-            # bad request (edge tile)
-            if req is None:
+            success = False
+
+            # initial request
+            req = None
+
+            for attempt in range(MAX_ATTEMPTS):
+
+                if req is None:
+
+
+                    req = self._make_scale_normalised_request(
+                        group=group,
+                        tile_size=tile_size,
+                        rng=rng,
+                        obj_frac_range=obj_frac_range,
+                        min_res=min_res,
+                        max_res=max_res,
+                        jitter_frac=jitter_frac, # edge_shift is now solving same problem, so remove dynamic jf.
+                        skip_edge_tiles=skip_edge_tiles,
+                    )
+
+                    if req is None:
+                        continue
+
+                tile = self._build_tile(
+                    req["bounds"],
+                    tile_size,
+                    req["res"],
+                    skip_edge_tiles=skip_edge_tiles,
+                )
+
+                if tile is None or self._is_mostly_empty(tile, empty_threshold):
+                    req = None
+                    if tile is not None:
+                        del tile
+                    continue
+
+                label = tile[self.layer_index["LABELS"]]
+
+                coverage = float(label.sum()) / label.size
+
+                if coverage <= 0 or coverage > 0.6:
+                    req = None
+                    del tile
+                    continue
+
+                edge_frac = self._edge_label_fraction(label)
+
+                if edge_frac <= edge_tolerance:
+
+                    name = self._tile_name(req["bounds"], f"pos_g{group_id:04d}")
+
+                    self._save_tile(
+                        tile,
+                        req,
+                        out_path,
+                        name,
+                        positive=True,
+                    )
+
+                    exported_pos += 1
+                    positive_resolutions.append(req["res"])
+
+                    success = True
+                    del tile
+                    break
+
+                # Failed edge tolerance
+                # Move tile away from offending edge and try again
+
+                req["bounds"] = _edge_shift(
+                    label,
+                    req["bounds"],
+                    req["res"],
+                    shift_px=32,
+                )
+
+                del tile
+
+            if not success:
                 skipped += 1
-                continue
-
-            
-            tile = self._build_tile(req["bounds"], tile_size, req["res"], skip_edge_tiles=skip_edge_tiles)
-
-            if tile is None or self._is_mostly_empty(tile, empty_threshold):
-                skipped += 1
-                continue
-
-            label = tile[self.layer_index["LABELS"]]
-            coverage = float(label.sum()) / float(label.size)
-            if coverage <= 0 or coverage > 0.6:
-                skipped += 1
-                continue
-
-            if self._edge_label_fraction(label) > edge_tolerance:
-                skipped += 1
-                continue
-
-            name = self._tile_name(req["bounds"], f"pos_g{group_id:04d}")
-            self._save_tile(tile, req, out_path, name, positive=True)
-            positive_resolutions.append(req["res"])
-            exported_pos += 1
-            del tile
 
         n_neg = max(1, int(exported_pos * negative))
         print(f"Sampling {n_neg} negative tiles")
@@ -532,6 +612,7 @@ class ScaleNormalisedDataStack:
             "bounds": bounds,
             "res": float(res),
             "tile_size": int(tile_size),
+            "object_ids": np.array(np.nan)
         }
 
     def _build_tile(self, tile_bounds, tile_size, target_res, skip_edge_tiles=True):
@@ -559,7 +640,7 @@ class ScaleNormalisedDataStack:
         ).astype(np.float32)
 
         available = {"DEM": dem_padded}
-        registry = _build_feature_registry(sigma_px=sigma_px, cell_size=target_res)
+        registry = _build_feature_registry(sigma_px=sigma_px, cell_size=target_res, tile_res=target_res)
 
         # build available from registry
         for name in self.layer_names:
@@ -590,7 +671,7 @@ class ScaleNormalisedDataStack:
         labels = tile_data[self.layer_index["LABELS"]].astype(np.uint8)
 
         np.savez_compressed(str(Path(out_path) / name),
-                            image=self._tile_name, 
+                            image=tile_data, 
                             layer_names=np.array(self.layer_names),
                             res=np.array(req["res"], dtype=np.float32),
                             labels=labels,
