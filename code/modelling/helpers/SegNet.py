@@ -7,6 +7,10 @@ from scipy.ndimage import label, maximum_filter
 from datetime import datetime
 from scipy.ndimage import label, center_of_mass
 
+
+# similar to all previous models used, just written up formally to import into colab with ease for cross-validation
+# model comparison
+
 class DoubleConv(nn.Module):
     """Back bone UNET. 2 * (Conv2d + Batch + Relu)"""
 
@@ -280,6 +284,7 @@ class CombinedLoss(nn.Module):
 def SN_train(model, criterion, train_loader, val_loader):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
+    model = model.to(device)
     EPOCHS = 100
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
     optimizer,
@@ -410,4 +415,4 @@ def SN_train(model, criterion, train_loader, val_loader):
                 f"Obj_R {iou_recall:.4f} | "
                 f"Obj_F1 {iou_f1:.4f} | ")
         
-    return vls, tls, ious, accs, precisions, recalls, f1s, obj_precisions, obj_recalls, obj_f1s, model
+    return vls, tls, obj_precisions, obj_recalls, obj_f1s, model

@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import numpy as np
 from scipy.ndimage import label, maximum_filter
 from datetime import datetime
+from scipy.ndimage import label, center_of_mass
 
 # recently developed in colab, changed from simple UNET used previously but with two extra prediction heads, different labels.
 
@@ -155,10 +156,46 @@ class SCDCentreNet(nn.Module):
         return centre, radius, offset
     
 
+# get derived targets for CentreNet
+def build_centernet_targets(mask, min_sigma=4, max_sigma=30, base_weight=1.0):
+    labeled, n = label(mask > 0)
+    h, w = mask.shape
+
+    heatmap = np.zeros((h, w), dtype=np.float32)
+    weights = np.ones((h, w), dtype=np.float32) * base_weight
+    offset  = np.zeros((2, h, w), dtype=np.float32)
+    radius  = np.zeros((h, w), dtype=np.float32)
+    obj_mask = np.zeros((h, w), dtype=np.float32)
+
+    yy, xx = np.indices((h, w))
+
+    for i in range(1, n + 1):
+        obj = labeled == i
+        cy, cx = center_of_mass(obj)
+        cy_r, cx_r = round(cy), round(cx)
+
+        area = obj.sum()
+        sigma = np.clip(np.sqrt(area) * 0.15, min_sigma, max_sigma)
+
+        g = np.exp(-((yy - cy_r) ** 2 + (xx - cx_r) ** 2) / (2 * sigma ** 2))
+        heatmap = np.maximum(heatmap, g)
+
+        blob_weight = 20 
+        weights[cy_r, cx_r] = blob_weight # only single centroid pixel weighted up. 
+        
+        offset[0, cy_r, cx_r] = cy - cy_r
+        offset[1, cy_r, cx_r] = cx - cx_r
+        radius[cy_r, cx_r] = np.sqrt(area / np.pi)
+        obj_mask[cy_r, cx_r] = 1.0
+
+    return heatmap, weights, offset, radius, obj_mask
+    
+
 
 # GenAI assistance in creating this function, whcih takes in the predicted heatmap and compares the centroid predictions tp
 # ground truth mask, if the predicted centroid is in the ground truth mask, it qualifies as a true positive.
 # only one prediction allowed per ground truth object
+
 
 def centroid_heatmap_metrics(
     pred_heatmap,
@@ -240,7 +277,6 @@ class CentreNetLoss(nn.Module):
 
         if weight is not None:
             pos_loss = pos_loss * weight
-            neg_loss = neg_loss * weight
 
         num_pos = pos_inds.sum(dim=(1, 2, 3))
         num_neg = neg_inds.sum(dim=(1, 2, 3)).clamp(min=1)
@@ -263,8 +299,9 @@ class CentreNetLoss(nn.Module):
 # training function for CentreNet
 
 def CN_train(model, criterion, train_loader, val_loader):
-
+    
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model=model.to(device)
     nn.init.constant_(model.centroid_head.bias, -2.19)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
     EPOCHS = 100
@@ -277,7 +314,7 @@ def CN_train(model, criterion, train_loader, val_loader):
     vls, tls, precisions, recalls, f1s = [], [], [], [], []
 
     best_f1 = -1 
-    
+
     for epoch in range(EPOCHS):
         model.train()
         train_loss = 0.0
