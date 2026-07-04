@@ -3,10 +3,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from scipy.ndimage import label, maximum_filter
+from scipy.ndimage import label, maximum_filter, gaussian_filter
 from datetime import datetime
 from scipy.ndimage import label, center_of_mass
+import random
+from torch.utils.data import TensorDataset, DataLoader, Dataset
 
+_BANDS_TO_LOAD = ['DEM', 'DEM_SLOPE', 'RR', 'LAPLACE']
 
 # similar to all previous models used, just written up formally to import into colab with ease for cross-validation
 # model comparison
@@ -416,3 +419,113 @@ def SN_train(model, criterion, train_loader, val_loader):
                 f"Obj_F1 {iou_f1:.4f} | ")
         
     return vls, tls, obj_precisions, obj_recalls, obj_f1s, model
+
+
+class SegNetDataset(Dataset):
+
+    def __init__(
+        self,
+        all_paths,
+        norm_stats: dict = None,
+        tile_size: int = 512,
+        skip_partial: bool = True,
+        augment: bool = False,
+    ):
+        self.augment = augment
+        self.stats = norm_stats
+        self.paths = []
+
+        skipped_shape = 0
+        skipped_missing = 0
+
+        for p in sorted(all_paths):
+            d = np.load(p, allow_pickle=True)
+
+            if skip_partial:
+                _, h, w = d["image"].shape
+                if h != tile_size or w != tile_size:
+                    skipped_shape += 1
+                    continue
+
+            layer_names = list(d["layer_names"]) if "layer_names" in d else []
+            if any(b not in layer_names for b in _BANDS_TO_LOAD):
+                skipped_missing += 1
+                continue
+
+            self.paths.append(p)
+
+        print(f"Found {len(self.paths)} tiles "
+              f"({skipped_shape} partial, {skipped_missing} missing bands skipped)")
+
+    def __len__(self):
+        return len(self.paths)
+
+    def _augment(self, image, mask):
+        # flips and rotations
+        image = image.copy()
+        mask = mask.copy()
+
+        if random.random() > 0.5:
+            image = np.flip(image, axis=2).copy()
+            mask = np.flip(mask,  axis=1).copy()
+        if random.random() > 0.5:
+            image = np.flip(image, axis=1).copy()
+            mask = np.flip(mask,  axis=0).copy()
+        k = random.randint(0, 3)
+        if k:
+            image = np.rot90(image, k, axes=(1, 2)).copy()
+            mask = np.rot90(mask,  k).copy()
+
+        return image.copy(), mask.copy()
+
+    def _normalize(self, image, stats):
+        local = {name: i for i, name in enumerate(_BANDS_TO_LOAD)}
+
+        for name, i in local.items():
+            band = image[i]
+            s = stats.get(name) if stats else None
+
+            if name == 'DEM' and s:
+                band = np.clip(band, s['p1'], s['p99'])
+                image[i] = (band - s['mean']) / (s['std'] + 1e-6)
+            elif name == 'DEM_SLOPE' and s:
+                band = np.log1p(np.clip(band, s['p1'], s['p99']))
+                image[i] = (band - s['mean']) / (s['std'] + 1e-6)
+            elif name == 'RR' and s:
+                band = np.clip(band, s['p1'], s['p99'])
+                image[i] = (band - s['mean']) / (s['std'] + 1e-6)
+            elif name == 'LAPLACE' and s:
+                band = np.clip(band, s['p1'], s['p99'])
+                image[i] = (band - s['mean']) / (s['std'] + 1e-6)
+
+        return image
+
+    def _resolve_stats(self, path):
+        # if stats is a nested dict (multi-region), look up by parent dir
+        first_val = next(iter(self.stats.values()))
+        if isinstance(first_val, dict) and 'mean' not in first_val:
+            region = Path(path).parent.name
+            # Russia2 tiles fall back to Russia stats
+            return self.stats.get(region, self.stats.get('Russia'))
+        return self.stats  # flat single-region dict, use as-is
+
+    def __getitem__(self, idx):
+        path = self.paths[idx]
+        d = np.load(path, allow_pickle=True)
+
+        layer_names  = list(d["layer_names"])
+        li = {name: i for i, name in enumerate(layer_names)}
+        band_indices = [li[b] for b in _BANDS_TO_LOAD]
+
+        image = d["image"][band_indices].astype(np.float32)
+        mask = d["labels"].astype(np.float32)
+
+        if self.augment:
+            image, mask = self._augment(image, mask)
+
+        image = self._normalize(image, self._resolve_stats(path))
+
+        return (
+            torch.from_numpy(np.ascontiguousarray(image)),
+            torch.from_numpy(np.ascontiguousarray(mask)),
+        )

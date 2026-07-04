@@ -3,11 +3,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from scipy.ndimage import label, maximum_filter
+from scipy.ndimage import label, maximum_filter, gaussian_filter, zoom
 from datetime import datetime
 from scipy.ndimage import label, center_of_mass
+import random
+from torch.utils.data import TensorDataset, DataLoader, Dataset
 
 # recently developed in colab, changed from simple UNET used previously but with two extra prediction heads, different labels.
+
+_BANDS_TO_LOAD = ['DEM', 'DEM_SLOPE', 'RR', 'LAPLACE']
 
 class DoubleConv(nn.Module):
     """Back bone UNET. 2 * (Conv2d + Batch + Relu)"""
@@ -256,7 +260,7 @@ def centroid_heatmap_metrics(
 
 # custom loss function (adapted from CentreNet paper (reference to come), with assistance from Claude Sonnet 5)
 
-class CentreNetLoss(nn.Module):
+class CenterNetLoss(nn.Module):
     def __init__(self, alpha=2.0, beta=4.0, eps=1e-6, off_weight=1.0, rad_weight=0.1):
         super().__init__()
         self.alpha = alpha
@@ -276,14 +280,18 @@ class CentreNetLoss(nn.Module):
         neg_loss = -torch.log(1 - pred) * pred ** self.alpha * neg_weights * neg_inds
 
         if weight is not None:
-            pos_loss = pos_loss * weight
+            pos_loss = pos_loss * weight 
 
         num_pos = pos_inds.sum(dim=(1, 2, 3))
         num_neg = neg_inds.sum(dim=(1, 2, 3)).clamp(min=1)
         pos_sum = pos_loss.sum(dim=(1, 2, 3))
         neg_sum = neg_loss.sum(dim=(1, 2, 3))
 
-        per_img = torch.where(num_pos > 0, (pos_sum + neg_sum) / num_pos.clamp(min=1), neg_sum / num_neg)
+        per_img = torch.where(
+                num_pos > 0,
+                (pos_sum + 0.1 * neg_sum) / num_pos.clamp(min=1), # weighting negative loss down.
+                0.1 * neg_sum / num_neg
+            )
         hm_loss = per_img.mean()
 
         mask = obj_mask.unsqueeze(1)
@@ -405,3 +413,155 @@ def CN_train(model, criterion, train_loader, val_loader):
         print(f"Epoch {epoch+1:3d}/{EPOCHS} | train {avg_train:.4f} | val {avg_val:.4f} | P {precision:.4f} | R {recall:.4f} | F1 {f1:.4f}")
 
     return vls, tls, precisions, recalls, f1s, model
+
+
+class CentreNetDataset(Dataset):
+
+    def __init__(
+        self,
+        all_paths,
+        norm_stats: dict = None,
+        tile_size: int = 512,
+        skip_partial: bool = True,
+        augment: bool = False,
+        norm_type = 'tile'
+    ):
+        self.augment = augment
+        self.stats   = norm_stats
+        self.paths   = []
+
+        skipped_shape   = 0
+        skipped_missing = 0
+
+        for p in sorted(all_paths):
+            d = np.load(p, allow_pickle=True)
+
+            if skip_partial:
+                _, h, w = d["image"].shape
+                if h != tile_size or w != tile_size:
+                    skipped_shape += 1
+                    continue
+
+            layer_names = list(d["layer_names"]) if "layer_names" in d else []
+            if any(b not in layer_names for b in _BANDS_TO_LOAD):
+                skipped_missing += 1
+                continue
+
+            self.paths.append(p)
+
+        print(f"Found {len(self.paths)} tiles "
+              f"({skipped_shape} partial, {skipped_missing} missing bands skipped)")
+
+    def __len__(self):
+        return len(self.paths)
+
+    def _augment(self, image, mask):
+      image, mask = image.copy(), mask.copy()
+
+      if random.random() > 0.5:
+          image, mask = image[:, :, ::-1], mask[:, ::-1]
+
+      if random.random() > 0.5:
+          image, mask = image[:, ::-1, :], mask[::-1, :]
+
+      k = random.choice([0, 1, 2, 3])
+      if k:
+          image, mask = np.rot90(image, k, axes=(1, 2)), np.rot90(mask, k)
+
+      image = np.ascontiguousarray(image)
+      mask = np.ascontiguousarray(mask)
+
+      if random.random() > 0.5:
+          noise = np.random.normal(0, 0.02, size=image[0].shape).astype(np.float32)
+          image[0] = image[0] + noise
+
+      if random.random() > 0.5:
+          sigma = random.uniform(0.3, 0.8)
+          image[0] = gaussian_filter(image[0], sigma=sigma)
+
+      if random.random() > 0.5:
+          scale = random.uniform(0.9, 1.1)
+          image[0] = image[0] * scale
+
+      if random.random() > 0.5:
+          z = random.uniform(0.9, 1.1)
+          h, w = image.shape[1:]
+          zimg = np.stack([zoom(b, z, order=1, mode='nearest') for b in image])
+          zmask = zoom(mask, z, order=0, mode='nearest')
+          zh, zw = zimg.shape[1:]
+
+          if z > 1:
+              y0, x0 = (zh - h) // 2, (zw - w) // 2
+              zimg, zmask = zimg[:, y0:y0 + h, x0:x0 + w], zmask[y0:y0 + h, x0:x0 + w]
+          else:
+              py, px = h - zh, w - zw
+              zimg = np.pad(zimg, ((0, 0), (py // 2, py - py // 2), (px // 2, px - px // 2)), mode='edge')
+              zmask = np.pad(zmask, ((py // 2, py - py // 2), (px // 2, px - px // 2)), mode='edge')
+
+          image, mask = zimg, zmask
+
+      return image, mask
+
+    def _normalize(self, image, stats):
+        local = {name: i for i, name in enumerate(_BANDS_TO_LOAD)}
+
+        for name, i in local.items():
+            band = image[i]
+            s    = stats.get(name) if stats else None
+
+            if name == 'HILLSHADE':
+                band = np.log1p(np.clip(band, s['p1'], s['p99']))
+                image[i] = (band - s['mean']) / (s['std'] + 1e-6)
+            elif name == 'DEM' and s:
+                band = np.clip(band, s['p1'], s['p99'])
+                image[i] = (band - s['mean']) / (s['std'] + 1e-6)
+            elif name == 'DEM_SLOPE' and s:
+                band = np.log1p(np.clip(band, s['p1'], s['p99']))
+                image[i] = (band - s['mean']) / (s['std'] + 1e-6)
+            elif name == 'RR' and s:
+                band = np.clip(band, s['p1'], s['p99'])
+                image[i] = (band - s['mean']) / (s['std'] + 1e-6)
+            elif name == 'LAPLACE' and s:
+                band = np.clip(band, s['p1'], s['p99'])
+                image[i] = (band - s['mean']) / (s['std'] + 1e-6)
+            else:
+              print('norm error')
+
+        return image
+
+    def _resolve_stats(self, path):
+        # if stats is a nested dict (multi-region), look up by parent dir
+        first_val = next(iter(self.stats.values()))
+        if isinstance(first_val, dict) and 'mean' not in first_val:
+            region = Path(path).parent.name
+            # Russia2 tiles fall back to Russia stats
+            return self.stats.get(region, self.stats.get('Russia'))
+        return self.stats  # flat single-region dict, use as-is
+
+    def __getitem__(self, idx):
+        path = self.paths[idx]
+        d    = np.load(path, allow_pickle=True)
+
+        layer_names  = list(d["layer_names"])
+        li = {name: i for i, name in enumerate(layer_names)}
+        band_indices = [li[b] for b in _BANDS_TO_LOAD]
+
+        image = d["image"][band_indices].astype(np.float32)
+        mask  = d["labels"].astype(np.float32)
+
+        image = self._normalize(image, self._resolve_stats(path))
+
+        if self.augment:
+            image, mask = self._augment(image, mask)
+
+        centre_map, weights, offset, radius, obj_mask = build_centernet_targets(mask)
+
+        return (
+            torch.from_numpy(np.ascontiguousarray(image)),
+            torch.from_numpy(np.ascontiguousarray(mask)),
+            torch.from_numpy(np.ascontiguousarray(centre_map)),
+            torch.from_numpy(np.ascontiguousarray(weights)),
+            torch.from_numpy(np.ascontiguousarray(offset)),
+            torch.from_numpy(np.ascontiguousarray(radius)),
+            torch.from_numpy(np.ascontiguousarray(obj_mask)),
+        )
