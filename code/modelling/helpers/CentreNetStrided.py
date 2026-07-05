@@ -125,6 +125,26 @@ class SCDCentreNet(nn.Module):
         self.radius_head = _make_head(f * 4, 1, p=0.2)
         self.offset_head = _make_head(f * 4, 2, p=0.2)
 
+        self.s1_to_128 = nn.Sequential(
+                nn.MaxPool2d(4),
+                nn.Conv2d(f, f, 1, bias=False),
+                nn.GroupNorm(8, f),
+                nn.ReLU(inplace=True),
+            )
+
+        self.s2_to_128 = nn.Sequential(
+                nn.MaxPool2d(2),
+                nn.Conv2d(f * 2, f, 1, bias=False),
+                nn.GroupNorm(8, f),
+                nn.ReLU(inplace=True),
+            )
+
+        self.fuse128 = nn.Sequential(
+                nn.Conv2d(f * 4 + f + f, f * 4, 3, padding=1, bias=False),
+                nn.GroupNorm(8, f * 4),
+                nn.ReLU(inplace=True),
+    )
+
     def forward(self, x):
         s1 = self.enc1(x)
         s2 = self.enc2(s1)
@@ -137,7 +157,13 @@ class SCDCentreNet(nn.Module):
         #b = self.bottleneck_attn(b)
 
         x = self.dec4(b, s4)
-        x = self.dec3(x, s3)  # 128x128 for 512x512 input
+        x = self.dec3(x, s3) 
+
+        # concat of downsampled early skips.
+
+        s1_128 = self.s1_to_128(s1)
+        s2_128 = self.s2_to_128(s2) 
+        x = self.fuse128(torch.cat([x, s1_128, s2_128], dim=1))
 
         x = self.head_drop(x)
 
