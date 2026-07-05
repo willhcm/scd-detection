@@ -284,11 +284,11 @@ class CombinedLoss(nn.Module):
             + self.tv(logits, targets))
 
 
-def SN_train(model, criterion, train_loader, val_loader):
+def SN_train(model, criterion, train_loader, val_loader, epochs):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
     model = model.to(device)
-    EPOCHS = 100
+    EPOCHS = epochs
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
     optimizer,
     T_max=EPOCHS,

@@ -306,13 +306,13 @@ class CenterNetLoss(nn.Module):
 
 # training function for CentreNet
 
-def CN_train(model, criterion, train_loader, val_loader):
+def CN_train(model, criterion, train_loader, val_loader, epochs):
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model=model.to(device)
     nn.init.constant_(model.centroid_head.bias, -2.19)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
-    EPOCHS = 100
+    EPOCHS = epochs
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=5e-6)
 
     RUN_ID = datetime.now().strftime('%Y%m%d_%H%M')
@@ -377,7 +377,7 @@ def CN_train(model, criterion, train_loader, val_loader):
                     tp_i, fp_i, fn_i, precision, recall, f1 = centroid_heatmap_metrics(
                         pred_heatmap=pred_np[i, 0],
                         gt_mask=mask_np[i],
-                        threshold=0.15,
+                        threshold=0.25,
                         min_distance=8
                     )
                     tp += tp_i
@@ -430,6 +430,7 @@ class CentreNetDataset(Dataset):
         self.stats   = norm_stats
         self.paths   = []
 
+        self.norm_type = norm_type
         skipped_shape   = 0
         skipped_missing = 0
 
@@ -549,7 +550,13 @@ class CentreNetDataset(Dataset):
         image = d["image"][band_indices].astype(np.float32)
         mask  = d["labels"].astype(np.float32)
 
-        image = self._normalize(image, self._resolve_stats(path))
+        if self.norm_type == 'tile':
+            for name in _BANDS_TO_LOAD:
+                i = li[name]
+                band = image[i]
+                image[i] = (band - band.mean()) / (band.std() + 1e-6)
+        else:
+            image = self._normalize(image, self._resolve_stats(path))
 
         if self.augment:
             image, mask = self._augment(image, mask)
