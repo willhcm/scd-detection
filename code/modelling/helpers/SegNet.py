@@ -21,10 +21,10 @@ class DoubleConv(nn.Module):
         super().__init__()
         self.block = nn.Sequential(
             nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(out_ch),
+            nn.GroupNorm(8, out_ch),
             nn.ReLU(inplace=True),
             nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(out_ch),
+            nn.GroupNorm(8, out_ch),
             nn.ReLU(inplace=True),
         )
 
@@ -95,7 +95,7 @@ class ASPP(nn.Module):
         self.branches = nn.ModuleList([
             nn.Sequential(
                 nn.Conv2d(in_ch, out_ch, 3, padding=d, dilation=d, bias=False),
-                nn.BatchNorm2d(out_ch),
+                nn.GroupNorm(8, out_ch),
                 nn.ReLU(inplace=True)
             ) for d in dilations
         ])
@@ -141,7 +141,7 @@ class SegNet(nn.Module):
         b = self.pool(s4)
         b = self.bottleneck_drop(b) # dropout
         b = self.aspp(b) # sees several scales
-        b = self.bottleneck_attn(b) # what channels are important?
+        # b = self.bottleneck_attn(b) # what channels are important?
 
         x = self.dec4(b, s4)
         x = self.dec3(x, s3)
@@ -520,10 +520,13 @@ class SegNetDataset(Dataset):
         image = d["image"][band_indices].astype(np.float32)
         mask = d["labels"].astype(np.float32)
 
+        for i in range(len(_BANDS_TO_LOAD)):
+            band = image[i]
+            image[i] = (band - band.mean()) / (band.std() + 1e-6)
+
         if self.augment:
             image, mask = self._augment(image, mask)
 
-        image = self._normalize(image, self._resolve_stats(path))
 
         return (
             torch.from_numpy(np.ascontiguousarray(image)),
