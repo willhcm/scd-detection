@@ -141,7 +141,6 @@ class SegNet(nn.Module):
         b = self.pool(s4)
         b = self.bottleneck_drop(b) # dropout
         b = self.aspp(b) # sees several scales
-        # b = self.bottleneck_attn(b) # what channels are important?
 
         x = self.dec4(b, s4)
         x = self.dec3(x, s3)
@@ -426,13 +425,11 @@ class SegNetDataset(Dataset):
     def __init__(
         self,
         all_paths,
-        norm_stats: dict = None,
         tile_size: int = 512,
         skip_partial: bool = True,
         augment: bool = False,
     ):
         self.augment = augment
-        self.stats = norm_stats
         self.paths = []
 
         skipped_shape = 0
@@ -461,22 +458,31 @@ class SegNetDataset(Dataset):
         return len(self.paths)
 
     def _augment(self, image, mask):
-        # flips and rotations
-        image = image.copy()
-        mask = mask.copy()
+        image, mask = image.copy(), mask.copy()
 
         if random.random() > 0.5:
-            image = np.flip(image, axis=2).copy()
-            mask = np.flip(mask,  axis=1).copy()
+            image, mask = image[:, :, ::-1], mask[:, ::-1]
         if random.random() > 0.5:
-            image = np.flip(image, axis=1).copy()
-            mask = np.flip(mask,  axis=0).copy()
-        k = random.randint(0, 3)
+            image, mask = image[:, ::-1, :], mask[::-1, :]
+
+        k = random.choice([0, 1, 2, 3])
         if k:
-            image = np.rot90(image, k, axes=(1, 2)).copy()
-            mask = np.rot90(mask,  k).copy()
+            image, mask = np.rot90(image, k, axes=(1, 2)), np.rot90(mask, k)
 
-        return image.copy(), mask.copy()
+        image = np.ascontiguousarray(image)
+        mask = np.ascontiguousarray(mask)
+
+        if random.random() > 0.5:
+            noise = np.random.normal(0, 0.02, size=image[0].shape).astype(np.float32)
+            image[0] = image[0] + noise
+        if random.random() > 0.5:
+            sigma = random.uniform(0.3, 0.8)
+            image[0] = gaussian_filter(image[0], sigma=sigma)
+        if random.random() > 0.5:
+            scale = random.uniform(0.9, 1.1)
+            image[0] = image[0] * scale
+
+        return image, mask
 
     def _normalize(self, image, stats):
         local = {name: i for i, name in enumerate(_BANDS_TO_LOAD)}
@@ -499,15 +505,6 @@ class SegNetDataset(Dataset):
                 image[i] = (band - s['mean']) / (s['std'] + 1e-6)
 
         return image
-
-    def _resolve_stats(self, path):
-        # if stats is a nested dict (multi-region), look up by parent dir
-        first_val = next(iter(self.stats.values()))
-        if isinstance(first_val, dict) and 'mean' not in first_val:
-            region = Path(path).parent.name
-            # Russia2 tiles fall back to Russia stats
-            return self.stats.get(region, self.stats.get('Russia'))
-        return self.stats  # flat single-region dict, use as-is
 
     def __getitem__(self, idx):
         path = self.paths[idx]

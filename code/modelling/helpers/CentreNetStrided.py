@@ -125,25 +125,17 @@ class SCDCentreNet(nn.Module):
         self.radius_head = _make_head(f * 4, 1, p=0.2)
         self.offset_head = _make_head(f * 4, 2, p=0.2)
 
-        self.s1_to_128 = nn.Sequential(
-                nn.MaxPool2d(4),
-                nn.Conv2d(f, f, 1, bias=False),
-                nn.GroupNorm(8, f),
-                nn.ReLU(inplace=True),
-            )
+        # basic FPN test
 
-        self.s2_to_128 = nn.Sequential(
-                nn.MaxPool2d(2),
-                nn.Conv2d(f * 2, f, 1, bias=False),
-                nn.GroupNorm(8, f),
-                nn.ReLU(inplace=True),
-            )
+        self.lat_b  = nn.Conv2d(f * 16, f * 4, 1)
+        self.lat_s4 = nn.Conv2d(f * 8,  f * 4, 1)
+        self.lat_s3 = nn.Conv2d(f * 4,  f * 4, 1)
 
-        self.fuse128 = nn.Sequential(
-                nn.Conv2d(f * 4 + f + f, f * 4, 3, padding=1, bias=False),
-                nn.GroupNorm(8, f * 4),
-                nn.ReLU(inplace=True),
-    )
+        self.fpn_fuse = nn.Sequential(
+            nn.Conv2d(f * 4, f * 4, 3, padding=1, bias=False),
+            nn.GroupNorm(8, f * 4),
+            nn.ReLU(inplace=True),
+        )
 
     def forward(self, x):
         s1 = self.enc1(x)
@@ -154,16 +146,11 @@ class SCDCentreNet(nn.Module):
         b = self.pool(s4)
         b = self.bottleneck_drop(b)
         b = self.aspp(b)
-        #b = self.bottleneck_attn(b)
+
+        # FPN 
 
         x = self.dec4(b, s4)
-        x = self.dec3(x, s3) 
-
-        # concat of downsampled early skips.
-
-        s1_128 = self.s1_to_128(s1)
-        s2_128 = self.s2_to_128(s2) 
-        x = self.fuse128(torch.cat([x, s1_128, s2_128], dim=1))
+        x = self.dec3(x, s3)
 
         x = self.head_drop(x)
 
@@ -178,9 +165,9 @@ def build_centernet_targets(
     mask,
     stride=4,
     min_sigma=1.0,
-    max_sigma=8.0,
+    max_sigma=6.0,
     base_weight=1.0,
-    centre_weight=20.0,
+    centre_weight=5.0,
 ):
     """
     Build stride-4 CentreNet targets from a full-resolution binary mask.
@@ -253,6 +240,7 @@ class CenterNetLoss(nn.Module):
         self.off_weight = off_weight
         self.rad_weight = rad_weight
         self.neg_scale = neg_scale
+        self.mse = nn.MSELoss()
 
     def forward(self, pred_hm, pred_rad, pred_off, hm, rad, off, obj_mask, weight=None):
         pred = torch.sigmoid(pred_hm).clamp(self.eps, 1 - self.eps)
@@ -292,7 +280,7 @@ class CenterNetLoss(nn.Module):
 # ChatGPT assistance with the function. decodes downsampled 128x128 back to 512x512.
 # prediction is done at 128 as otherise negative pixels in loss function dominate.
 # this method performs better than downsampling negative pixels in loss directly.
-def decode_centernet_predictions(pred_hm, pred_rad=None, pred_off=None, threshold=0.25, min_distance=8, stride=4):
+def decode_centernet_predictions(pred_hm, pred_rad=None, pred_off=None, threshold=0.3, min_distance=8, stride=4):
     """
     Decode one low-res prediction into full-resolution centre coordinates.
 
@@ -341,7 +329,7 @@ def decode_centernet_predictions(pred_hm, pred_rad=None, pred_off=None, threshol
     return out
 
 
-def centroid_heatmap_metrics(pred_heatmap, gt_mask, pred_offset=None, threshold=0.25, min_distance=8, stride=4):
+def centroid_heatmap_metrics(pred_heatmap, gt_mask, pred_offset=None, threshold=0.3, min_distance=8, stride=4):
     """
     Object-level metric for low-res heatmaps. A prediction is TP if its decoded
     full-res centre lies inside an unmatched ground truth object.
@@ -381,7 +369,7 @@ def centroid_heatmap_metrics(pred_heatmap, gt_mask, pred_offset=None, threshold=
     return tp, fp, fn, precision, recall, f1
 
 # adapted from CentreNet.py for strided model.
-def CN_train(model, criterion, train_loader, val_loader, epochs, stride=4, threshold=0.25, min_distance=8):
+def CN_train(model, criterion, train_loader, val_loader, epochs, stride=4, threshold=0.3, min_distance=8):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
 
@@ -563,24 +551,6 @@ class CentreNetDataset(Dataset):
         if random.random() > 0.5:
             scale = random.uniform(0.9, 1.1)
             image[0] = image[0] * scale
-
-        # Optional zoom augmentation. This is slow; disable augment while debugging speed/loss.
-        if random.random() > 0.5:
-            z = random.uniform(0.9, 1.1)
-            h, w = image.shape[1:]
-            zimg = np.stack([zoom(b, z, order=1, mode='nearest') for b in image])
-            zmask = zoom(mask, z, order=0, mode='nearest')
-            zh, zw = zimg.shape[1:]
-
-            if z > 1:
-                y0, x0 = (zh - h) // 2, (zw - w) // 2
-                zimg, zmask = zimg[:, y0:y0 + h, x0:x0 + w], zmask[y0:y0 + h, x0:x0 + w]
-            else:
-                py, px = h - zh, w - zw
-                zimg = np.pad(zimg, ((0, 0), (py // 2, py - py // 2), (px // 2, px - px // 2)), mode='edge')
-                zmask = np.pad(zmask, ((py // 2, py - py // 2), (px // 2, px - px // 2)), mode='edge')
-
-            image, mask = zimg, zmask
 
         return image, mask
 
