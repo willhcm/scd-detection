@@ -247,4 +247,4 @@ def HD_train(model, criterion, train_loader, val_loader, epochs):
         
     model.load_state_dict(best_state)
         
-    return vls, tls, precisions, recalls, f1s, model
+    return vls, tls, precisions, recalls, f1s, model, val_loader

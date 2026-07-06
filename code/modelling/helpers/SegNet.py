@@ -419,7 +419,7 @@ def SN_train(model, criterion, train_loader, val_loader, epochs):
     
     model.load_state_dict(best_state)
     
-    return vls, tls, obj_precisions, obj_recalls, obj_f1s, model
+    return vls, tls, obj_precisions, obj_recalls, obj_f1s, model, val_loader
 
 
 class SegNetDataset(Dataset):

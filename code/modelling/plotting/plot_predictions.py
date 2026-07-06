@@ -149,11 +149,11 @@ def plot_centrenet_predictions(model, val_loader, device):
 
 def visualise(model_type, model, val_loader, device):
 
-    if model_type == 'segnet':
+    if model_type == 'Segmentation':
         plot_segmentation_predictions(val_loader, model, device)
-    elif model_type == 'centrenet':
+    elif model_type == 'CentreNet':
         plot_centrenet_predictions(model, val_loader, device)
     else:
-        print('please enter a valid model type (segnet or centrenet)')
+        print('please enter a valid model type (Segmentation or CentreNet)')
 
 

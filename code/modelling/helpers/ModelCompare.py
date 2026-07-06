@@ -98,7 +98,7 @@ def train_fold(train_paths, val_paths, epochs, model_info, batch_size=16):
     criterion = model_info['loss']
     fn = model_info['train_fn']
 
-    vls, tls, precisions, recalls, f1s, model =  fn(model, criterion, train_loader, val_loader, epochs)
+    vls, tls, precisions, recalls, f1s, model, val_loader =  fn(model, criterion, train_loader, val_loader, epochs)
     metrics = {'vls': vls,
               'tls': tls,
               'precisions': precisions,
@@ -106,7 +106,7 @@ def train_fold(train_paths, val_paths, epochs, model_info, batch_size=16):
               'f1s': f1s,
               }
 
-    return metrics
+    return metrics, model, val_loader
 
 
 def train_model(paths, epochs, model_info):
@@ -116,7 +116,7 @@ def train_model(paths, epochs, model_info):
     criterion = model_info['loss']
     fn = model_info['train_fn']
 
-    vls, tls, precisions, recalls, f1s, model =  fn(model, criterion, train_loader, val_loader, epochs)
+    vls, tls, precisions, recalls, f1s, model, val_loader =  fn(model, criterion, train_loader, val_loader, epochs)
     metrics = {'vls': vls,
               'tls': tls,
               'precisions': precisions,
@@ -124,12 +124,14 @@ def train_model(paths, epochs, model_info):
               'f1s': f1s,
               }
 
-    return metrics
+    return metrics, model, val_loader
 
 
 def _run_cv_comparison(epochs, models):
 
     cv_results = {}
+    best_states = {}
+    loaders = {}
     for held_out in REGION_GROUPS:
         for model, model_info in models.items():
             print(f'Model: {model} ')
@@ -137,25 +139,32 @@ def _run_cv_comparison(epochs, models):
             val_paths = _region_paths(held_out)
             train_paths = [p for r in REGION_GROUPS if r != held_out for p in _region_paths(r)]
 
-            metrics = train_fold(train_paths, val_paths, epochs, model_info)
+            metrics, best_model, val_loader = train_fold(train_paths, val_paths, epochs, model_info)
             if model not in cv_results:
                 cv_results[model] = {} # Initialize dictionary for each model
             cv_results[model][held_out] = metrics # Store metrics per held_out region
-    
-    return cv_results
+            best_states[model] = best_model
+            loaders[model] = val_loader
+
+
+    return cv_results, best_states, loaders
 
 def _run_grouped_comparison(paths, epochs, models, cv=False):
 
     cv_results = {}
+    best_states = {}
+    loaders = {}
     for model, model_info in models.items():
         print(f'Model: {model} ')
 
-        metrics = train_model(paths, epochs, model_info)
+        metrics, best_model, val_loader = train_model(paths, epochs, model_info)
         if model not in cv_results:
             cv_results[model] = {} # Initialize dictionary for each model
         cv_results[model] = metrics # Store metrics per held_out region
-    
-    return cv_results
+        best_states[model] = best_model
+        loaders[model] = val_loader
+
+    return cv_results, best_states, loaders
 
 def compare(models, epochs, paths=None, cv=True):
 

@@ -482,9 +482,9 @@ def CN_train(model, criterion, train_loader, val_loader, epochs, stride=4, thres
             print("early stopping")
             break
 
-        model.load_state_dict(best_state)
+    model.load_state_dict(best_state)
 
-    return vls, tls, precisions, recalls, f1s, model
+    return vls, tls, precisions, recalls, f1s, model, val_loader
 
 # per-tile normalisation introduced, old norm redundant.
 class CentreNetDataset(Dataset):
