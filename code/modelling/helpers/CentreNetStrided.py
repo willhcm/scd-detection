@@ -382,7 +382,7 @@ def CN_train(model, criterion, train_loader, val_loader, epochs, stride=4, thres
 
     vls, tls, precisions, recalls, f1s = [], [], [], [], []
     best_f1 = 0.1
-    patience = 15
+    patience = 20
     bad_epochs = 0
 
     for epoch in range(epochs):
@@ -464,14 +464,13 @@ def CN_train(model, criterion, train_loader, val_loader, epochs, stride=4, thres
         if f1 > best_f1:
             best_f1 = f1
             bad_epochs = 0
+            best_state = model.state_dict()
             for old in checkpoint_dir.glob('best_*.pt'):
                 old.unlink()
             torch.save(model.state_dict(), checkpoint_dir / f'best_epoch{epoch + 1:03d}_f1{f1:.4f}.pt')
             print(f'Best checkpoint saved (f1 {f1:.4f})')
         else:
             bad_epochs += 1
-
-        
 
         print(
             f'Epoch {epoch + 1:3d}/{epochs} | '
@@ -482,6 +481,8 @@ def CN_train(model, criterion, train_loader, val_loader, epochs, stride=4, thres
         if bad_epochs >= patience:
             print("early stopping")
             break
+
+        model.load_state_dict(best_state)
 
     return vls, tls, precisions, recalls, f1s, model
 

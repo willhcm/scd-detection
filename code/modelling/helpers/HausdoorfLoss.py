@@ -230,6 +230,7 @@ def HD_train(model, criterion, train_loader, val_loader, epochs):
 
         if iou > best_iou:
             best_iou = iou
+            best_state = model.state_dict()
             print(f'Best checkpoint: (iou {iou:.4f})')
 
         print(f"Epoch {epoch+1:3d}/{epochs} | "
@@ -243,5 +244,7 @@ def HD_train(model, criterion, train_loader, val_loader, epochs):
             f"Obj_P {obj_precision:.4f} | "
             f"Obj_R {obj_recall:.4f} | "
             f"Obj_F1 {obj_f1:.4f}")
+        
+    model.load_state_dict(best_state)
         
     return vls, tls, precisions, recalls, f1s, model

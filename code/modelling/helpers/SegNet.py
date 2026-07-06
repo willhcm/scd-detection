@@ -398,7 +398,7 @@ def SN_train(model, criterion, train_loader, val_loader, epochs):
         # checkpointing
         if iou > best_iou:
             best_iou = iou
-
+            best_state = model.state_dict()
             for old in CHECKPOINT_DIR.glob('best_*.pt'):
                 old.unlink()
 
@@ -416,7 +416,9 @@ def SN_train(model, criterion, train_loader, val_loader, epochs):
                 f"Obj_P {iou_precision:.4f} | "
                 f"Obj_R {iou_recall:.4f} | "
                 f"Obj_F1 {iou_f1:.4f} | ")
-        
+    
+    model.load_state_dict(best_state)
+    
     return vls, tls, obj_precisions, obj_recalls, obj_f1s, model
 
 
