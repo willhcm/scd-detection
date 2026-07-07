@@ -95,11 +95,11 @@ def plot_segmentation_predictions(val_loader, model, device):
 def plot_all(segnet, centrenet, seg_loader, centre_loader, device):
 
     seg_images, seg_masks, seg_preds = get_seg_preds(seg_loader, segnet, device)
-    pred_centres_cpu, pred_radius_cpu, images_cpu, masks_gt_cpu, centroids_gt_cpu = get_centre_net_preds(centrenet, 
+    pred_centres_cpu, pred_radius_cpu, _, masks_gt_cpu, centroids_gt_cpu = get_centre_net_preds(centrenet, 
                                                                                                         centre_loader,
                                                                                                         device=device)
     
-    fig, axes = plt.subplots(len(seg_loader, 8))
+    fig, axes = plt.subplots(4, 8)
 
     for i in range(len(seg_preds)):
         img = seg_images[i].cpu().numpy()

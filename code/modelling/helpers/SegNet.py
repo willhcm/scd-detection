@@ -133,7 +133,7 @@ class SegNet(nn.Module):
         self.dec4 = Up(f * 16, f * 8, f * 8)
         self.dec3 = Up(f * 8,  f * 4, f * 4)
         self.dec2 = Up(f * 4,  f * 2, f * 2)
-        self.dec1 = Up(f * 2,  f, )
+        self.dec1 = Up(f * 2,  f, f)
 
         self.out_conv = nn.Conv2d(f, 1, kernel_size=1)
 
