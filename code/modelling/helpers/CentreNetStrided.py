@@ -159,7 +159,6 @@ class SCDCentreNet(nn.Module):
         offset = self.offset_head(x)
         return centre, radius, offset
 
-
 # ChatGPT assistanve with this function, edited from previous function but now 
 def build_centernet_targets(
     mask,
@@ -381,7 +380,7 @@ def CN_train(model, criterion, train_loader, val_loader, epochs, stride=4, thres
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     vls, tls, precisions, recalls, f1s = [], [], [], [], []
-    best_f1 = 0.1
+    best_f1 = -1
     patience = 20
     bad_epochs = 0
 

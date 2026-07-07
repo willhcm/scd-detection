@@ -37,6 +37,8 @@ def pred_centroids_for_plot(pred_mask, gt_mask, min_pred_area=20):
         detected = gt_labels[r, c] > 0
         points.append((cx, cy, detected))
 
+    return points
+
 def get_seg_preds(val_loader, model, device):
 
 
@@ -53,49 +55,98 @@ def get_seg_preds(val_loader, model, device):
     return images, masks, preds
 
 def plot_segmentation_predictions(val_loader, model, device):
-    
-    to_plot = CHANNELS.extend(['Ground Truth', 'Labels'])
-    n_cols = len(CHANNELS)
 
-    fig, axes = plt.subplots(4, n_cols, figsize=(n_cols * 3, 14))
-
-    for ax, col in zip(axes[0], to_plot):
-        ax.set_title(col, fontsize=9)
+    fig, axes = plt.subplots(8, 6, figsize=(4 * 3, 14))
 
     images, masks, preds = get_seg_preds(val_loader, model, device)
-
+    images, masks, preds = images[:8], masks[:8], preds[:8]
     for i in range(len(preds)):
         img = images[i].cpu().numpy()
         gt = masks[i, 0].cpu().numpy()
         pred = preds[i, 0].cpu().numpy()
 
         axes[i, 0].imshow(img[0], cmap='terrain') # DEM
-        axes[i, 1].imshow(img[0], cmap='terrain') # Slope
-        axes[i, 2].imshow(img[1], cmap='terrain') # RR 
-        axes[i, 3].imshow(img[2], cmap='coolwarm') # Laplace
-        axes[i, 4].imshow(gt, cmap='gray', vmin=0, vmax=1)
-        axes[i, 5].imshow(pred, cmap='gray', vmin=0, vmax=1)
+        axes[i, 1].imshow(img[2], cmap='terrain') # Slope
+        axes[i, 2].imshow(gt, cmap='gray', vmin=0, vmax=1)
+        axes[i, 3].imshow(pred, cmap='gray', vmin=0, vmax=1)
 
         # annotations for interpretation
 
         # GT outline
-        axes[i, 5].contour(gt, levels=[0.5], colors='lime', linewidths=1)
+        axes[i, 3].contour(gt, levels=[0.5], colors='lime', linewidths=1)
 
         # Predicted object outline
-        axes[i, 5].contour(pred, levels=[0.5], colors='cyan', linewidths=1)
+        axes[i, 3].contour(pred, levels=[0.5], colors='cyan', linewidths=1)
 
         points = pred_centroids_for_plot(pred, gt, min_pred_area=20)
 
         # green or red for predictrion success (TP, FP)
         for cx, cy, detected in points:
             colour = 'lime' if detected else 'red'
-            axes[i, 4].scatter(cx, cy, c=colour, s=40, marker='x', linewidths=2)
+            axes[i, 2].scatter(cx, cy, c=colour, s=40, marker='x', linewidths=2)
 
-        for j in range(n_cols):
+        for j in range(6):
             axes[i, j].axis('off')
 
     plt.tight_layout()
     plt.show()
+
+
+def plot_all(segnet, centrenet, seg_loader, centre_loader, device):
+
+    seg_images, seg_masks, seg_preds = get_seg_preds(seg_loader, segnet, device)
+    pred_centres_cpu, pred_radius_cpu, images_cpu, masks_gt_cpu, centroids_gt_cpu = get_centre_net_preds(centrenet, 
+                                                                                                        centre_loader,
+                                                                                                        device=device)
+    
+    fig, axes = plt.subplots(len(seg_loader, 8))
+
+    for i in range(len(seg_preds)):
+        img = seg_images[i].cpu().numpy()
+        gt = seg_masks[i, 0].cpu().numpy()
+        pred = seg_preds[i, 0].cpu().numpy()
+
+        axes[i, 0].imshow(img[0], cmap='terrain') # DEM
+        axes[i, 1].imshow(img[2], cmap='terrain') # Slope
+        axes[i, 2].imshow(gt, cmap='gray', vmin=0, vmax=1)
+        axes[i, 3].imshow(pred, cmap='gray', vmin=0, vmax=1)
+        axes[i, 3].set_title('Segmentation Predictions')
+
+        # annotations for interpretation
+
+        # GT outline
+        axes[i, 3].contour(gt, levels=[0.5], colors='lime', linewidths=0.5)
+
+        # Predicted object outline
+        axes[i, 3].contour(pred, levels=[0.5], colors='cyan', linewidths=0.2)
+
+        points = pred_centroids_for_plot(pred, gt, min_pred_area=20)
+
+        # green or red for predictrion success (TP, FP)
+        for cx, cy, detected in points:
+            colour = 'lime' if detected else 'red'
+            axes[i, 2].scatter(cx, cy, c=colour, s=40, marker='x', linewidths=2)
+
+        for j in range(6):
+            axes[i, j].axis('off')
+
+        # centrenet preds
+
+        axes[i, 4].imshow(centroids_gt_cpu[i, 0], cmap='viridis', vmin=0, vmax=1)
+        axes[i, 4].set_title('Centroid GT')
+
+        im3 = axes[i, 5].imshow(pred_centres_cpu[i, 0], cmap='viridis', vmin=0, vmax=1)
+        fig.colorbar(im3, ax=axes[i, 5], fraction=0.046)
+        axes[i, 5].set_title('Centroid Predictions')
+
+        axes[i, 6].imshow(masks_gt_cpu[i, 0], cmap='gray', vmin=0, vmax=1)
+        peaks = peak_local_max(pred_centres_cpu[i, 0], min_distance=8, threshold_abs=0.3)
+        for y, x in peaks:
+            r = pred_radius_cpu[i, 0, y, x]
+            axes[i, 6].add_patch(patches.Circle((x, y), radius=r, edgecolor='red', facecolor='none', linewidth=1.5))
+        axes[i, 6].set_title('Centroid Pred vs GT')
+
+
 
 def get_centre_net_preds(model, val_loader, device):
 

@@ -64,15 +64,22 @@ class Down(nn.Module):
     def forward(self, x):
         return self.block(x)
 
-
+# test transpose as opposed to bilinear up
+# might get checkboard artefacts but more parameters ?
 class Up(nn.Module):
     """Bilinear upsample, concatenate skip, DoubleConv. one decoder step"""
 
-    def __init__(self, in_ch: int, out_ch: int):
+    def __init__(self, x_ch: int, skip_ch, out_ch: int):
         super().__init__()
         # in_ch comes from (upsampled features + skip features)
-        self.up   = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True)
-        self.conv = DoubleConv(in_ch, out_ch)
+       #self.up   = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True)
+        self.up = nn.ConvTranspose2d(
+            x_ch,
+            x_ch,
+            kernel_size=2,
+            stride=2
+        )
+        self.conv = DoubleConv(x_ch + skip_ch, out_ch)
 
     def forward(self, x, skip):
         x = self.up(x)
@@ -84,7 +91,6 @@ class Up(nn.Module):
 
         x = torch.cat([skip, x], dim=1) # channel-wise concat
         return self.conv(x)
-
 
 class ASPP(nn.Module):
     # analyses image at multiple scales in parralell.
@@ -123,11 +129,13 @@ class SegNet(nn.Module):
         self.bottleneck_attn = ChannelAttention(f * 16)
         self.bottleneck_drop = nn.Dropout2d(p=0.2)
 
-        # Decoder
-        self.dec4 = Up(f * 16 + f * 8, f * 8)
-        self.dec3 = Up(f * 8 + f * 4, f * 4)
-        self.dec2 = Up(f * 4 + f * 2, f * 2)
-        self.dec1 = Up(f * 2 + f, f)
+       # Decoder
+        self.dec4 = Up(f * 16, f * 8, f * 8)
+        self.dec3 = Up(f * 8,  f * 4, f * 4)
+        self.dec2 = Up(f * 4,  f * 2, f * 2)
+        self.dec1 = Up(f * 2,  f, )
+
+        self.out_conv = nn.Conv2d(f, 1, kernel_size=1)
 
         self.out_conv = nn.Conv2d(f, 1, kernel_size=1)
 

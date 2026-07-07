@@ -108,7 +108,6 @@ def train_fold(train_paths, val_paths, epochs, model_info, batch_size=16):
 
     return metrics, model, val_loader
 
-
 def train_model(paths, epochs, model_info):
     train_loader, val_loader, _ = get_loaders(paths, model_info['dataset'])
 
@@ -145,7 +144,6 @@ def _run_cv_comparison(epochs, models):
             cv_results[model][held_out] = metrics # Store metrics per held_out region
             best_states[model] = best_model
             loaders[model] = val_loader
-
 
     return cv_results, best_states, loaders
 
