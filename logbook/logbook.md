@@ -36,3 +36,12 @@ Aim:
 - Instead, I've read a few papers on SNIP (Scale Normalised Image Pyramids), and think this is a really good way to learn object detection irrespective of scale. At inference, a Image pyramid is used. This will be slow, but accuracy will be unrivalled from other methods from what I've seen so far in my experimentation.
 
 
+## Direction Notes (11/07)
+
+- Looking into medical imaging techniques (Mask RCNN).
+- Aiming at transfer learning to limit overfitting problem on small dataset.
+- Will try to put a CentreNet head onto Mask RCNN backbone.
+- Presented research to H2 research group and discussed next steps for general hydrogen research in the department.
+
+ 
+
