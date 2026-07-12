@@ -1,46 +1,22 @@
 import matplotlib.pyplot as plt
-from scipy.ndimage import label, center_of_mass
+from scipy.ndimage import label, center_of_mass, maximum_filter
 import numpy as np
 import torch
 from skimage.feature import peak_local_max
 import matplotlib.patches as patches
+from mask_rcnn_plots import plot_preds as plot_maskrcnn_preds
+from helpers import pred_centroids_for_plot, decode_centernet_predictions
 
 CHANNELS = ['DEM',
             'Slope',
             'Residual Relief',
             'LAPLACE']
 
-# AI assistance with this plotting function
-def pred_centroids_for_plot(pred_mask, gt_mask, min_pred_area=20):
-    pred_labels, n_pred = label(pred_mask > 0)
-    gt_labels, _ = label(gt_mask > 0)
+# need to completely revamp this plotting file, it is very poorly implemented and not model-agnostic!
+# make class based!
 
-    points = []
-
-    for pred_id in range(1, n_pred + 1):
-        pred_obj = pred_labels == pred_id
-
-        if pred_obj.sum() < min_pred_area:
-            continue
-
-        cy, cx = center_of_mass(pred_obj)
-
-        if np.isnan(cx) or np.isnan(cy):
-            continue
-
-        r = int(round(cy))
-        c = int(round(cx))
-
-        r = np.clip(r, 0, gt_mask.shape[0] - 1)
-        c = np.clip(c, 0, gt_mask.shape[1] - 1)
-
-        detected = gt_labels[r, c] > 0
-        points.append((cx, cy, detected))
-
-    return points
 
 def get_seg_preds(val_loader, model, device):
-
 
     images, masks = next(iter(val_loader))
     images = images.to(device)
@@ -95,11 +71,11 @@ def plot_segmentation_predictions(val_loader, model, device):
 def plot_all(segnet, centrenet, seg_loader, centre_loader, device):
 
     seg_images, seg_masks, seg_preds = get_seg_preds(seg_loader, segnet, device)
-    pred_centres_cpu, pred_radius_cpu, _, masks_gt_cpu, centroids_gt_cpu = get_centre_net_preds(centrenet, 
+    pred_centres_cpu, pred_radius_cpu, pred_offset_cpu, _, masks_gt_cpu, centroids_gt_cpu = get_centre_net_preds(centrenet, 
                                                                                                         centre_loader,
                                                                                                         device=device)
     
-    fig, axes = plt.subplots(4, 8)
+    fig, axes = plt.subplots(4, 7, figsize=(15, 12))
 
     for i in range(len(seg_preds)):
         img = seg_images[i].cpu().numpy()
@@ -125,27 +101,27 @@ def plot_all(segnet, centrenet, seg_loader, centre_loader, device):
         # green or red for predictrion success (TP, FP)
         for cx, cy, detected in points:
             colour = 'lime' if detected else 'red'
-            axes[i, 2].scatter(cx, cy, c=colour, s=40, marker='x', linewidths=2)
+            axes[i, 2].scatter(cx, cy, c=colour, s=40, marker='x', linewidths=0.5)
 
         for j in range(6):
             axes[i, j].axis('off')
 
         # centrenet preds
 
+        detections = decode_centernet_predictions(pred_centres_cpu[i, 0], pred_radius_cpu[i, 0], pred_offset_cpu[i])
+
         axes[i, 4].imshow(centroids_gt_cpu[i, 0], cmap='viridis', vmin=0, vmax=1)
         axes[i, 4].set_title('Centroid GT')
 
-        im3 = axes[i, 5].imshow(pred_centres_cpu[i, 0], cmap='viridis', vmin=0, vmax=1)
-        fig.colorbar(im3, ax=axes[i, 5], fraction=0.046)
+        axes[i, 5].imshow(pred_centres_cpu[i, 0], cmap='viridis', vmin=0, vmax=1)
         axes[i, 5].set_title('Centroid Predictions')
 
-        axes[i, 6].imshow(masks_gt_cpu[i, 0], cmap='gray', vmin=0, vmax=1)
-        peaks = peak_local_max(pred_centres_cpu[i, 0], min_distance=8, threshold_abs=0.3)
-        for y, x in peaks:
-            r = pred_radius_cpu[i, 0, y, x]
-            axes[i, 6].add_patch(patches.Circle((x, y), radius=r, edgecolor='red', facecolor='none', linewidth=1.5))
-        axes[i, 6].set_title('Centroid Pred vs GT')
 
+        axes[i, 6].imshow(masks_gt_cpu[i, 0], cmap='gray', vmin=0, vmax=1)
+        for det in detections:
+            axes[i, 6].add_patch(patches.Circle((det['cx'], det['cy']), radius=det['radius'],
+                                                  edgecolor='red', facecolor='none', linewidth=1.5))
+        axes[i, 6].set_title('Centroid Pred vs GT')
 
 
 def get_centre_net_preds(model, val_loader, device):
@@ -164,19 +140,21 @@ def get_centre_net_preds(model, val_loader, device):
     images_cpu = images.cpu().numpy()
     masks_gt_cpu = masks_gt.cpu().numpy()
     centroids_gt_cpu = centroids_gt.cpu().numpy()
+    pred_offset_cpu = pred_offset.cpu().numpy()
 
-    return pred_centres_cpu, pred_radius_cpu, images_cpu, masks_gt_cpu, centroids_gt_cpu
+    return pred_centres_cpu, pred_radius_cpu, pred_offset_cpu, images_cpu, masks_gt_cpu, centroids_gt_cpu
 
-
+# need to adjust for strided (128x128 centrenet predictions!)
 def plot_centrenet_predictions(model, val_loader, device):
 
     fig, axes = plt.subplots(len(val_loader), 5, figsize=(20, 3 * len(val_loader)))
 
     # get preds and inputs
-    pred_centres_cpu, pred_radius_cpu, images_cpu, masks_gt_cpu, centroids_gt_cpu = get_centre_net_preds(model, val_loader, device)
+    pred_centres_cpu, pred_radius_cpu, pred_offset_cpu, images_cpu, masks_gt_cpu, centroids_gt_cpu = get_centre_net_preds(model, val_loader, device)
 
     # plot
     for i, ax_row in enumerate(axes):
+        detections = decode_centernet_predictions(pred_centres_cpu, pred_radius_cpu, pred_offset_cpu)
         ax_row[0].imshow(images_cpu[i, 1], cmap='terrain')
         ax_row[1].imshow(masks_gt_cpu[i, 0], cmap='gray', vmin=0, vmax=1)
         ax_row[2].imshow(centroids_gt_cpu[i, 0], cmap='viridis', vmin=0, vmax=1)
@@ -185,10 +163,9 @@ def plot_centrenet_predictions(model, val_loader, device):
         fig.colorbar(im3, ax=ax_row[3], fraction=0.046)
 
         ax_row[4].imshow(masks_gt_cpu[i, 0], cmap='gray', vmin=0, vmax=1)
-        peaks = peak_local_max(pred_centres_cpu[i, 0], min_distance=8, threshold_abs=0.3)
-        for y, x in peaks:
-            r = pred_radius_cpu[i, 0, y, x]
-            ax_row[4].add_patch(patches.Circle((x, y), radius=r, edgecolor='red', facecolor='none', linewidth=1.5))
+        for det in detections:
+            axes[i, 4].add_patch(patches.Circle((det['cx'], det['cy']), radius=det['radius'],
+                                                  edgecolor='red', facecolor='none', linewidth=1.5))
 
         for j, ax in enumerate(ax_row):
             ax.set_title(['Input', 'GT Mask', 'GT Centroid', 'Pred Heatmap', 'Pred Radius vs GT'][j], fontsize=10)
@@ -197,14 +174,13 @@ def plot_centrenet_predictions(model, val_loader, device):
     plt.tight_layout()
     plt.show()
 
-
 def visualise(model_type, model, val_loader, device):
 
-    if model_type == 'Segmentation':
+    if model_type == 'Segmentation' or model_type == 'DaynacModel':
         plot_segmentation_predictions(val_loader, model, device)
     elif model_type == 'CentreNet':
         plot_centrenet_predictions(model, val_loader, device)
+    elif model_type == 'MaskRCNN':
+        plot_maskrcnn_preds(model, val_loader, device)
     else:
         print('please enter a valid model type (Segmentation or CentreNet)')
-
-

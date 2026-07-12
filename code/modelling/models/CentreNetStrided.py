@@ -8,86 +8,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 from scipy.ndimage import label, center_of_mass, maximum_filter, gaussian_filter, zoom
+from blocks import DoubleConv, Down, Up, ASPP
+from helpers import decode_centernet_predictions
 
 _BANDS_TO_LOAD = ['DEM', 'DEM_SLOPE', 'RR', 'LAPLACE']
 
-class DoubleConv(nn.Module):
-    """UNet block: 2 * (Conv2d + GroupNorm + ReLU).""" # groupnorm vs batch norm: batch norm normalising images independently based on channel, not at Group-level, whcih can contain different regions!
-    def __init__(self, in_ch: int, out_ch: int):
-        super().__init__()
-        self.block = nn.Sequential(
-            nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1, bias=False),
-            nn.GroupNorm(8, out_ch),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1, bias=False),
-            nn.GroupNorm(8, out_ch),
-            nn.ReLU(inplace=True),
-        )
-
-    def forward(self, x):
-        return self.block(x)
-
-
-class ChannelAttention(nn.Module):
-    def __init__(self, channels, reduction=8):
-        super().__init__()
-        hidden = max(1, channels // reduction)
-        self.avg = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Sequential(
-            nn.Linear(channels, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, channels),
-            nn.Sigmoid(),
-        )
-
-    def forward(self, x):
-        w = self.fc(self.avg(x).squeeze(-1).squeeze(-1))
-        return x * w.unsqueeze(-1).unsqueeze(-1)
-
-
-class Down(nn.Module):
-    """MaxPool2d followed by DoubleConv."""
-    def __init__(self, in_ch: int, out_ch: int):
-        super().__init__()
-        self.block = nn.Sequential(nn.MaxPool2d(2), DoubleConv(in_ch, out_ch))
-
-    def forward(self, x):
-        return self.block(x)
-
-
-class Up(nn.Module):
-    """Bilinear upsample, concatenate skip, DoubleConv."""
-    def __init__(self, in_ch: int, out_ch: int):
-        super().__init__()
-        self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        self.conv = DoubleConv(in_ch, out_ch)
-
-    def forward(self, x, skip):
-        x = self.up(x)
-        if x.shape[-2:] != skip.shape[-2:]:
-            x = F.pad(
-                x,
-                [0, skip.shape[-1] - x.shape[-1], 0, skip.shape[-2] - x.shape[-2]],
-            )
-        x = torch.cat([skip, x], dim=1)
-        return self.conv(x)
-
-
-class ASPP(nn.Module):
-    def __init__(self, in_ch, out_ch, dilations=(1, 2, 4, 8)): # less aggressive to retain finer detail.
-        super().__init__()
-        self.branches = nn.ModuleList([
-            nn.Sequential(
-                nn.Conv2d(in_ch, out_ch, 3, padding=d, dilation=d, bias=False),
-                nn.GroupNorm(8, out_ch),
-                nn.ReLU(inplace=True),
-            )
-            for d in dilations
-        ])
-        self.project = nn.Conv2d(out_ch * len(dilations), out_ch, 1, bias=False)
-
-    def forward(self, x):
-        return self.project(torch.cat([b(x) for b in self.branches], dim=1))
 
 def _make_head(in_ch, out_ch, p=0.2):
     return nn.Sequential(
@@ -113,7 +38,6 @@ class SCDCentreNet(nn.Module):
 
         self.pool = nn.MaxPool2d(2)                  # 32
         self.aspp = ASPP(f * 8, f * 16)
-        self.bottleneck_attn = ChannelAttention(f * 16)
         self.bottleneck_drop = nn.Dropout2d(p=0.4)
 
         self.dec4 = Up(f * 16 + f * 8, f * 8)        # 64
@@ -275,57 +199,6 @@ class CenterNetLoss(nn.Module):
 
         total = hm_loss + self.off_weight * off_loss + self.rad_weight * rad_loss
         return total, hm_loss, off_loss, rad_loss
-
-# ChatGPT assistance with the function. decodes downsampled 128x128 back to 512x512.
-# prediction is done at 128 as otherise negative pixels in loss function dominate.
-# this method performs better than downsampling negative pixels in loss directly.
-def decode_centernet_predictions(pred_hm, pred_rad=None, pred_off=None, threshold=0.3, min_distance=8, stride=4):
-    """
-    Decode one low-res prediction into full-resolution centre coordinates.
-
-    pred_hm: [Hlow, Wlow], already sigmoid probabilities
-    pred_rad: optional [Hlow, Wlow] or [1, Hlow, Wlow], radius in low-res pixels
-    pred_off: optional [2, Hlow, Wlow], offset on low-res grid
-
-    Returns list of dicts: {cy, cx, radius, score, low_r, low_c}
-    """
-    local_max = pred_hm == maximum_filter(pred_hm, size=2 * min_distance + 1)
-    peaks = local_max & (pred_hm >= threshold)
-    peak_coords = np.argwhere(peaks)
-    if len(peak_coords) == 0:
-        return []
-
-    scores = pred_hm[peaks]
-    order = np.argsort(scores)[::-1]
-    peak_coords = peak_coords[order]
-    scores = scores[order]
-
-    out = []
-    for (r, c), score in zip(peak_coords, scores):
-        if pred_off is not None:
-            off_y = float(pred_off[0, r, c])
-            off_x = float(pred_off[1, r, c])
-        else:
-            off_y = off_x = 0.5
-
-        cy_full = (float(r) + off_y) * stride
-        cx_full = (float(c) + off_x) * stride
-
-        if pred_rad is not None:
-            rr = pred_rad[0] if pred_rad.ndim == 3 else pred_rad
-            radius_full = float(rr[r, c]) * stride
-        else:
-            radius_full = np.nan
-
-        out.append({
-            'cy': cy_full,
-            'cx': cx_full,
-            'radius': radius_full,
-            'score': float(score),
-            'low_r': int(r),
-            'low_c': int(c),
-        })
-    return out
 
 
 def centroid_heatmap_metrics(pred_heatmap, gt_mask, pred_offset=None, threshold=0.3, min_distance=8, stride=4):
@@ -554,37 +427,6 @@ class CentreNetDataset(Dataset):
 
         return image, mask
 
-    def _normalize(self, image, stats):
-        for i, name in enumerate(_BANDS_TO_LOAD):
-            band = image[i]
-            s = stats.get(name) if stats else None
-
-            if name == 'HILLSHADE' and s:
-                band = np.log1p(np.clip(band, s['p1'], s['p99']))
-                image[i] = (band - s['mean']) / (s['std'] + 1e-6)
-            elif name == 'DEM' and s:
-                band = np.clip(band, s['p1'], s['p99'])
-                image[i] = (band - s['mean']) / (s['std'] + 1e-6)
-            elif name == 'DEM_SLOPE' and s:
-                band = np.log1p(np.clip(band, s['p1'], s['p99']))
-                image[i] = (band - s['mean']) / (s['std'] + 1e-6)
-            elif name in ('RR', 'LAPLACE') and s:
-                band = np.clip(band, s['p1'], s['p99'])
-                image[i] = (band - s['mean']) / (s['std'] + 1e-6)
-            else:
-                # Fallback to per-tile norm if stats are absent.
-                image[i] = (band - band.mean()) / (band.std() + 1e-6)
-        return image
-
-    def _resolve_stats(self, path):
-        if not self.stats:
-            return None
-        first_val = next(iter(self.stats.values()))
-        if isinstance(first_val, dict) and 'mean' not in first_val:
-            region = Path(path).parent.name
-            return self.stats.get(region, self.stats.get('Russia'))
-        return self.stats
-
     def __getitem__(self, idx):
         path = self.paths[idx]
         d = np.load(path, allow_pickle=True)
@@ -601,7 +443,6 @@ class CentreNetDataset(Dataset):
             band = image[i]
             image[i] = (band - band.mean()) / (band.std() + 1e-6)
 
-        # image = self._normalize(image, self._resolve_stats(path))
 
         if self.augment:
             image, mask = self._augment(image, mask)

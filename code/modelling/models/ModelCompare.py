@@ -3,34 +3,36 @@ from torch.utils.data import WeightedRandomSampler
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import TensorDataset, DataLoader, Dataset
+from torch.utils.data import DataLoader
 import numpy as np
+import torch.nn as nn
+from blocks import _AugmentedSubset
+from sklearn.model_selection import train_test_split
 
-class _AugmentedSubset(Dataset):
-    """Wraps a subset of dataset with its own augment flag."""
 
-    def __init__(self, dataset, indices: list, augment: bool):
-        self.dataset = dataset
-        self.indices = indices
-        self.augment = augment
+def collate_fn(batch):
+    return tuple(zip(*batch))
 
-    def __len__(self):
-        return len(self.indices)
-
-    def __getitem__(self, idx):
-        original = self.dataset.augment
-        self.dataset.augment = self.augment
-        try:
-            return self.dataset[self.indices[idx]]
-        finally:
-            self.dataset.augment = original
-          
+DATASET_ARGS = {
+    "default": {
+        "batch_size": 16,
+        "collate_fn": None,
+    },
+    "MaskRCNN": {
+        "batch_size": 2,
+        "collate_fn": collate_fn,
+    },
+    "FPNCentreNet": {
+        "batch_size": 4,
+        "collate_fn": None,
+    },
+}
 
 def get_loaders(
     paths,
     dataset_type,
     val_split: float = 0.2,
-    batch_size: int = 16,
+    batch_size: int = 8,
     seed: int = 42,
 ):
     full_dataset = dataset_type(paths, augment=False)
@@ -76,8 +78,7 @@ def _region_paths(region_name):
         paths.extend(glob.glob(f"/content/drive/MyDrive/IRP/SNIPCluster/{d}/*.npz"))
     return sorted(paths)
 
-
-def train_fold(train_paths, val_paths, epochs, model_info, batch_size=16):
+def train_fold(model_type, train_paths, val_paths, epochs, model_info, batch_size=8):
     """ 
     Train one cross-validation fold, model/architecture flexible!
     """
@@ -91,14 +92,31 @@ def train_fold(train_paths, val_paths, epochs, model_info, batch_size=16):
         w.append(1.0 + float(d["scd_pixel_fraction"]))
     sampler = WeightedRandomSampler(w, num_samples=len(w), replacement=True)
 
-    train_loader = DataLoader(train_set, batch_size=batch_size, sampler=sampler, num_workers=0)
-    val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=0)
+    loader_args = DATASET_ARGS.get(model_type, DATASET_ARGS["default"]).copy()
 
-    model = model_info['model'](in_channels=4, base_filters=64)
+    if batch_size is not None:
+        loader_args["batch_size"] = batch_size
+
+    # Remove collate_fn if None, otherwise DataLoader may complain in some cases
+    if loader_args.get("collate_fn") is None:
+        loader_args.pop("collate_fn")
+
+
+    train_loader = DataLoader(train_set,
+                            shuffle=True,
+                            num_workers=0,
+                            **loader_args)
+
+    val_loader = DataLoader(val_set,
+                            shuffle=False,
+                            num_workers=0,
+                            **loader_args)
+    
+    model = model_info['model']()
     criterion = model_info['loss']
     fn = model_info['train_fn']
 
-    vls, tls, precisions, recalls, f1s, model, val_loader =  fn(model, criterion, train_loader, val_loader, epochs)
+    vls, tls, precisions, recalls, f1s, best_model, val_loader =  fn(model, criterion, train_loader, val_loader, epochs)
     metrics = {'vls': vls,
               'tls': tls,
               'precisions': precisions,
@@ -106,15 +124,45 @@ def train_fold(train_paths, val_paths, epochs, model_info, batch_size=16):
               'f1s': f1s,
               }
 
-    return metrics, model, val_loader
+    return metrics, best_model, val_loader
 
-def train_model(paths, epochs, model_info):
-    train_loader, val_loader, _ = get_loaders(paths, model_info['dataset'])
 
-    model = model_info['model'](in_channels=4, base_filters=64)
+def train_model(model_type, paths, epochs, model_info, batch_size=8):
+
+    # get train-val split
+    train_paths, val_paths = train_test_split(paths, test_size=0.2)
+
+    # init datasets (custom per model)
+    train_set = model_info['dataset'](train_paths, augment=True)
+    val_set = model_info['dataset'](val_paths, augment=False)
+
+    # decide loader args and init loaders
+    loader_args = DATASET_ARGS.get(model_type, DATASET_ARGS["default"]).copy()
+
+    if batch_size is not None:
+        loader_args["batch_size"] = batch_size
+
+    # Remove collate_fn if None
+    if loader_args.get("collate_fn") is None:
+        loader_args.pop("collate_fn")
+
+    train_loader = DataLoader(train_set,
+                            shuffle=True,
+                            num_workers=0,
+                            **loader_args)
+
+    val_loader = DataLoader(val_set,
+                            shuffle=False,
+                            num_workers=0,
+                            **loader_args)
+
+
+    # build models, losses and train fns
+    model = model_info['model']
     criterion = model_info['loss']
     fn = model_info['train_fn']
 
+    # train and return metric lists
     vls, tls, precisions, recalls, f1s, model, val_loader =  fn(model, criterion, train_loader, val_loader, epochs)
     metrics = {'vls': vls,
               'tls': tls,
@@ -138,7 +186,7 @@ def _run_cv_comparison(epochs, models):
             val_paths = _region_paths(held_out)
             train_paths = [p for r in REGION_GROUPS if r != held_out for p in _region_paths(r)]
 
-            metrics, best_model, val_loader = train_fold(train_paths, val_paths, epochs, model_info)
+            metrics, best_model, val_loader = train_fold(model, train_paths, val_paths, epochs, model_info)
             if model not in cv_results:
                 cv_results[model] = {} # Initialize dictionary for each model
             cv_results[model][held_out] = metrics # Store metrics per held_out region
@@ -174,4 +222,6 @@ def compare(models, epochs, paths=None, cv=True):
         else:
             return('please provide paths (as a list)')
             
+def plot_val_metrics():
+    ...
 

@@ -8,112 +8,17 @@ from datetime import datetime
 from scipy.ndimage import label, center_of_mass
 import random
 from torch.utils.data import TensorDataset, DataLoader, Dataset
+from blocks import DoubleConv, ASPP, Down, Up
+from helpers import object_centroid_metrics
 
 _BANDS_TO_LOAD = ['DEM', 'DEM_SLOPE', 'RR', 'LAPLACE']
 
 # similar to all previous models used, just written up formally to import into colab with ease for cross-validation
 # model comparison
 
-class DoubleConv(nn.Module):
-    """Back bone UNET. 2 * (Conv2d + Batch + Relu)"""
-
-    def __init__(self, in_ch: int, out_ch: int):
-        super().__init__()
-        self.block = nn.Sequential(
-            nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1, bias=False),
-            nn.GroupNorm(8, out_ch),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1, bias=False),
-            nn.GroupNorm(8, out_ch),
-            nn.ReLU(inplace=True),
-        )
-
-    def forward(self, x):
-        return self.block(x)
-
-class ChannelAttention(nn.Module):
-
-    # learns which channels are the most important. very helpful, but may struggle
-    # if trained on one region (where one channel is more dominant), and tested on another
-    # may hurt cross-geography generalisation
-    def __init__(self, channels, reduction=8):
-        super().__init__()
-        self.avg = nn.AdaptiveAvgPool2d(1)
-        self.fc  = nn.Sequential(
-            nn.Linear(channels, channels // reduction),
-            nn.ReLU(),
-            nn.Linear(channels // reduction, channels),
-            nn.Sigmoid()
-        )
-
-    def forward(self, x):
-        w = self.fc(self.avg(x).squeeze(-1).squeeze(-1))
-        return x * w.unsqueeze(-1).unsqueeze(-1)
-
-
-class Down(nn.Module):
-    """MaxPool2x2 followed by DoubleConv, one encoder step."""
-
-    def __init__(self, in_ch: int, out_ch: int):
-        super().__init__()
-        self.block = nn.Sequential(
-            nn.MaxPool2d(2),
-            DoubleConv(in_ch, out_ch),
-        )
-
-    def forward(self, x):
-        return self.block(x)
-
-# test transpose as opposed to bilinear up
-# might get checkboard artefacts but more parameters ?
-class Up(nn.Module):
-    """Bilinear upsample, concatenate skip, DoubleConv. one decoder step"""
-
-    def __init__(self, x_ch: int, skip_ch, out_ch: int):
-        super().__init__()
-        # in_ch comes from (upsampled features + skip features)
-       #self.up   = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True)
-        self.up = nn.ConvTranspose2d(
-            x_ch,
-            x_ch,
-            kernel_size=2,
-            stride=2
-        )
-        self.conv = DoubleConv(x_ch + skip_ch, out_ch)
-
-    def forward(self, x, skip):
-        x = self.up(x)
-
-        # Pad if the skip tensor is slightly larger (odd input dimensions)
-        if x.shape != skip.shape:
-            x = F.pad(x, [0, skip.shape[-1] - x.shape[-1],
-                           0, skip.shape[-2] - x.shape[-2]])
-
-        x = torch.cat([skip, x], dim=1) # channel-wise concat
-        return self.conv(x)
-
-class ASPP(nn.Module):
-    # analyses image at multiple scales in parralell.
-    # in theory, it helps to detects both small and large SCDs
-
-    def __init__(self, in_ch, out_ch, dilations=(1, 3, 6, 12)):
-        super().__init__()
-        self.branches = nn.ModuleList([
-            nn.Sequential(
-                nn.Conv2d(in_ch, out_ch, 3, padding=d, dilation=d, bias=False),
-                nn.GroupNorm(8, out_ch),
-                nn.ReLU(inplace=True)
-            ) for d in dilations
-        ])
-        self.project = nn.Conv2d(out_ch * len(dilations), out_ch, 1, bias=False)
-
-    def forward(self, x):
-        return self.project(torch.cat([b(x) for b in self.branches], dim=1))
-
-
 # combined
 class SegNet(nn.Module):
-    def __init__(self, in_channels=1, base_filters=32):
+    def __init__(self, in_channels=4, base_filters=64):
         super().__init__()
         f = base_filters
 
@@ -126,7 +31,6 @@ class SegNet(nn.Module):
         # Bottleneck, pool down then ASPP for *some* scale invariance
         self.pool = nn.MaxPool2d(2)
         self.aspp = ASPP(f * 8, f * 16)
-        self.bottleneck_attn = ChannelAttention(f * 16)
         self.bottleneck_drop = nn.Dropout2d(p=0.2)
 
        # Decoder
@@ -137,7 +41,6 @@ class SegNet(nn.Module):
 
         self.out_conv = nn.Conv2d(f, 1, kernel_size=1)
 
-        self.out_conv = nn.Conv2d(f, 1, kernel_size=1)
 
     def forward(self, x):
         s1 = self.enc1(x)
@@ -157,79 +60,6 @@ class SegNet(nn.Module):
 
         return self.out_conv(x)
     
-
-# GenAI assistance in creating this function, whcih takes in the predicted mask and compares the mask object centroids to
-# ground truth mask, if the predicted mask centroid is in the ground truth mask, it qualifies as a true positive.
-# only one prediction allowed per ground truth object. similar to CentreNet function but is comparing mask agaisnt mask.
-# has to derive centroid from mask first
-def object_centroid_metrics(pred_mask, gt_mask):
-    """
-    A prediction is counted as a true positive if the centroid of a predicted object
-    falls inside an unmatched ground-truth object.
-    """
-
-    pred_labels, n_pred = label(pred_mask > 0)
-    gt_labels, n_gt = label(gt_mask > 0)
-
-    matched_gt = set()
-
-    tp = 0
-    fp = 0
-
-    for pred_id in range(1, n_pred + 1):
-
-        # gets pred_labels[pred_id]
-        pred_obj = pred_labels == pred_id
-
-        min_area = 20 # 20 pixel area prediction likely noise
-        if pred_obj.sum() < min_area:
-          continue
-
-        # centroid of predicted blob
-        cy, cx = center_of_mass(pred_obj)
-
-        if np.isnan(cx) or np.isnan(cy):
-            continue
-
-        r = int(round(cy))
-        c = int(round(cx))
-
-        # ensure inside image
-        r = np.clip(r, 0, gt_mask.shape[0] - 1)
-        c = np.clip(c, 0, gt_mask.shape[1] - 1)
-
-        gt_id = gt_labels[r, c]
-
-        if gt_id == 0:
-            fp += 1
-            continue
-
-        # already matched
-        if gt_id in matched_gt:
-            fp += 1
-            continue
-
-        matched_gt.add(gt_id)
-        tp += 1
-
-    fn = n_gt - tp
-
-    if tp + fp == 0:
-        precision = 0.0
-    else:
-        precision = tp / (tp + fp)
-
-    if tp + fn == 0:
-        recall = 0.0
-    else:
-        recall = tp / (tp + fn)
-
-    if precision + recall == 0:
-        f1 = 0.0
-    else:
-        f1 = 2 * precision * recall / (precision + recall)
-
-    return tp, fp, fn, precision, recall, f1
 
 
 # custom loss for segmentation. 
@@ -494,28 +324,6 @@ class SegNetDataset(Dataset):
 
         return image, mask
 
-    def _normalize(self, image, stats):
-        local = {name: i for i, name in enumerate(_BANDS_TO_LOAD)}
-
-        for name, i in local.items():
-            band = image[i]
-            s = stats.get(name) if stats else None
-
-            if name == 'DEM' and s:
-                band = np.clip(band, s['p1'], s['p99'])
-                image[i] = (band - s['mean']) / (s['std'] + 1e-6)
-            elif name == 'DEM_SLOPE' and s:
-                band = np.log1p(np.clip(band, s['p1'], s['p99']))
-                image[i] = (band - s['mean']) / (s['std'] + 1e-6)
-            elif name == 'RR' and s:
-                band = np.clip(band, s['p1'], s['p99'])
-                image[i] = (band - s['mean']) / (s['std'] + 1e-6)
-            elif name == 'LAPLACE' and s:
-                band = np.clip(band, s['p1'], s['p99'])
-                image[i] = (band - s['mean']) / (s['std'] + 1e-6)
-
-        return image
-
     def __getitem__(self, idx):
         path = self.paths[idx]
         d = np.load(path, allow_pickle=True)
@@ -527,9 +335,16 @@ class SegNetDataset(Dataset):
         image = d["image"][band_indices].astype(np.float32)
         mask = d["labels"].astype(np.float32)
 
-        for i in range(len(_BANDS_TO_LOAD)):
-            band = image[i]
-            image[i] = (band - band.mean()) / (band.std() + 1e-6)
+        for i, name in enumerate(_BANDS_TO_LOAD):
+          band = image[i].astype(np.float32)
+
+          if name == ["DEM_SLOPE"]:
+              band = np.log1p(np.maximum(band, 0))
+
+          elif name == ['LAPLCE']:
+              band = np.sign(band) * np.log1p(np.abs(band))
+
+          image[i] = (band - band.mean()) / (band.std() + 1e-6)
 
         if self.augment:
             image, mask = self._augment(image, mask)
