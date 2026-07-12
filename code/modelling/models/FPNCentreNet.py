@@ -770,9 +770,7 @@ def FPN_CN_train(
             model.set_training_stage(stage=current_stage)
             optimizer = make_optimizer(model, current_stage)
 
-        # -------------------------
         # Train
-        # -------------------------
         model.train()
         train_loss = 0.0
 
@@ -799,9 +797,7 @@ def FPN_CN_train(
 
         avg_train = train_loss / max(1, len(train_loader))
 
-        # -------------------------
         # Validation
-        # -------------------------
         model.eval()
         val_loss = 0.0
         tp = 0
