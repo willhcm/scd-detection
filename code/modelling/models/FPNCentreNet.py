@@ -14,6 +14,7 @@ from torch.utils.data import Dataset
 from pathlib import Path
 from datetime import datetime
 import copy
+from helpers import calculate_hillshade
 
 
 # constants
@@ -42,6 +43,25 @@ _BANDS_TO_LOAD = ["DEM", "DEM_SLOPE", "RR", "LAPLACE"]
 # CV on brazil -> 0.76.
 
 # WITH PAN:
+# 0.78
+# only a small increase in parameters.
+# keeping!
+
+## Ablation 2:
+# adding hillshade into __getitem__, will slow learning but as a one-time test its doable.
+# RESULT: Yes, 0.805. also may specificalyl help UK detections (smaller, lower signal from RR)
+# completely stable at 0.8
+# could likely go higher w more trainning/higher lr.
+
+# Ablation 3:
+# keeping weights from 3 pretrained conv1 layer (not replacing all with mean). 
+# threshold changed again: 0.825
+
+# ideas to change: threshold tuning, all negatives, less negatives. need to sort out broad hill top 
+
+# next: approve/deny negatives!
+# done!
+
 
 
 class PANNeck(nn.Module):
@@ -236,7 +256,7 @@ class FPNCentreNet(nn.Module):
             for parameter in self.backbone.body.layer3.parameters():
                 parameter.requires_grad = True
                 
-    def _build_backbone(self, in_channels=4):
+    def _build_backbone(self, in_channels=5):
         detector = maskrcnn_resnet50_fpn(
             weights=MaskRCNN_ResNet50_FPN_Weights.DEFAULT,
         )
@@ -254,12 +274,15 @@ class FPNCentreNet(nn.Module):
         )
 
         with torch.no_grad():
-            mean_weight = old_conv.weight.mean(dim=1, keepdim=True)
+            # Copy pretrained RGB weights
+            new_conv.weight[:, :3].copy_(old_conv.weight)
 
-            # Initialise every terrain channel from the average RGB filter.
-            new_conv.weight.copy_(
-                mean_weight.repeat(1, in_channels, 1, 1)
-            )
+            # Initialise any extra channels using the RGB mean
+            if in_channels > 3:
+                mean_weight = old_conv.weight.mean(dim=1, keepdim=True)
+                new_conv.weight[:, 3:].copy_(
+                    mean_weight.repeat(1, in_channels - 3, 1, 1)
+                )
 
         backbone.body.conv1 = new_conv
 
@@ -301,7 +324,7 @@ def build_centernet_targets_for_objects(
     mask,
     stride=4,
     radius_range_px=(0, np.inf),
-    min_sigma=1.0,
+    min_sigma=2.0,
     max_sigma=6.0,
     base_weight=1.0,
     centre_weight=5.0,
@@ -525,6 +548,17 @@ class MultiLevelCentreNetDataset(Dataset):
             level_radius_bins=self.level_radius_bins,
         )
 
+        # hillshade test
+        dem = image[0]
+        hillshade = calculate_hillshade(
+        dem,
+    )
+        
+        image = np.concatenate(
+        [image, hillshade[None, :, :]],
+        axis=0,
+    )
+
         targets = {}
         for level, t in targets_np.items():
             targets[level] = {
@@ -613,8 +647,6 @@ def multilevel_centernet_loss(
 
     return total_loss, logs
 
-
-
 def simple_detection_nms(detections, min_dist_px=20, radius_fraction=0.5):
     """
     Remove duplicate centre detections from different FPN levels.
@@ -669,10 +701,10 @@ def decode_multilevel_predictions(
     # thresholds tuned using score confidence at differnt levels
     if thresholds is None:
         thresholds = {
-            "0": 0.5,
-            "1": 0.525,
-            "2": 0.575,
-            "3": 0.75,
+            "0": 0.475,
+            "1": 0.65,
+            "2": 0.8,
+            "3": 0.9,
         }
 
     # need to tune likely
@@ -773,7 +805,7 @@ def build_staged_optimizer(model, weight_decay=1e-4):
             },
             {
                 "name": "pan",
-                "params": model.backbone.pan.parameters(),
+                "params": model.pan.parameters(),
                 "lr": 1e-3,
             },
             {
@@ -821,9 +853,9 @@ STAGE_LRS = {
         "layer3": 0.0,
     },
     4: {
-        "heads": 1e-5,
+        "heads": 1e-6,
         "conv1": 5e-7,
-        "pan": 1e-6,
+        "pan": 5e-7,
         "fpn": 1e-7,
         "layer4": 5e-7,
         "layer3": 1e-7,
