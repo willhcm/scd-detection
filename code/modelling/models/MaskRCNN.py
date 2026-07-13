@@ -26,8 +26,7 @@ class MaskRCNN(nn.Module):
         aspect_ratios=((0.5, 1.0, 2.0),) * 5, # default
         trainable_backbone_layers=3,
         loss_weights=None,
-        freeze=True,
-        train_schedule = False
+        freeze=False,
     ):
         super().__init__()
  
@@ -44,7 +43,6 @@ class MaskRCNN(nn.Module):
         self.model.transform.image_std = [1.0] * in_channels
         self._set_anchor_generator(anchor_sizes, aspect_ratios)
         self._replace_heads(num_classes)
-        self.train_schedule = train_schedule
  
         # multiplies each named loss the model returns, e.g. {"loss_box_reg": 2.0}
         self.loss_weights = loss_weights or {}
@@ -55,6 +53,7 @@ class MaskRCNN(nn.Module):
         self.set_training_stage(stage=1)
 
     def set_training_stage(self, stage):
+
         # Freeze backbone.
         for parameter in self.model.backbone.parameters():
             parameter.requires_grad = False

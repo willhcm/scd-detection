@@ -35,38 +35,152 @@ LEVEL_RADIUS_BINS = {
 
 _BANDS_TO_LOAD = ["DEM", "DEM_SLOPE", "RR", "LAPLACE"]
 
-class CenterHead(nn.Module):
-    def __init__(self, in_channels=256, hidden=128):
+# simulating yolov8 PAN neck into FPN CentreNet (and running an ablation with it included/exlcuded.)
+
+# WITHOUT PAN:
+# best without approx 0.77-0.8.
+# CV on brazil -> 0.76.
+
+# WITH PAN:
+
+
+class PANNeck(nn.Module):
+    def __init__(self, channels=256):
         super().__init__()
 
-        self.shared = nn.Sequential(
-            nn.Conv2d(in_channels, hidden, 3, padding=1, bias=False),
-            nn.GroupNorm(8, hidden),
+        self.down2_to_3 = nn.Sequential(
+            nn.Conv2d(
+                channels,
+                channels,
+                kernel_size=3,
+                stride=2,
+                padding=1,
+                bias=False,
+            ),
+            nn.GroupNorm(8, channels),
             nn.ReLU(inplace=True),
-            nn.Conv2d(hidden, hidden, 3, padding=1, bias=False),
+        )
+
+        self.down3_to_4 = nn.Sequential(
+            nn.Conv2d(
+                channels,
+                channels,
+                kernel_size=3,
+                stride=2,
+                padding=1,
+                bias=False,
+            ),
+            nn.GroupNorm(8, channels),
+            nn.ReLU(inplace=True),
+        )
+
+        self.down4_to_5 = nn.Sequential(
+            nn.Conv2d(
+                channels,
+                channels,
+                kernel_size=3,
+                stride=2,
+                padding=1,
+                bias=False,
+            ),
+            nn.GroupNorm(8, channels),
+            nn.ReLU(inplace=True),
+        )
+
+        self.refine2 = nn.Sequential(
+            nn.Conv2d(channels, channels, 3, padding=1, bias=False),
+            nn.GroupNorm(8, channels),
+            nn.ReLU(inplace=True),
+        )
+
+        self.refine3 = nn.Sequential(
+            nn.Conv2d(channels, channels, 3, padding=1, bias=False),
+            nn.GroupNorm(8, channels),
+            nn.ReLU(inplace=True),
+        )
+
+        self.refine4 = nn.Sequential(
+            nn.Conv2d(channels, channels, 3, padding=1, bias=False),
+            nn.GroupNorm(8, channels),
+            nn.ReLU(inplace=True),
+        )
+
+        self.refine5 = nn.Sequential(
+            nn.Conv2d(channels, channels, 3, padding=1, bias=False),
+            nn.GroupNorm(8, channels),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, features):
+        p2 = features["0"]
+        p3 = features["1"]
+        p4 = features["2"]
+        p5 = features["3"]
+
+        n2 = self.refine2(p2)
+
+        n3 = self.refine3(
+            p3 + self.down2_to_3(n2)
+        )
+
+        n4 = self.refine4(
+            p4 + self.down3_to_4(n3)
+        )
+
+        n5 = self.refine5(
+            p5 + self.down4_to_5(n4)
+        )
+
+        return {
+            "0": n2,
+            "1": n3,
+            "2": n4,
+            "3": n5,
+        }
+
+# changed heads so heatmap and regression heads have more indiviaul expression. more parameters,
+# but loss should be smoother (not fighting each other)
+class CentreHead(nn.Module):
+    def __init__(self, in_channels=256, hidden=256):
+        super().__init__()
+
+        self.stem = nn.Sequential(
+            nn.Conv2d(in_channels, hidden, 3, padding=1, bias=False),
             nn.GroupNorm(8, hidden),
             nn.ReLU(inplace=True),
         )
 
-         # added to reduce overfitting
-        self.hm_drop = nn.Dropout2d(0.3)
-        self.reg_drop = nn.Dropout2d(0.1)
-        
-       
-        self.heatmap = nn.Conv2d(hidden, 1, 1)
-        self.offset  = nn.Conv2d(hidden, 2, 1)
-        self.radius  = nn.Conv2d(hidden, 1, 1)
+        # reduced dropout.
+        self.heatmap_tower = nn.Sequential(
+            nn.Conv2d(hidden, hidden, 3, padding=1, bias=False),
+            nn.GroupNorm(8, hidden),
+            nn.ReLU(inplace=True),
+            nn.Dropout2d(0.15),
+        )
 
-        # start heatmap with low confidence (sigmoids to 0.1)
+        self.regression_tower = nn.Sequential(
+            nn.Conv2d(hidden, hidden, 3, padding=1, bias=False),
+            nn.GroupNorm(8, hidden),
+            nn.ReLU(inplace=True),
+            nn.Dropout2d(0.1),
+        )
+
+        self.heatmap = nn.Conv2d(hidden, 1, 1)
+        self.offset = nn.Conv2d(hidden, 2, 1)
+        self.radius = nn.Conv2d(hidden, 1, 1)
+
         nn.init.constant_(self.heatmap.bias, -2.19)
 
     def forward(self, x):
-        feat = self.shared(x)
-        
+        shared = self.stem(x)
+
+        hm_feat = self.heatmap_tower(shared)
+        reg_feat = self.regression_tower(shared)
+
         return {
-            "heatmap": self.heatmap(self.hm_drop(feat)),
-            "offset": self.offset(self.reg_drop(feat)),
-            "radius": self.radius(self.reg_drop(feat)),
+            "heatmap": self.heatmap(hm_feat),
+            "offset": self.offset(reg_feat),
+            "radius": self.radius(reg_feat),
         }
             
 class FPNCentreNet(nn.Module):
@@ -76,12 +190,12 @@ class FPNCentreNet(nn.Module):
         self.backbone = self._build_backbone()
 
         self.heads = nn.ModuleDict({
-            "0": CenterHead(256),
-            "1": CenterHead(256),
-            "2": CenterHead(256),
-            "3": CenterHead(256),
+            "0": CentreHead(256),
+            "1": CentreHead(256),
+            "2": CentreHead(256),
+            "3": CentreHead(256),
         })
-
+        self.pan = PANNeck(channels=256)
         # Start with only conv1, bn1, and heads trainable
         self.train_all = train_all
         self.set_training_stage(stage=1)
@@ -91,6 +205,10 @@ class FPNCentreNet(nn.Module):
             for parameter in self.parameters():
                 parameter.requires_grad = True
             return
+
+        # pan always train
+        for p in self.pan.parameters():
+            p.requires_grad = True
 
         # Freeze backbone.
         for parameter in self.backbone.parameters():
@@ -160,10 +278,19 @@ class FPNCentreNet(nn.Module):
     def forward(self, images):
         features = self.backbone(images)
 
-        outputs = {}
-        for level, feat in features.items():
-            if level in self.heads:
-                outputs[level] = self.heads[level](feat)
+        features = {
+            level: feat
+            for level, feat in features.items()
+            if level in self.heads
+        }
+
+        features = self.pan(features)
+
+        outputs = {
+            level: self.heads[level](features[level])
+            for level in self.heads
+            if level in features
+        }
 
         return outputs
     
@@ -645,6 +772,11 @@ def build_staged_optimizer(model, weight_decay=1e-4):
                 "lr": 5e-6,
             },
             {
+                "name": "pan",
+                "params": model.backbone.pan.parameters(),
+                "lr": 1e-3,
+            },
+            {
                 "name": "fpn",
                 "params": model.backbone.fpn.parameters(),
                 "lr": 0.0,
@@ -667,6 +799,7 @@ STAGE_LRS = {
     1: {
         "heads": 1e-3,
         "conv1": 5e-6,
+        "pan": 1e-3,
         "fpn": 0.0,
         "layer4": 0.0,
         "layer3": 0.0,
@@ -674,21 +807,24 @@ STAGE_LRS = {
     2: {
         "heads": 5e-4,
         "conv1": 5e-6,
-        "fpn": 1e-5,
+        "pan": 1e-4,
+        "fpn": 3e-6,
         "layer4": 0.0,
         "layer3": 0.0,
     },
     3: {
         "heads": 1e-4,
         "conv1": 1e-6,
-        "fpn": 3e-6,
-        "layer4": 1e-6,
+        "pan": 5e-5,
+        "fpn": 1e-6,
+        "layer4": 1e-7,
         "layer3": 0.0,
     },
     4: {
         "heads": 1e-5,
         "conv1": 5e-7,
-        "fpn": 1e-6,
+        "pan": 1e-6,
+        "fpn": 1e-7,
         "layer4": 5e-7,
         "layer3": 1e-7,
     },
@@ -739,10 +875,10 @@ def FPN_CN_train(
 
 
     level_weights={
-        "0": 0.40,
-        "1": 0.30,
-        "2": 0.20,
-        "3": 0.1,
+        "0": 1,
+        "1": 1,
+        "2": 1,
+        "3": 1,
     }
 
 
