@@ -47,7 +47,12 @@ class CenterHead(nn.Module):
             nn.GroupNorm(8, hidden),
             nn.ReLU(inplace=True),
         )
-        self.head_drop = nn.Dropout2d(0.2) # added to reduce overfitting
+
+         # added to reduce overfitting
+        self.hm_drop = nn.Dropout2d(0.3)
+        self.reg_drop = nn.Dropout2d(0.1)
+        
+       
         self.heatmap = nn.Conv2d(hidden, 1, 1)
         self.offset  = nn.Conv2d(hidden, 2, 1)
         self.radius  = nn.Conv2d(hidden, 1, 1)
@@ -57,11 +62,11 @@ class CenterHead(nn.Module):
 
     def forward(self, x):
         feat = self.shared(x)
-        feat = self.head_drop(feat)
+        
         return {
-            "heatmap": self.heatmap(feat),
-            "offset": self.offset(feat),
-            "radius": self.radius(feat),
+            "heatmap": self.heatmap(self.hm_drop(feat)),
+            "offset": self.offset(self.reg_drop(feat)),
+            "radius": self.radius(self.reg_drop(feat)),
         }
             
 class FPNCentreNet(nn.Module):
@@ -537,9 +542,9 @@ def decode_multilevel_predictions(
     # thresholds tuned using score confidence at differnt levels
     if thresholds is None:
         thresholds = {
-            "0": 0.425,
-            "1": 0.475,
-            "2": 0.55,
+            "0": 0.5,
+            "1": 0.525,
+            "2": 0.575,
             "3": 0.75,
         }
 
@@ -661,7 +666,7 @@ def build_staged_optimizer(model, weight_decay=1e-4):
 STAGE_LRS = {
     1: {
         "heads": 1e-3,
-        "conv1": 1e-5,
+        "conv1": 5e-6,
         "fpn": 0.0,
         "layer4": 0.0,
         "layer3": 0.0,
@@ -681,7 +686,7 @@ STAGE_LRS = {
         "layer3": 0.0,
     },
     4: {
-        "heads": 3e-5,
+        "heads": 1e-5,
         "conv1": 5e-7,
         "fpn": 1e-6,
         "layer4": 5e-7,
@@ -786,7 +791,7 @@ def FPN_CN_train(
     current_stage = 1
     apply_training_stage(model, optimizer, current_stage)
 
-
+    patience = 20
     for epoch in range(epochs):
 
         # dont reinit adam, just update lrs.
@@ -914,6 +919,10 @@ def FPN_CN_train(
             f"train {avg_train:.4f} | val {avg_val:.4f} | "
             f"P {precision:.4f} | R {recall:.4f} | F1 {f1:.4f}"
         )
+
+        if bad_epochs >= patience:
+            print("early stopping")
+            break
 
     if best_state is not None:
         model.load_state_dict(best_state)

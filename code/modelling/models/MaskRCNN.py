@@ -55,39 +55,39 @@ class MaskRCNN(nn.Module):
         self.set_training_stage(stage=1)
 
     def set_training_stage(self, stage):
-        if self.train_schedule:
+        if self.train_all:
+            for parameter in self.parameters():
+                parameter.requires_grad = True
+            return
 
-            # Freeze the entire backbone first
-            for param in self.model.backbone.parameters():
-                param.requires_grad = False
+        # Freeze backbone.
+        for parameter in self.backbone.parameters():
+            parameter.requires_grad = False
 
-            # Heads are always trainable
-            for param in self.model.rpn.parameters():
-                param.requires_grad = True
+        # Heads always train.
+        for parameter in self.rpn.parameters():
+            parameter.requires_grad = True
 
-            for param in self.model.roi_heads.parameters():
-                param.requires_grad = True
+        for parameter in self.roi_heads.parameters():
+            parameter.requires_grad = True
 
-            # New 4-channel input layer remains trainable
-            for param in self.model.backbone.body.conv1.parameters():
-                param.requires_grad = True
+        # New input convolution.
+        for parameter in self.backbone.body.conv1.parameters():
+            parameter.requires_grad = True
 
-            for param in self.model.backbone.body.bn1.parameters():
-                param.requires_grad = True
+        if stage >= 2:
+            # Adapt the feature pyramid.
+            for parameter in self.backbone.fpn.parameters():
+                parameter.requires_grad = True
 
-            if stage >= 2:
-                # Unfreeze FPN
-                for param in self.model.backbone.fpn.parameters():
-                    param.requires_grad = True
+        if stage >= 3:
+            # Adapt highest-level ResNet features.
+            for parameter in self.backbone.body.layer4.parameters():
+                parameter.requires_grad = True
 
-            if stage >= 3:
-                # Unfreeze deepest ResNet block
-                for param in self.model.backbone.body.layer4.parameters():
-                    param.requires_grad = True
-
-                # Unfreeze layer3 as well
-                for param in self.model.backbone.body.layer3.parameters():
-                    param.requires_grad = True
+        if stage >= 4:
+            for parameter in self.backbone.body.layer3.parameters():
+                parameter.requires_grad = True
 
     def _replace_input_conv(self, in_channels):
         old_conv = self.model.backbone.body.conv1
@@ -345,86 +345,6 @@ def get_rcnn_loaders(train_paths, val_paths):
 import numpy as np
 from scipy.ndimage import label, center_of_mass
 
-def make_optimizer(model, stage):
-    if stage == 1:
-        return torch.optim.AdamW(
-            [
-                {
-                    "params": model.model.rpn.parameters(),
-                    "lr": 1e-3,
-                },
-                {
-                    "params": model.model.roi_heads.parameters(),
-                    "lr": 1e-3,
-                },
-                {
-                    "params": model.model.backbone.body.conv1.parameters(),
-                    "lr": 3e-4,
-                },
-                {
-                    "params": model.model.backbone.body.bn1.parameters(),
-                    "lr": 3e-4,
-                },
-            ],
-            weight_decay=1e-4,
-        )
-
-    elif stage == 2:
-        return torch.optim.AdamW(
-            [
-                {
-                    "params": model.model.rpn.parameters(),
-                    "lr": 1e-4,
-                },
-                {
-                    "params": model.model.roi_heads.parameters(),
-                    "lr": 1e-4,
-                },
-                {
-                    "params": model.model.backbone.body.conv1.parameters(),
-                    "lr": 5e-5,
-                },
-                {
-                    "params": model.model.backbone.body.bn1.parameters(),
-                    "lr": 5e-5,
-                },
-                {
-                    "params": model.model.backbone.fpn.parameters(),
-                    "lr": 1e-6,
-                }],
-            weight_decay=1e-4,
-        )
-    
-    elif stage == 3:
-        return torch.optim.AdamW(
-            [
-                {
-                    "params": model.model.rpn.parameters(),
-                    "lr": 1e-5,
-                },
-                {
-                    "params": model.model.roi_heads.parameters(),
-                    "lr": 1e-5,
-                },
-                {
-                    "params": model.model.backbone.body.conv1.parameters(),
-                    "lr": 1e-6,
-                },
-                {
-                    "params": model.model.backbone.body.bn1.parameters(),
-                    "lr": 1e-6,
-                },
-                {
-                    "params": model.model.backbone.fpn.parameters(),
-                    "lr": 1e-7,
-                },
-                {
-                    "params": model.model.backbone.body.layer4.parameters(),
-                    "lr": 1e-7,
-                },
-            ],
-            weight_decay=1e-4,
-        )
 
 
 def binary_iou(pred_union, gt_union):
@@ -620,6 +540,101 @@ def evaluate_maskrcnn_metrics(model, val_loader, device, mask_thresh=0.5, score_
 # ai assistance with mask rcnn train functionality and helper functions. original code repo from paper is hard to understand
 # ChatGPT and Claude Sonnet 5 used - whenever I have said AI is used its these models.
 
+
+def build_staged_optimizer(model, weight_decay=1e-4):
+    return torch.optim.AdamW(
+        [
+            {
+                "name": "rpn",
+                "params": model.rpn.parameters(),
+                "lr": 1e-3,
+            },
+            {
+                "name": "roi_heads",
+                "params": model.roi_heads.parameters(),
+                "lr": 1e-3,
+            },
+            {
+                "name": "conv1",
+                "params": model.backbone.body.conv1.parameters(),
+                "lr": 5e-6,
+            },
+            {
+                "name": "fpn",
+                "params": model.backbone.fpn.parameters(),
+                "lr": 0.0,
+            },
+            {
+                "name": "layer4",
+                "params": model.backbone.body.layer4.parameters(),
+                "lr": 0.0,
+            },
+            {
+                "name": "layer3",
+                "params": model.backbone.body.layer3.parameters(),
+                "lr": 0.0,
+            },
+        ],
+        weight_decay=weight_decay,
+    )
+
+STAGE_LRS = {
+    1: {
+        "rpn": 1e-3,
+        "roi_heads": 1e-3,
+        "conv1": 1e-5,
+        "fpn": 0.0,
+        "layer4": 0.0,
+        "layer3": 0.0,
+    },
+    2: {
+        "rpn": 1e-3,
+        "roi_heads": 1e-3,
+        "conv1": 5e-6,
+        "fpn": 1e-5,
+        "layer4": 0.0,
+        "layer3": 0.0,
+    },
+    3: {
+        "rpn": 1e-3,
+        "roi_heads": 1e-3,
+        "conv1": 1e-6,
+        "fpn": 3e-6,
+        "layer4": 1e-6,
+        "layer3": 0.0,
+    },
+    4: {
+        "rpn": 1e-3,
+        "roi_heads": 1e-3,
+        "conv1": 5e-7,
+        "fpn": 1e-6,
+        "layer4": 5e-7,
+        "layer3": 1e-7,
+    },
+}
+
+
+def apply_training_stage(model, optimizer, stage):
+    model.set_training_stage(stage)
+
+    lrs = STAGE_LRS[stage]
+
+    for group in optimizer.param_groups:
+        group["lr"] = lrs[group["name"]]
+
+    print(f"Applied training stage {stage}")
+    for group in optimizer.param_groups:
+        n_trainable = sum(
+            parameter.numel()
+            for parameter in group["params"]
+            if parameter.requires_grad
+        )
+        print(
+            f"  {group['name']:8s} "
+            f"lr={group['lr']:.2e}, "
+            f"trainable={n_trainable:,}"
+        )
+
 def rcnn_train(model, _, train_loader, val_loader, epochs):
 
     import copy
@@ -651,28 +666,28 @@ def rcnn_train(model, _, train_loader, val_loader, epochs):
     val_recalls = []
     val_f1s = []
     val_ious = []
-
+    patience = 20
     current_stage = 1
-    model.set_training_stage(current_stage)
-    optimizer = make_optimizer(model, current_stage)
+    bad_epochs = 0
+    optimizer = build_staged_optimizer(
+    model,
+    weight_decay=1e-4,
+)
+    apply_training_stage(model, optimizer, current_stage)
 
     for epoch in range(EPOCHS):
-
-        # training stages 
-        if epoch == 0:
-            current_stage = 1
-            model.set_training_stage(stage=current_stage)
-            optimizer = make_optimizer(model, current_stage)
-
-        elif epoch == 30:
+            
+        if epoch == 40:
             current_stage = 2
-            model.set_training_stage(stage=current_stage)
-            optimizer = make_optimizer(model, current_stage)
+            apply_training_stage(model, optimizer, current_stage)
 
-        elif epoch == 50:
+        elif epoch == 55:
             current_stage = 3
-            model.set_training_stage(stage=current_stage)
-            optimizer = make_optimizer(model, current_stage)
+            apply_training_stage(model, optimizer, current_stage)
+
+        elif epoch == 70:
+            current_stage = 4
+            apply_training_stage(model, optimizer, current_stage)
 
 
         model.train()
@@ -747,8 +762,15 @@ def rcnn_train(model, _, train_loader, val_loader, epochs):
             }, "/content/drive/MyDrive/IRP/models/best_maskrcnn_scd.pt")
 
             print(f"Saved new best model at epoch {best_epoch} with F1={best_f1:.4f}")
+            bad_epochs = 0
+        else:
+            bad_epochs += 1
 
         scheduler.step()
+
+        if bad_epochs >= patience:
+            print("early stopping")
+            break
 
     model.load_state_dict(best_state)
 

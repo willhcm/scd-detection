@@ -141,6 +141,8 @@ def SN_train(model, criterion, train_loader, val_loader, epochs):
     vls, tls, ious, accs, precisions, recalls, f1s = [], [], [], [], [], [], []
     best_iou = 0.0
     obj_precisions, obj_recalls, obj_f1s = [], [], []
+    bad_epochs = 0
+    patience = 20
 
     for epoch in range(EPOCHS):
 
@@ -242,7 +244,9 @@ def SN_train(model, criterion, train_loader, val_loader, epochs):
 
             torch.save(model.state_dict, CHECKPOINT_DIR / f'best_epoch{epoch+1:03d}_iou{iou:.4f}.pt')
             print(f'Best checkpoint saved (iou {iou:.4f})')
-
+            bad_epochs = 0
+        else:
+            bad_epochs += 1
         print(f"Epoch {epoch+1:3d}/{EPOCHS} | "
                 f"train {avg_train:.4f} | "
                 f"val {avg_val:.4f} | "
@@ -254,6 +258,10 @@ def SN_train(model, criterion, train_loader, val_loader, epochs):
                 f"Obj_P {iou_precision:.4f} | "
                 f"Obj_R {iou_recall:.4f} | "
                 f"Obj_F1 {iou_f1:.4f} | ")
+        
+        if bad_epochs >= patience:
+            print("early stopping")
+            break
     
     model.load_state_dict(best_state)
     

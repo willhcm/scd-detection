@@ -75,7 +75,8 @@ REGION_GROUPS = {
 def _region_paths(region_name):
     paths = []
     for d in REGION_GROUPS[region_name]:
-        paths.extend(glob.glob(f"/content/drive/MyDrive/IRP/SNIPCluster/{d}/*.npz"))
+        paths.extend(glob.glob(f"/content/drive/MyDrive/IRP/Tiles/ScalesCombined/{d}/*.npz"))
+        paths.extend(glob.glob(f"/content/drive/MyDrive/IRP/NegativeFarming/{d}/*.npz")[::3])
     return sorted(paths)
 
 def train_fold(model_type, train_paths, val_paths, epochs, model_info, batch_size=8):
