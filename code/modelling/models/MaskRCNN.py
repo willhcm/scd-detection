@@ -55,11 +55,6 @@ class MaskRCNN(nn.Module):
         self.set_training_stage(stage=1)
 
     def set_training_stage(self, stage):
-        if self.train_all:
-            for parameter in self.parameters():
-                parameter.requires_grad = True
-            return
-
         # Freeze backbone.
         for parameter in self.backbone.parameters():
             parameter.requires_grad = False
