@@ -11,7 +11,10 @@ import torch
 from datastack import DataSource, _bounds_inside, OVERLAP_SIGMA_MULTIPLIER
 from rasterio.enums import Resampling
 from scipy.ndimage import sobel, gaussian_filter, laplace
-
+from SegNet import SegNet
+from MaskRCNN import MaskRCNN
+from FPNCentreNet import FPNCentreNet
+from ModelWrapper import ModelWrapper
 
 # AI assistance with conversion of DataStack logic to a deployment system. 
 # dont need to export tiles as they will only be used once at inference
@@ -19,13 +22,22 @@ from scipy.ndimage import sobel, gaussian_filter, laplace
 
 class Deployer():
 
-    def __init__(self, dem_path, model, device, resolutions, tile_size=512, stride_frac=0.75):
+    def __init__(self, dem_path, model_type, model_state_dict, device, resolutions, tile_size=512, stride_frac=0.75):
         self.dem_path = dem_path
-        self.model = model
+        self.model_type = self.model_type
+        self.model_dict = model_state_dict
+        self.model = self.build_wrapper()
+
+        # clear memory of now duplicate state dict.
+        del self.model_dict
+
         self.device = device
         self.resolutions = resolutions
         self.tile_size = tile_size
         self.stride_frac = stride_frac
+
+    def build_wrapper(self):
+        return ModelWrapper(self.model_type, self.model_dict)
 
     def _make_tile(self, dem_source, bounds, res):
 
@@ -70,12 +82,10 @@ class Deployer():
         return np.stack([dem, rr, slope, lap], axis=0)
 
     def _predict_tile(self, tile):
-        x = torch.from_numpy(tile).unsqueeze(0).float().to(self.device)
+        x = torch.from_numpy(tile).unsqueeze(0).float()
+        preds = self.model.predict(x)
 
-        # need to vary on what type of model is being used, but ok for this skeleton for now.
-        with torch.no_grad():
-            probs = torch.sigmoid(self.model(x))[0, 0].cpu().numpy()
-        return probs
+        return preds
 
     def predict_at_resolution(self, resolution):
 

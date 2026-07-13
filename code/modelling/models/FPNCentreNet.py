@@ -17,17 +17,20 @@ import copy
 
 
 # constants
-
+# readded level 3 as dataset now includes some larger SCDs.
 LEVEL_STRIDES = {
     "0": 4,
     "1": 8,
     "2": 16,
+    "3": 32
 }
 # overlapp bins, gives model choice (implicitly)
 LEVEL_RADIUS_BINS = { 
     "0": (0, 24),
     "1": (20, 48),
-    "2": (38, np.inf),
+    "2": (38, 96),
+    "3": (80, np.inf),
+
 }
 
 _BANDS_TO_LOAD = ["DEM", "DEM_SLOPE", "RR", "LAPLACE"]
@@ -60,15 +63,11 @@ class CenterHead(nn.Module):
             "offset": self.offset(feat),
             "radius": self.radius(feat),
         }
-    
-
+            
 class FPNCentreNet(nn.Module):
     def __init__(self, in_channels=4, train_all=False):
         super().__init__()
 
-        self.src_model = maskrcnn_resnet50_fpn(
-            weights=MaskRCNN_ResNet50_FPN_Weights.DEFAULT
-        )
         self.backbone = self._build_backbone()
 
         self.heads = nn.ModuleDict({
@@ -83,64 +82,65 @@ class FPNCentreNet(nn.Module):
         self.set_training_stage(stage=1)
 
     def set_training_stage(self, stage):
+        if self.train_all:
+            for parameter in self.parameters():
+                parameter.requires_grad = True
+            return
 
-        if not self.train_all:
+        # Freeze backbone.
+        for parameter in self.backbone.parameters():
+            parameter.requires_grad = False
 
-            # Freeze the entire backbone first
-            for param in self.backbone.parameters():
-                param.requires_grad = False
+        # Heads always train.
+        for parameter in self.heads.parameters():
+            parameter.requires_grad = True
 
-            # Heads are always trainable
-            for param in self.heads.parameters():
-                param.requires_grad = True
+        # New input convolution.
+        for parameter in self.backbone.body.conv1.parameters():
+            parameter.requires_grad = True
 
-            # New 4-channel input layer remains trainable
-            for param in self.backbone.body.conv1.parameters():
-                param.requires_grad = True
+        if stage >= 2:
+            # Adapt the feature pyramid.
+            for parameter in self.backbone.fpn.parameters():
+                parameter.requires_grad = True
 
-            for param in self.backbone.body.bn1.parameters():
-                param.requires_grad = True
+        if stage >= 3:
+            # Adapt highest-level ResNet features.
+            for parameter in self.backbone.body.layer4.parameters():
+                parameter.requires_grad = True
 
-            if stage >= 2:
-                # Unfreeze FPN
-                for param in self.backbone.fpn.parameters():
-                    param.requires_grad = True
+        if stage >= 4:
+            for parameter in self.backbone.body.layer3.parameters():
+                parameter.requires_grad = True
+                
+    def _build_backbone(self, in_channels=4):
+        detector = maskrcnn_resnet50_fpn(
+            weights=MaskRCNN_ResNet50_FPN_Weights.DEFAULT,
+        )
 
-    def _build_backbone(self):
-        """Changes 3 input channels to 4 input channels, using mean weights from old c1.
-        
-        
-        where to put model.transform.image_mean = [0.0, 0.0, 0.0, 0.0]
-                     model.transform.image_std  = [1.0, 1.0, 1.0, 1.0]        ?
-        """
-
-        model = self.src_model
-
-        backbone = model.backbone
+        backbone = detector.backbone
         old_conv = backbone.body.conv1
-        new_conv = nn.Conv2d(4,
-                            old_conv.out_channels,
-                            kernel_size=old_conv.kernel_size,
-                            stride=old_conv.stride,
-                            padding=old_conv.padding,
-                            bias=False)
-        
+
+        new_conv = nn.Conv2d(
+            in_channels,
+            old_conv.out_channels,
+            kernel_size=old_conv.kernel_size,
+            stride=old_conv.stride,
+            padding=old_conv.padding,
+            bias=False,
+        )
+
         with torch.no_grad():
-            new_conv.weight[:, :3].copy_(old_conv.weight)
-            mean_weight = old_conv.weight.mean(
-                dim=1,
-                keepdim=True
-            )
-            new_conv.weight[:, 3:].copy_(
-                mean_weight.repeat(1, 1, 1, 1)
+            mean_weight = old_conv.weight.mean(dim=1, keepdim=True)
+
+            # Initialise every terrain channel from the average RGB filter.
+            new_conv.weight.copy_(
+                mean_weight.repeat(1, in_channels, 1, 1)
             )
 
         backbone.body.conv1 = new_conv
 
-        model.transform.image_mean = [0.0, 0.0, 0.0, 0.0] # make model expect 4 channels (already normalised so this is okay to hard code)
-        model.transform.image_std  = [1.0, 1.0, 1.0, 1.0]
-
-        return model.backbone
+        return backbone
     
     def _freeze_backbone(self): # depreciated, remained incase want to manually freeze.
 
@@ -591,7 +591,6 @@ def decode_multilevel_predictions(
 
     return all_detections
 
-
 def centroid_metrics_from_detections(detections, gt_mask):
     """
     TP if predicted centre lies inside an unmatched GT object.
@@ -627,72 +626,90 @@ def centroid_metrics_from_detections(detections, gt_mask):
 
     return tp, fp, fn
 
-# incremental unfreezing for transfer learning/fine tuning
-def make_optimizer(model, stage):
-    if stage == 1:
-        return torch.optim.AdamW(
-            [
-                {
-                    "params": model.heads.parameters(),
-                    "lr": 1e-3,
-                },
-                {
-                    "params": model.backbone.body.conv1.parameters(),
-                    "lr": 5e-6,
-                },
-                {
-                    "params": model.backbone.body.bn1.parameters(),
-                    "lr": 5e-6,
-                },
-            ],
-            weight_decay=1e-4,
-        )
+def build_staged_optimizer(model, weight_decay=1e-4):
+    return torch.optim.AdamW(
+        [
+            {
+                "name": "heads",
+                "params": model.heads.parameters(),
+                "lr": 1e-3,
+            },
+            {
+                "name": "conv1",
+                "params": model.backbone.body.conv1.parameters(),
+                "lr": 5e-6,
+            },
+            {
+                "name": "fpn",
+                "params": model.backbone.fpn.parameters(),
+                "lr": 0.0,
+            },
+            {
+                "name": "layer4",
+                "params": model.backbone.body.layer4.parameters(),
+                "lr": 0.0,
+            },
+            {
+                "name": "layer3",
+                "params": model.backbone.body.layer3.parameters(),
+                "lr": 0.0,
+            },
+        ],
+        weight_decay=weight_decay,
+    )
 
-    elif stage == 2:
-        return torch.optim.AdamW(
-            [
-                {
-                    "params": model.heads.parameters(),
-                    "lr": 5e-4,
-                },
-                {
-                    "params": model.backbone.body.conv1.parameters(),
-                    "lr": 5e-6,
-                },
-                {
-                    "params": model.backbone.body.bn1.parameters(),
-                    "lr": 5e-6,
-                },
-                {
-                    "params": model.backbone.fpn.parameters(),
-                    "lr": 1e-6,
-                },
-            ],
-            weight_decay=1e-4,
-        )
+STAGE_LRS = {
+    1: {
+        "heads": 1e-3,
+        "conv1": 5e-6,
+        "fpn": 0.0,
+        "layer4": 0.0,
+        "layer3": 0.0,
+    },
+    2: {
+        "heads": 5e-4,
+        "conv1": 5e-6,
+        "fpn": 1e-5,
+        "layer4": 0.0,
+        "layer3": 0.0,
+    },
+    3: {
+        "heads": 1e-4,
+        "conv1": 1e-6,
+        "fpn": 3e-6,
+        "layer4": 1e-6,
+        "layer3": 0.0,
+    },
+    4: {
+        "heads": 3e-5,
+        "conv1": 5e-7,
+        "fpn": 1e-6,
+        "layer4": 5e-7,
+        "layer3": 1e-7,
+    },
+}
 
-    elif stage == 3:
-        return torch.optim.AdamW(
-            [
-                {
-                    "params": model.heads.parameters(),
-                    "lr": 1e-5,
-                },
-                {
-                    "params": model.backbone.body.conv1.parameters(),
-                    "lr": 1e-6,
-                },
-                {
-                    "params": model.backbone.body.bn1.parameters(),
-                    "lr": 1e-6,
-                },
-                {
-                    "params": model.backbone.fpn.parameters(),
-                    "lr": 1e-7,
-                }],
-            weight_decay=1e-4,
-        )
 
+def apply_training_stage(model, optimizer, stage):
+    model.set_training_stage(stage)
+
+    lrs = STAGE_LRS[stage]
+
+    for group in optimizer.param_groups:
+        group["lr"] = lrs[group["name"]]
+
+    print(f"Applied training stage {stage}")
+    for group in optimizer.param_groups:
+        n_trainable = sum(
+            parameter.numel()
+            for parameter in group["params"]
+            if parameter.requires_grad
+        )
+        print(
+            f"  {group['name']:8s} "
+            f"lr={group['lr']:.2e}, "
+            f"trainable={n_trainable:,}"
+        )
 
 
 
@@ -704,10 +721,7 @@ def FPN_CN_train(
     epochs,
     thresholds=None,
     min_distances=None,
-    lr=3e-4,
     weight_decay=1e-4,
-    eta_min=1e-5,
-    patience=20,
     checkpoint_root="/content/drive/MyDrive/IRP/models/checkpoints",
 ):
     
@@ -721,8 +735,8 @@ def FPN_CN_train(
 
 
     level_weights={
-        "0": 1.0,
-        "1": 1.0,
+        "0": 3.0,
+        "1": 2.0,
         "2": 1.0,
         "3": 0.5,
     }
@@ -730,12 +744,6 @@ def FPN_CN_train(
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
-
-    optimizer = torch.optim.AdamW(
-        [p for p in model.parameters() if p.requires_grad],
-        lr=lr,
-        weight_decay=weight_decay,
-    )
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M")
     checkpoint_dir = Path(checkpoint_root) / f"fpn_centrenet_{run_id}"
@@ -751,36 +759,30 @@ def FPN_CN_train(
     best_state = None
     bad_epochs = 0
 
-    if model.train_all == False:
-        current_stage = 1
-        model.set_training_stage(current_stage)
-        optimizer = make_optimizer(model, current_stage)
-    else:
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-2, weight_decay=1e-4)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer,
-            T_max=epochs,
-            eta_min=1e-5
-            )
+        
+    optimizer = build_staged_optimizer(
+        model,
+        weight_decay=weight_decay,
+    )
+
+    current_stage = 1
+    apply_training_stage(model, optimizer, current_stage)
+
 
     for epoch in range(epochs):
 
-        if model.train_all == False:
-            # training stages 
-            if epoch == 0:
-                current_stage = 1
-                model.set_training_stage(stage=current_stage)
-                optimizer = make_optimizer(model, current_stage)
+        # dont reinit adam, just update lrs.
+        if epoch == 40:
+            current_stage = 2
+            apply_training_stage(model, optimizer, current_stage)
 
-            elif epoch == 30:
-                current_stage = 2
-                model.set_training_stage(stage=current_stage)
-                optimizer = make_optimizer(model, current_stage)
+        elif epoch == 55:
+            current_stage = 3
+            apply_training_stage(model, optimizer, current_stage)
 
-            elif epoch == 45:
-                current_stage = 3
-                model.set_training_stage(stage=current_stage)
-                optimizer = make_optimizer(model, current_stage)
+        elif epoch == 70:
+            current_stage = 4
+            apply_training_stage(model, optimizer, current_stage)
 
         # Train
         model.train()
@@ -802,7 +804,7 @@ def FPN_CN_train(
             )
 
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+
             optimizer.step()
 
             train_loss += loss.item()
@@ -888,9 +890,6 @@ def FPN_CN_train(
         else:
             bad_epochs += 1
 
-        if model.train_all == True:
-            scheduler.step()
-
         print(
             f"Epoch {epoch + 1:3d}/{epochs} | "
             f"train {avg_train:.4f} | val {avg_val:.4f} | "
@@ -902,6 +901,8 @@ def FPN_CN_train(
 
     return vls, tls, precisions, recalls, f1s, model, val_loader
 
+
+# add geology prior? elevation in ring vs outside ring? 
 class CentreNetLoss(nn.Module):
     def __init__(
         self,
