@@ -83,6 +83,11 @@ class Deployer():
         preds = self.model.predict(x)
 
         return preds
+    
+    def _prepare_tile(self, tile):
+        ...
+
+        # need to normalise appropriately etc. replicate __get__item (where relevant)
 
     def predict_at_resolution(self, resolution):
 

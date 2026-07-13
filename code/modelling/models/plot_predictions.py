@@ -193,36 +193,45 @@ def visualise(model_type, model, val_loader, device):
 
 class SegNetPlotter():
 
-    def __init__(self, model):
+    def __init__(self, model, loader):
 
         self.model = model
+        self.name = 'SegNet'
+        self.loader = loader
+        self.preds = self._get_preds(loader)
 
-    def _plot_preds(self, ax):
-        ...
-
+    def plot_preds(self, ax, idx):
+        ax.imshow(self.preds[idx])
+        
     def _get_preds(self, images):
         ...
 
 class MaskRCNNPlotter():
 
-    def __init__(self, model):
+    def __init__(self, model, loader):
 
         self.model = model
+        self.name = 'Mask-RCNN'
+        self.loader = loader
+        self.preds = self._get_preds(loader)
 
-    def _plot_preds(self, ax):
+    def plot_preds(self, ax, idx):
         ...
 
-    def _get_preds(self, images):
+    def _get_preds(self, i):
         ...
 
 
 class FPNCentreNetPlotter():
 
-    def __init__(self, model):
+    def __init__(self, model, loader):
 
         self.model = model
+        self.name = 'FPN CentreNet'
+        self.loader = loader
+        self.preds = self._get_preds(loader)
 
-    def _plot_preds(self, ax):
+    def plot_preds(self, ax, idx):
         ...
 
     def _get_detections(self, images):
@@ -231,29 +240,70 @@ class FPNCentreNetPlotter():
 
 class Plotter():
 
-    def __init__(self, models: list, sample_paths = None):
+    def __init__(self, models: list, loaders: list, device):
 
         self.models = models
-        self._build_models()
+        self.loaders = loaders
+        self.plot = self._build_plotters()
+        self.device = device
 
-        if sample_paths:
-            images = []
-            for p in sample_paths:
-                d = np.load(p)
-                images.append(d)
-            
-            self.tiles = images
+    def _build_plotters(self):
 
-    def _build_models(self):
-
-        for model in self.models:
+        plotters = []
+        for model, loader in zip(self.models, self.loaders):
 
             if isinstance(model, SegNet):
-                self.SNPlotter = SegNetPlotter(model)
+                plotters.append(SegNetPlotter(model, loader))
             elif isinstance(model, MaskRCNN):
-                self.MRCNNPlotter = MaskRCNNPlotter(model)
+                plotters.append(MaskRCNNPlotter(model, loader))
             elif isinstance(model, FPNCentreNet):
-                self.FPNCNPlotter = FPNCentreNetPlotter(model)
+                plotters.append(FPNCentreNetPlotter(model, loader))
             else:
                 print('please enter a valid model type!')
 
+        return plotters
+    
+    def get_base_images(self, idx):
+
+        # find easiest model to extract from
+        # get model idx, then get loader from same idx in loader list
+        # get dem and gt image from idx of val loader.
+        # return dem, gt
+        ...
+
+    def plot(self, images=None):
+        
+        # build figure
+
+        fig, axes = plt.subplots(len(images), 2 + len(self.models))
+
+        for i, rows in enumerate(axes):
+            # need to figure out how to plot dem and gt before getting plotter-specific preds.
+            # cant specify segnet loader as it might not always be being used.
+            dem, gt = self.get_base_images(i)
+
+            axes[i, 0].imshow(dem)
+            
+            axes[i, 1].imshow(gt)
+
+            for j, (plotter, loader) in enumerate(self.plotters):
+                # j should start at 2
+                plotter.plot_preds(axes[i, j + 2].imshow(), i)
+                axes[i, j + 2].set_title(f'{plotter.name} Preds')
+        
+
+        axes[i, 0].set_title('DEM')
+        axes[i, 1].set_title('Target')
+
+        for k, row in enumerate(axes):
+            row[k].axis('off')
+
+        plt.tight_layout()
+        plt.show()
+
+            
+
+
+        
+
+        

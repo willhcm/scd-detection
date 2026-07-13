@@ -661,7 +661,7 @@ def build_staged_optimizer(model, weight_decay=1e-4):
 STAGE_LRS = {
     1: {
         "heads": 1e-3,
-        "conv1": 5e-6,
+        "conv1": 1e-5,
         "fpn": 0.0,
         "layer4": 0.0,
         "layer3": 0.0,
@@ -710,7 +710,6 @@ def apply_training_stage(model, optimizer, stage):
             f"lr={group['lr']:.2e}, "
             f"trainable={n_trainable:,}"
         )
-
 
 
 def FPN_CN_train(
