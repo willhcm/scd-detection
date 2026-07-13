@@ -5,10 +5,17 @@ import torch
 from skimage.feature import peak_local_max
 import matplotlib.patches as patches
 from mask_rcnn_plots import plot_preds as plot_maskrcnn_preds
-from helpers import pred_centroids_for_plot, decode_centernet_predictions
 from SegNet import SegNet
 from MaskRCNN import MaskRCNN
-from FPNCentreNet import FPNCentreNet
+from FPNCentreNet import FPNCentreNet, decode_multilevel_predictions
+from matplotlib.patches import Circle
+
+LEVEL_STRIDES = {
+    "0": 4,
+    "1": 8,
+    "2": 16,
+    "3": 32
+}
 
 class SegNetPlotter():
 
@@ -19,10 +26,10 @@ class SegNetPlotter():
         self.loader = loader
         self.preds = self._get_preds(loader)
 
-    def plot_preds(self, ax, idx):
+    def plot_preds(self, ax, idx, dem):
         ax.imshow(self.preds[idx])
         
-    def _get_preds(self, images):
+    def _get_preds(self):
         images, _ = next(iter(self.loader))
         logits = self.model(images)
         probs = torch.sigmoid(logits)
@@ -39,11 +46,31 @@ class MaskRCNNPlotter():
         self.loader = loader
         self.preds = self._get_preds(loader)
 
-    def plot_preds(self, ax, idx):
-        ...
+    def plot_preds(self, ax, idx, dem):
+        ax.imshow(self.preds[idx])
 
-    def _get_preds(self, i):
-        ...
+    def _get_preds(self):
+
+        images, _ = next(iter(self.loader))
+        height, width = images.shape[-2:]
+        output = self.model(images)
+        scores = output["scores"].detach().cpu()
+        raw_pred_masks = output["masks"].detach().cpu()
+        keep = scores >= self.pred_args['score_threshold']
+        pred_instance_masks = (
+                    raw_pred_masks[keep, 0] >= self.pred_args[['mask_threshold']]
+                )
+
+        # convert from instance masks to combined masks.s
+        if pred_instance_masks.shape[0] > 0:
+            pred_masks = pred_instance_masks.any(dim=0)
+        else:
+            pred_masks = torch.zeros(
+                (height, width),
+                dtype=torch.bool,
+            )
+        
+        return pred_masks
 
 
 class FPNCentreNetPlotter():
@@ -55,11 +82,67 @@ class FPNCentreNetPlotter():
         self.loader = loader
         self.preds = self._get_preds(loader)
 
-    def plot_preds(self, ax, idx):
-        ...
+    def plot_preds(self, ax, idx, dem):
+        
+        detections = self.preds[idx]
+
+        for detection in detections:
+            cy = detection["cy"]
+            cx = detection["cx"]
+            score = detection["score"]
+            radius = detection.get("radius", np.nan)
+            level = detection.get("level", "?")
+
+            ax.scatter(
+                cx,
+                cy,
+                marker="x",
+                s=80,
+                linewidths=2,
+            )
+
+            ax.text(
+                cx + 4,
+                cy - 4,
+                f"{score:.2f}\nP{level}",
+                fontsize=8,
+                bbox={
+                    "facecolor": "white",
+                    "alpha": 0.7,
+                    "edgecolor": "none",
+                },
+            )
+
+            if np.isfinite(radius) and radius > 0:
+                circle = Circle(
+                    (cx, cy),
+                    radius=radius,
+                    fill=False,
+                    linewidth=1.5,
+                )
+                ax.add_patch(circle)
+
+        ax.set_title(f"Predictions: {len(detections)}")
+        ax.axis("off")
+
 
     def _get_detections(self, images):
-        ...
+        preds = []
+        images, _, _ = next(iter(self.loader))
+
+        outputs = self.model(images)
+
+        for i in len(self.loader):
+            detections = decode_multilevel_predictions(
+                        outputs=outputs,
+                        image_index=i,
+                        use_softplus_radius=True,
+                    )
+            preds.append(detections)
+
+        return preds
+            
+        
 
 
 class Plotter():
@@ -128,17 +211,15 @@ class Plotter():
         fig, axes = plt.subplots(len(images), 2 + len(self.models))
 
         for i, rows in enumerate(axes):
-            # need to figure out how to plot dem and gt before getting plotter-specific preds.
-            # cant specify segnet loader as it might not always be being used.
             dem, gt = self.get_base_images(i)
 
             axes[i, 0].imshow(dem)
             
             axes[i, 1].imshow(gt)
 
-            for j, (plotter, loader) in enumerate(self.plotters):
+            for j, plotter in enumerate(self.plotters):
                 # j should start at 2
-                plotter.plot_preds(axes[i, j + 2].imshow(), i)
+                plotter.plot_preds(axes[i, j + 2].imshow(), i, dem)
                 axes[i, j + 2].set_title(f'{plotter.name} Preds')
         
 

@@ -28,7 +28,7 @@ class Down(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
         self.block = nn.Sequential(
-            nn.MaxPool2d(kernel=2, stride=2),
+            nn.MaxPool2d(kernel_size=2, stride=2),
             DoubleConv(in_ch, out_ch),
         )
 

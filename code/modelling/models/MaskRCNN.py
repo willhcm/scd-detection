@@ -56,32 +56,32 @@ class MaskRCNN(nn.Module):
 
     def set_training_stage(self, stage):
         # Freeze backbone.
-        for parameter in self.backbone.parameters():
+        for parameter in self.model.backbone.parameters():
             parameter.requires_grad = False
 
         # Heads always train.
-        for parameter in self.rpn.parameters():
+        for parameter in self.model.rpn.parameters():
             parameter.requires_grad = True
 
-        for parameter in self.roi_heads.parameters():
+        for parameter in self.model.roi_heads.parameters():
             parameter.requires_grad = True
 
         # New input convolution.
-        for parameter in self.backbone.body.conv1.parameters():
+        for parameter in self.model.backbone.body.conv1.parameters():
             parameter.requires_grad = True
 
         if stage >= 2:
             # Adapt the feature pyramid.
-            for parameter in self.backbone.fpn.parameters():
+            for parameter in self.model.backbone.fpn.parameters():
                 parameter.requires_grad = True
 
         if stage >= 3:
             # Adapt highest-level ResNet features.
-            for parameter in self.backbone.body.layer4.parameters():
+            for parameter in self.model.backbone.body.layer4.parameters():
                 parameter.requires_grad = True
 
         if stage >= 4:
-            for parameter in self.backbone.body.layer3.parameters():
+            for parameter in self.model.backbone.body.layer3.parameters():
                 parameter.requires_grad = True
 
     def _replace_input_conv(self, in_channels):
@@ -541,32 +541,32 @@ def build_staged_optimizer(model, weight_decay=1e-4):
         [
             {
                 "name": "rpn",
-                "params": model.rpn.parameters(),
+                "params": model.model.rpn.parameters(),
                 "lr": 1e-3,
             },
             {
                 "name": "roi_heads",
-                "params": model.roi_heads.parameters(),
+                "params": model.model.roi_heads.parameters(),
                 "lr": 1e-3,
             },
             {
                 "name": "conv1",
-                "params": model.backbone.body.conv1.parameters(),
+                "params": model.model.backbone.body.conv1.parameters(),
                 "lr": 5e-6,
             },
             {
                 "name": "fpn",
-                "params": model.backbone.fpn.parameters(),
+                "params": model.model.backbone.fpn.parameters(),
                 "lr": 0.0,
             },
             {
                 "name": "layer4",
-                "params": model.backbone.body.layer4.parameters(),
+                "params": model.model.backbone.body.layer4.parameters(),
                 "lr": 0.0,
             },
             {
                 "name": "layer3",
-                "params": model.backbone.body.layer3.parameters(),
+                "params": model.model.backbone.body.layer3.parameters(),
                 "lr": 0.0,
             },
         ],
@@ -672,15 +672,15 @@ def rcnn_train(model, _, train_loader, val_loader, epochs):
 
     for epoch in range(EPOCHS):
             
-        if epoch == 40:
+        if epoch == 25:
             current_stage = 2
             apply_training_stage(model, optimizer, current_stage)
 
-        elif epoch == 55:
+        elif epoch == 30:
             current_stage = 3
             apply_training_stage(model, optimizer, current_stage)
 
-        elif epoch == 70:
+        elif epoch == 40:
             current_stage = 4
             apply_training_stage(model, optimizer, current_stage)
 
