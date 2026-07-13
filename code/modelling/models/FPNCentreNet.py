@@ -735,10 +735,10 @@ def FPN_CN_train(
 
 
     level_weights={
-        "0": 3.0,
-        "1": 2.0,
-        "2": 1.0,
-        "3": 0.5,
+        "0": 0.40,
+        "1": 0.30,
+        "2": 0.20,
+        "3": 0.1,
     }
 
 
@@ -758,12 +758,31 @@ def FPN_CN_train(
     best_f1 = -1.0
     best_state = None
     bad_epochs = 0
+   
+    if model.train_all:
+        optimizer = torch.optim.AdamW(
+            [
+                {
+                    "params": model.heads.parameters(),
+                    "lr": 3e-4,
+                },
+                {
+                    "params": model.backbone.fpn.parameters(),
+                    "lr": 1e-5,
+                },
+                {
+                    "params": model.backbone.body.parameters(),
+                    "lr": 1e-6,
+                },
+            ],
+            weight_decay=weight_decay,
+        )
+    else:
+        optimizer = build_staged_optimizer(
+            model,
+            weight_decay=weight_decay,
+        )
 
-        
-    optimizer = build_staged_optimizer(
-        model,
-        weight_decay=weight_decay,
-    )
 
     current_stage = 1
     apply_training_stage(model, optimizer, current_stage)
@@ -772,17 +791,18 @@ def FPN_CN_train(
     for epoch in range(epochs):
 
         # dont reinit adam, just update lrs.
-        if epoch == 40:
-            current_stage = 2
-            apply_training_stage(model, optimizer, current_stage)
+        if not model.train_all:
+            if epoch == 40:
+                current_stage = 2
+                apply_training_stage(model, optimizer, current_stage)
 
-        elif epoch == 55:
-            current_stage = 3
-            apply_training_stage(model, optimizer, current_stage)
+            elif epoch == 55:
+                current_stage = 3
+                apply_training_stage(model, optimizer, current_stage)
 
-        elif epoch == 70:
-            current_stage = 4
-            apply_training_stage(model, optimizer, current_stage)
+            elif epoch == 70:
+                current_stage = 4
+                apply_training_stage(model, optimizer, current_stage)
 
         # Train
         model.train()

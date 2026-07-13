@@ -6,6 +6,9 @@ from skimage.feature import peak_local_max
 import matplotlib.patches as patches
 from mask_rcnn_plots import plot_preds as plot_maskrcnn_preds
 from helpers import pred_centroids_for_plot, decode_centernet_predictions
+from SegNet import SegNet
+from MaskRCNN import MaskRCNN
+from FPNCentreNet import FPNCentreNet
 
 CHANNELS = ['DEM',
             'Slope',
@@ -184,3 +187,73 @@ def visualise(model_type, model, val_loader, device):
         plot_maskrcnn_preds(model, val_loader, device)
     else:
         print('please enter a valid model type (Segmentation or CentreNet)')
+
+# making above implementation to be all Object oriented and clean (its really annoying me)
+
+
+class SegNetPlotter():
+
+    def __init__(self, model):
+
+        self.model = model
+
+    def _plot_preds(self, ax):
+        ...
+
+    def _get_preds(self, images):
+        ...
+
+class MaskRCNNPlotter():
+
+    def __init__(self, model):
+
+        self.model = model
+
+    def _plot_preds(self, ax):
+        ...
+
+    def _get_preds(self, images):
+        ...
+
+
+class FPNCentreNetPlotter():
+
+    def __init__(self, model):
+
+        self.model = model
+
+    def _plot_preds(self, ax):
+        ...
+
+    def _get_detections(self, images):
+        ...
+
+
+class Plotter():
+
+    def __init__(self, models: list, sample_paths = None):
+
+        self.models = models
+        self._build_models()
+
+        if sample_paths:
+            images = []
+            for p in sample_paths:
+                d = np.load(p)
+                images.append(d)
+            
+            self.tiles = images
+
+    def _build_models(self):
+
+        for model in self.models:
+
+            if isinstance(model, SegNet):
+                self.SNPlotter = SegNetPlotter(model)
+            elif isinstance(model, MaskRCNN):
+                self.MRCNNPlotter = MaskRCNNPlotter(model)
+            elif isinstance(model, FPNCentreNet):
+                self.FPNCNPlotter = FPNCentreNetPlotter(model)
+            else:
+                print('please enter a valid model type!')
+

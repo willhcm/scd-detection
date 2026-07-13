@@ -11,9 +11,6 @@ import torch
 from datastack import DataSource, _bounds_inside, OVERLAP_SIGMA_MULTIPLIER
 from rasterio.enums import Resampling
 from scipy.ndimage import sobel, gaussian_filter, laplace
-from SegNet import SegNet
-from MaskRCNN import MaskRCNN
-from FPNCentreNet import FPNCentreNet
 from ModelWrapper import ModelWrapper
 
 # AI assistance with conversion of DataStack logic to a deployment system. 
