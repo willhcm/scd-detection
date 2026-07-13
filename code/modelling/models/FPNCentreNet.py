@@ -756,7 +756,7 @@ def FPN_CN_train(
         model.set_training_stage(current_stage)
         optimizer = make_optimizer(model, current_stage)
     else:
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-2, weight_decay=1e-4)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
             T_max=epochs,

@@ -2,13 +2,14 @@ from SegNet import SegNet
 from FPNCentreNet import FPNCentreNet
 from MaskRCNN import MaskRCNN
 import torch
+from FPNCentreNet import decode_multilevel_predictions, decode_centernet_predictions, simple_detection_nms
 
 # args required to instantiate each model correctly.
-# fill later.
 INIT_ARGS = {}
 PRED_ARGS = {'SegNet': {'threshold': 0.75},
              'MaskRCNN': {'score_threshold': 0.5,
                           'mask_threshold': 0.5},
+            'FPNCentreNet': {'decode_args': {}}
              }
 
 
@@ -44,6 +45,7 @@ class ModelWrapper():
                     raw_pred_masks[keep, 0] >= self.pred_args[['mask_threshold']]
                 )
 
+        # convert from instance masks to combined masks.s
         if pred_instance_masks.shape[0] > 0:
             pred_mask = pred_instance_masks.any(dim=0)
         else:
@@ -55,7 +57,12 @@ class ModelWrapper():
         return pred_mask
 
     def _pred_fpn_centrenet(self, images, device):
-        ...
+        images = images.to(device)
+        # may need to add an extra dim as functions built before work for batches e.g. [B, H, W] not [H, W]
+        outputs = self.model(images)
+        detections = decode_multilevel_predictions(outputs, image_index=0)
+
+        return detections
 
     def predict(self, images, device):
         """ 
@@ -64,14 +71,14 @@ class ModelWrapper():
         Takes images on cpu, puts to device """
 
         if type(self.model) == SegNet:
-            return self._predict_seg_net(self, images)
+            return self._predict_seg_net(self, images, device)
         
         elif type(self.model) == MaskRCNN:
-            return self._pred_mask_rcnn(self, images)
+            return self._pred_mask_rcnn(self, images, device)
         
         elif type(self.model) == FPNCentreNet:
-            return self._pred_fpn_centrenet(self, images)
-        else:
+            return self._pred_fpn_centrenet(self, images, device)
+        else: # now already handled in init.
             print(f'Please enter a valid model, got {type(self.model)}')
 
     
