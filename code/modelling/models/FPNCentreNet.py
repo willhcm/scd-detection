@@ -63,7 +63,7 @@ class CenterHead(nn.Module):
     
 
 class FPNCentreNet(nn.Module):
-    def __init__(self, in_channels=4):
+    def __init__(self, in_channels=4, train_all=False):
         super().__init__()
 
         self.src_model = maskrcnn_resnet50_fpn(
@@ -79,29 +79,32 @@ class FPNCentreNet(nn.Module):
         })
 
         # Start with only conv1, bn1, and heads trainable
+        self.train_all = train_all
         self.set_training_stage(stage=1)
 
     def set_training_stage(self, stage):
 
-        # Freeze the entire backbone first
-        for param in self.backbone.parameters():
-            param.requires_grad = False
+        if not self.train_all:
 
-        # Heads are always trainable
-        for param in self.heads.parameters():
-            param.requires_grad = True
+            # Freeze the entire backbone first
+            for param in self.backbone.parameters():
+                param.requires_grad = False
 
-        # New 4-channel input layer remains trainable
-        for param in self.backbone.body.conv1.parameters():
-            param.requires_grad = True
-
-        for param in self.backbone.body.bn1.parameters():
-            param.requires_grad = True
-
-        if stage >= 2:
-            # Unfreeze FPN
-            for param in self.backbone.fpn.parameters():
+            # Heads are always trainable
+            for param in self.heads.parameters():
                 param.requires_grad = True
+
+            # New 4-channel input layer remains trainable
+            for param in self.backbone.body.conv1.parameters():
+                param.requires_grad = True
+
+            for param in self.backbone.body.bn1.parameters():
+                param.requires_grad = True
+
+            if stage >= 2:
+                # Unfreeze FPN
+                for param in self.backbone.fpn.parameters():
+                    param.requires_grad = True
 
     def _build_backbone(self):
         """Changes 3 input channels to 4 input channels, using mean weights from old c1.
@@ -169,7 +172,7 @@ def build_centernet_targets_for_objects(
     min_sigma=1.0,
     max_sigma=6.0,
     base_weight=1.0,
-    centre_weight=2.50,
+    centre_weight=5.0,
 ):
 
     labeled, n = label(mask > 0)
@@ -534,8 +537,8 @@ def decode_multilevel_predictions(
     # thresholds tuned using score confidence at differnt levels
     if thresholds is None:
         thresholds = {
-            "0": 0.375,
-            "1": 0.425,
+            "0": 0.425,
+            "1": 0.475,
             "2": 0.55,
             "3": 0.75,
         }
@@ -748,27 +751,36 @@ def FPN_CN_train(
     best_state = None
     bad_epochs = 0
 
-    current_stage = 1
-    model.set_training_stage(current_stage)
-    optimizer = make_optimizer(model, current_stage)
+    if model.train_all == False:
+        current_stage = 1
+        model.set_training_stage(current_stage)
+        optimizer = make_optimizer(model, current_stage)
+    else:
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=epochs,
+            eta_min=1e-5
+            )
 
     for epoch in range(epochs):
 
-        # training stages 
-        if epoch == 0:
-            current_stage = 1
-            model.set_training_stage(stage=current_stage)
-            optimizer = make_optimizer(model, current_stage)
+        if model.train_all == False:
+            # training stages 
+            if epoch == 0:
+                current_stage = 1
+                model.set_training_stage(stage=current_stage)
+                optimizer = make_optimizer(model, current_stage)
 
-        elif epoch == 30:
-            current_stage = 2
-            model.set_training_stage(stage=current_stage)
-            optimizer = make_optimizer(model, current_stage)
+            elif epoch == 30:
+                current_stage = 2
+                model.set_training_stage(stage=current_stage)
+                optimizer = make_optimizer(model, current_stage)
 
-        elif epoch == 45:
-            current_stage = 3
-            model.set_training_stage(stage=current_stage)
-            optimizer = make_optimizer(model, current_stage)
+            elif epoch == 45:
+                current_stage = 3
+                model.set_training_stage(stage=current_stage)
+                optimizer = make_optimizer(model, current_stage)
 
         # Train
         model.train()
@@ -875,6 +887,9 @@ def FPN_CN_train(
 
         else:
             bad_epochs += 1
+
+        if model.train_all == True:
+            scheduler.step()
 
         print(
             f"Epoch {epoch + 1:3d}/{epochs} | "
