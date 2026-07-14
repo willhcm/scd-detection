@@ -1,0 +1,232 @@
+import glob
+from torch.utils.data import WeightedRandomSampler
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+import numpy as np
+import torch.nn as nn
+from blocks import _AugmentedSubset
+from sklearn.model_selection import train_test_split
+
+
+def collate_fn(batch):
+    return tuple(zip(*batch))
+
+DATASET_ARGS = {
+    "default": {
+        "batch_size": 16,
+        "collate_fn": None,
+    },
+    "MaskRCNN": {
+        "batch_size": 2,
+        "collate_fn": collate_fn,
+    },
+    "FPNCentreNet": {
+        "batch_size": 4,
+        "collate_fn": None,
+    },
+}
+
+def get_loaders(
+    paths,
+    dataset_type,
+    val_split: float = 0.2,
+    batch_size: int = 8,
+    seed: int = 42,
+):
+    full_dataset = dataset_type(paths, augment=False)
+
+    n = len(full_dataset)
+    n_val  = max(int(n * val_split), 1)
+    n_train = n - n_val
+
+    rng = torch.Generator().manual_seed(seed)
+    indices = torch.randperm(n, generator=rng).tolist()
+
+    train_indices = indices[:n_train]
+    val_indices   = indices[n_train:]
+
+    train_set = _AugmentedSubset(full_dataset, train_indices, augment=True)
+    val_set = _AugmentedSubset(full_dataset, val_indices,   augment=False)
+
+    weights = []
+    for idx in train_indices:
+        d  = np.load(full_dataset.paths[idx], allow_pickle=True)
+        frac = float(d["scd_pixel_fraction"])
+        weights.append(1.0 + frac)
+
+    sampler = WeightedRandomSampler(weights=weights, num_samples=len(weights), replacement=True)
+
+    train_loader = DataLoader(train_set, batch_size=batch_size, sampler=sampler, num_workers=0)
+    val_loader = DataLoader(val_set,   batch_size=batch_size, shuffle=False,   num_workers=0)
+
+    print(f"Train: {n_train} | Val: {n_val}")
+    return train_loader, val_loader, val_set
+
+REGION_GROUPS = {
+    'Brazil': ['Brazil'],
+    'USA': ['USA'],
+    'Karoo': ['Karoo'],
+    'Russia': ['Russia', 'Russia2', 'Russia3'],
+    'Australia': ['Australia']
+}
+
+def _region_paths(region_name):
+    paths = []
+    for d in REGION_GROUPS[region_name]:
+        paths.extend(glob.glob(f"/content/drive/MyDrive/IRP/Tiles/ScalesCombined/{d}/*.npz"))
+        negs = glob.glob(f"/content/drive/MyDrive/IRP/NegativeFarming/{d}/*.npz")[::3]
+        paths.extend(negs)
+    return sorted(paths)
+
+def train_fold(model_type, train_paths, val_paths, epochs, model_info, batch_size=8):
+    """ 
+    Train one cross-validation fold, model/architecture flexible!
+    """
+
+    train_set = model_info['dataset'](train_paths, augment=True)
+    val_set = model_info['dataset'](val_paths, augment=False)
+
+    w = []
+    for p in train_set.paths:
+        d = np.load(p, allow_pickle=True)
+        w.append(1.0 + float(d["scd_pixel_fraction"]))
+    sampler = WeightedRandomSampler(w, num_samples=len(w), replacement=True)
+
+    loader_args = DATASET_ARGS.get(model_type, DATASET_ARGS["default"]).copy()
+
+    if batch_size is not None:
+        loader_args["batch_size"] = batch_size
+
+    # Remove collate_fn if None, otherwise DataLoader may complain in some cases
+    if loader_args.get("collate_fn") is None:
+        loader_args.pop("collate_fn")
+
+
+    train_loader = DataLoader(train_set,
+                            shuffle=True,
+                            num_workers=0,
+                            **loader_args)
+
+    val_loader = DataLoader(val_set,
+                            shuffle=False,
+                            num_workers=0,
+                            **loader_args)
+    
+    model = model_info['model']()
+    criterion = model_info['loss']
+    fn = model_info['train_fn']
+
+    vls, tls, precisions, recalls, f1s, best_model, val_loader =  fn(model, criterion, train_loader, val_loader, epochs)
+    metrics = {'vls': vls,
+              'tls': tls,
+              'precisions': precisions,
+              'recalls': recalls,
+              'f1s': f1s,
+              }
+
+    return metrics, best_model, val_loader
+
+
+def train_model(model_type, paths, epochs, model_info, batch_size=8):
+
+    # get train-val split
+    train_paths, val_paths = train_test_split(paths, test_size=0.2)
+
+    # init datasets (custom per model)
+    train_set = model_info['dataset'](train_paths, augment=True)
+    val_set = model_info['dataset'](val_paths, augment=False)
+
+    # decide loader args and init loaders
+    loader_args = DATASET_ARGS.get(model_type, DATASET_ARGS["default"]).copy()
+
+    if batch_size is not None:
+        loader_args["batch_size"] = batch_size
+
+    # Remove collate_fn if None
+    if loader_args.get("collate_fn") is None:
+        loader_args.pop("collate_fn")
+
+    train_loader = DataLoader(train_set,
+                            shuffle=True,
+                            num_workers=0,
+                            **loader_args)
+
+    val_loader = DataLoader(val_set,
+                            shuffle=False,
+                            num_workers=0,
+                            **loader_args)
+
+    # build models, losses and train fns
+    model = model_info['model']()
+    if model_type != 'MaskRCNN':
+        criterion = model_info['loss']()
+    else:
+        criterion = None
+        
+    fn = model_info['train_fn']
+
+    # train and return metric lists
+    vls, tls, precisions, recalls, f1s, model, val_loader =  fn(model, criterion, train_loader, val_loader, epochs)
+    metrics = {'vls': vls,
+              'tls': tls,
+              'precisions': precisions,
+              'recalls': recalls,
+              'f1s': f1s,
+              }
+
+    return metrics, model, val_loader
+
+
+def _run_cv_comparison(epochs, models):
+
+    cv_results = {}
+    best_states = {}
+    loaders = {}
+    for held_out in REGION_GROUPS:
+        for model, model_info in models.items():
+            print(f'Model: {model} ')
+            print(f"\n=== fold: holding out {held_out} ===")
+            val_paths = _region_paths(held_out)
+            train_paths = [p for r in REGION_GROUPS if r != held_out for p in _region_paths(r)]
+
+            metrics, best_model, val_loader = train_fold(model, train_paths, val_paths, epochs, model_info)
+            if model not in cv_results:
+                cv_results[model] = {} # Initialize dictionary for each model
+            cv_results[model][held_out] = metrics # Store metrics per held_out region
+            best_states[model] = best_model
+            loaders[model] = val_loader
+
+    return cv_results, best_states, loaders
+
+def _run_grouped_comparison(paths, epochs, models, cv=False):
+
+    cv_results = {}
+    best_states = {}
+    loaders = {}
+    for model, model_info in models.items():
+        print(f'Model: {model} ')
+
+        metrics, best_model, val_loader = train_model(model, paths, epochs, model_info)
+        if model not in cv_results:
+            cv_results[model] = {} # Initialize dictionary for each model
+        cv_results[model] = metrics # Store metrics per held_out region
+        best_states[model] = best_model
+        loaders[model] = val_loader
+
+    return cv_results, best_states, loaders
+
+def compare(models, epochs, paths=None, cv=True):
+
+    if cv:
+        return _run_cv_comparison(epochs, models)
+    else:
+        if paths is not None:
+            return _run_grouped_comparison(paths, epochs, models)
+        else:
+            return('please provide paths (as a list)')
+            
+def plot_val_metrics():
+    ...
+

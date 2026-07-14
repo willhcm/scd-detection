@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 import random
+from torch.utils.data import WeightedRandomSampler
 
 # these will be incorporated into the __init__ eventually, just not got round to it yet!
 _BANDS_TO_LOAD = ['HILLSHADE']

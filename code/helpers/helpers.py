@@ -14,7 +14,8 @@ import rasterio
 from rasterio.merge import merge
 from pathlib import Path
 import glob
-from scipy.ndimage import uniform_filter
+from scipy.ndimage import uniform_filter, grey_opening
+from skimage.morphology import disk
 
 
 def plot_coverage(dirs: list):
@@ -84,12 +85,12 @@ def merge_dems(dem_paths):
             out_path = os.path.join(tmpdir, out_name)
 
             with rasterio.open(f_path) as src:
-                # float64 not needed
+                # float32 ro save sapce 
                 data = src.read(1).astype('float32')
 
                 if src.nodata is not None:
                     data[data == src.nodata] = NODATA
-                data[data < -9000] = NODATA 
+                data[data < -9000] = NODATA # clean sea-level nodata which is often like -1e38 or something in DEFRA data.
 
                 profile = src.profile.copy()
                 profile.update(dtype='float32', nodata=NODATA, count=1)
@@ -132,19 +133,17 @@ def tpi(dem, r):
 
   return dem - neighbourhood_mean
 
-def multidirectional_hillshade(dem, cell_size=1.0, altitude_deg=45.0, z_factor=1.0):
-    """Calculates muldirectional hillshade for a DEM array"""
-    azimuths = [0, 45, 90, 135, 180, 225, 270, 315]
-    alt = np.radians(altitude_deg)
-    dz_dx = np.gradient(dem * z_factor, cell_size, axis=1)
-    dz_dy = np.gradient(dem * z_factor, cell_size, axis=0)
-    slope = np.arctan(np.sqrt(dz_dx**2 + dz_dy**2))
-    aspect = np.arctan2(-dz_dy, dz_dx)
-    hs = np.zeros_like(dem, dtype=np.float64)
-    for az_deg in azimuths:
-        az = np.radians(360 - az_deg + 90)
-        hs += np.cos(alt) * np.cos(slope) + np.sin(alt) * np.sin(slope) * np.cos(az - aspect)
-    return np.clip(hs / len(azimuths), 0, 1)
+def read_meta(src):
+    meta = {'crs': src.crs,
+            'res': src.res,
+            'bounds': src.bounds,
+            'height': src.height,
+            'profile': src.profile,
+            'width': src.width,
+            'transform': src.transform}
+    
+    return meta
 
-
+def dem_ground(dem, radius=15):
+    return grey_opening(dem, footprint=disk(radius)).astype(np.float32)
 
