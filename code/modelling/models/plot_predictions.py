@@ -83,7 +83,7 @@ class FPNCentreNetPlotter():
         self.preds = self._get_preds(loader)
 
     def plot_preds(self, ax, idx, dem):
-        
+
         detections = self.preds[idx]
 
         for detection in detections:
@@ -231,10 +231,3 @@ class Plotter():
 
         plt.tight_layout()
         plt.show()
-
-            
-
-
-        
-
-        

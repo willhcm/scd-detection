@@ -62,6 +62,9 @@ _BANDS_TO_LOAD = ["DEM", "DEM_SLOPE", "RR", "LAPLACE"]
 # next: approve/deny negatives!
 # done!
 
+# MODEL == OPTIMISED!
+
+# nvm, threshold too strict for lower confidence cross-val. also struggling on regions with larger SCDs, so reduced p2 and p3 threshold specifically.
 
 
 class PANNeck(nn.Module):
@@ -534,11 +537,17 @@ class MultiLevelCentreNetDataset(Dataset):
         image = d["image"][band_indices].astype(np.float32)
         mask = d["labels"].astype(np.float32)
 
-        # Per-tile z-score
-        for i in range(len(_BANDS_TO_LOAD)):
-            band = image[i]
-            image[i] = (band - band.mean()) / (band.std() + 1e-6)
+        for i, name in enumerate(_BANDS_TO_LOAD):
+          band = image[i].astype(np.float32)
 
+          if name == ["DEM_SLOPE"]:
+              band = np.log1p(np.maximum(band, 0))
+
+          elif name == ['LAPLACE']:
+              band = np.sign(band) * np.log1p(np.abs(band))
+
+          image[i] = (band - band.mean()) / (band.std() + 1e-6)
+          
         if self.augment:
             image, mask = self._augment(image, mask)
 
@@ -553,7 +562,6 @@ class MultiLevelCentreNetDataset(Dataset):
         hillshade = calculate_hillshade(
         dem,
     )
-        
         image = np.concatenate(
         [image, hillshade[None, :, :]],
         axis=0,
@@ -701,10 +709,10 @@ def decode_multilevel_predictions(
     # thresholds tuned using score confidence at differnt levels
     if thresholds is None:
         thresholds = {
-            "0": 0.475,
+            "0": 0.55,
             "1": 0.65,
-            "2": 0.8,
-            "3": 0.9,
+            "2": 0.775,
+            "3": 0.6,
         }
 
     # need to tune likely
@@ -959,20 +967,20 @@ def FPN_CN_train(
     current_stage = 1
     apply_training_stage(model, optimizer, current_stage)
 
-    patience = 20
+    patience = 25
     for epoch in range(epochs):
 
         # dont reinit adam, just update lrs.
         if not model.train_all:
-            if epoch == 20:
+            if epoch == 25:
                 current_stage = 2
                 apply_training_stage(model, optimizer, current_stage)
 
-            elif epoch == 30:
+            elif epoch == 35:
                 current_stage = 3
                 apply_training_stage(model, optimizer, current_stage)
 
-            elif epoch == 40:
+            elif epoch == 45:
                 current_stage = 4
                 apply_training_stage(model, optimizer, current_stage)
 

@@ -9,7 +9,7 @@ from scipy.ndimage import label, center_of_mass
 import random
 from torch.utils.data import TensorDataset, DataLoader, Dataset
 from blocks import DoubleConv, ASPP, Down, Up
-from helpers import object_centroid_metrics
+from helpers import object_centroid_metrics, calculate_hillshade
 
 _BANDS_TO_LOAD = ['DEM', 'DEM_SLOPE', 'RR', 'LAPLACE']
 
@@ -18,7 +18,7 @@ _BANDS_TO_LOAD = ['DEM', 'DEM_SLOPE', 'RR', 'LAPLACE']
 
 # combined
 class SegNet(nn.Module):
-    def __init__(self, in_channels=4, base_filters=64):
+    def __init__(self, in_channels=5, base_filters=64):
         super().__init__()
         f = base_filters
 
@@ -349,7 +349,7 @@ class SegNetDataset(Dataset):
           if name == ["DEM_SLOPE"]:
               band = np.log1p(np.maximum(band, 0))
 
-          elif name == ['LAPLCE']:
+          elif name == ['LAPLACE']:
               band = np.sign(band) * np.log1p(np.abs(band))
 
           image[i] = (band - band.mean()) / (band.std() + 1e-6)
@@ -357,6 +357,16 @@ class SegNetDataset(Dataset):
         if self.augment:
             image, mask = self._augment(image, mask)
 
+        # hillshade test
+        dem = image[0]
+        hillshade = calculate_hillshade(
+        dem,
+    )
+        
+        image = np.concatenate(
+        [image, hillshade[None, :, :]],
+        axis=0,
+    )
 
         return (
             torch.from_numpy(np.ascontiguousarray(image)),

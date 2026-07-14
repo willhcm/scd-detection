@@ -158,10 +158,13 @@ def train_model(model_type, paths, epochs, model_info, batch_size=8):
                             num_workers=0,
                             **loader_args)
 
-
     # build models, losses and train fns
-    model = model_info['model']
-    criterion = model_info['loss']
+    model = model_info['model']()
+    if model_type != 'MaskRCNN':
+        criterion = model_info['loss']()
+    else:
+        criterion = None
+        
     fn = model_info['train_fn']
 
     # train and return metric lists
@@ -205,7 +208,7 @@ def _run_grouped_comparison(paths, epochs, models, cv=False):
     for model, model_info in models.items():
         print(f'Model: {model} ')
 
-        metrics, best_model, val_loader = train_model(paths, epochs, model_info)
+        metrics, best_model, val_loader = train_model(model, paths, epochs, model_info)
         if model not in cv_results:
             cv_results[model] = {} # Initialize dictionary for each model
         cv_results[model] = metrics # Store metrics per held_out region

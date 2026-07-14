@@ -97,7 +97,7 @@ class BaselineUpBlock(nn.Module):
 class BaselineUNet(nn.Module):
     def __init__(
         self,
-        in_channels: int = 4,
+        in_channels: int = 5,
         out_channels: int = 1
     ):
         super().__init__()

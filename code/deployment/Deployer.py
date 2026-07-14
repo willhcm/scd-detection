@@ -12,10 +12,13 @@ from datastack import DataSource, _bounds_inside, OVERLAP_SIGMA_MULTIPLIER
 from rasterio.enums import Resampling
 from scipy.ndimage import sobel, gaussian_filter, laplace
 from ModelWrapper import ModelWrapper
+from helpers import calculate_hillshade
 
 # AI assistance with conversion of DataStack logic to a deployment system. 
 # dont need to export tiles as they will only be used once at inference
 # unlike in training, where several epochs are run
+
+TILE_ORDER = ['DEM', 'RR', 'SLOPE', 'LAPLACE', 'HILLSHADE']
 
 class Deployer():
 
@@ -55,6 +58,12 @@ class Deployer():
             dem_source.crs, padded_bounds, padded_size, padded_size, resampling=Resampling.cubic
         ).astype(np.float32)
 
+        # handles dirty DEM export from QGIS
+        empty = (dem_padded == 0) | np.isnan(dem)
+        empty_frac = float(empty.sum()) / empty.size
+        if empty_frac > 0.1:
+            return None
+
         # gradient 
         sx = sobel(dem_padded, axis=0)
         sy = sobel(dem_padded, axis=1)
@@ -76,18 +85,34 @@ class Deployer():
             dem_source.crs, bounds, self.tile_size, self.tile_size, resampling=Resampling.cubic
         ).astype(np.float32)
 
-        return np.stack([dem, rr, slope, lap], axis=0)
+        hillshade = calculate_hillshade(
+        dem,
+    )
+
+        return np.stack([dem, rr, slope, lap, hillshade], axis=0)
 
     def _predict_tile(self, tile):
+        tile = self._prepare_tile(tile)
         x = torch.from_numpy(tile).unsqueeze(0).float()
         preds = self.model.predict(x)
 
         return preds
     
     def _prepare_tile(self, tile):
-        ...
+    
 
-        # need to normalise appropriately etc. replicate __get__item (where relevant)
+        for i, name in enumerate(TILE_ORDER):
+            band = tile[i].astype(np.float32)
+
+            if name == ["DEM_SLOPE"]:
+                band = np.log1p(np.maximum(band, 0))
+
+            elif name == ['LAPLACE']:
+                band = np.sign(band) * np.log1p(np.abs(band))
+
+            tile[i] = (band - band.mean()) / (band.std() + 1e-6)
+
+            return tile
 
     def predict_at_resolution(self, resolution):
 

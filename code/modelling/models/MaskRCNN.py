@@ -12,6 +12,7 @@ import numpy as np
 from scipy.ndimage import label, find_objects, gaussian_filter
 from torchvision.models.detection.rpn import RPNHead
 from torchvision.models.detection.anchor_utils import AnchorGenerator
+from helpers import calculate_hillshade
  
 class MaskRCNN(nn.Module):
     """
@@ -36,7 +37,7 @@ class MaskRCNN(nn.Module):
             weights_backbone="DEFAULT" if pretrained else None,
             trainable_backbone_layers=trainable_backbone_layers,
         )
-        in_channels = 4
+        in_channels = 5
  
         self._replace_input_conv(in_channels)
         self.model.transform.image_mean = [0.0] * in_channels
@@ -285,7 +286,7 @@ class MaskRCNNDataset(Dataset):
           if name == ["DEM_SLOPE"]:
               band = np.log1p(np.maximum(band, 0))
 
-          elif name == ['LAPLCE']:
+          elif name == ['LAPLACE']:
               band = np.sign(band) * np.log1p(np.abs(band))
 
           image[i] = (band - band.mean()) / (band.std() + 1e-6)
@@ -293,9 +294,21 @@ class MaskRCNNDataset(Dataset):
         if self.augment:
             image, mask = self._augment(image, mask)
 
+        # hillshade test
+        dem = image[0]
+        hillshade = calculate_hillshade(
+        dem,
+    )
+        
+        image = np.concatenate(
+        [image, hillshade[None, :, :]],
+        axis=0,
+    )
+
         boxes, labels, masks, areas, iscrowd = self._mask_to_instances(mask)
 
         image = torch.from_numpy(np.ascontiguousarray(image)).float()
+
 
         target = {
             "boxes": boxes,
