@@ -296,7 +296,7 @@ class DataStack:
         gdf = self.label_shp.gdf.to_crs(self.target_crs)
         tile_width = tile_size * self.target_res
         size_threshold = (tile_width * small_area_fraction) ** 2
-
+ 
         large = gdf[gdf.geometry.area >= size_threshold]
         small = gdf[gdf.geometry.area <  size_threshold]
 
