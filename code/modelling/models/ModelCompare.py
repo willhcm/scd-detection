@@ -1,5 +1,4 @@
 import glob
-from torch.utils.data import WeightedRandomSampler
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -28,45 +27,9 @@ DATASET_ARGS = {
     },
 }
 
-def get_loaders(
-    paths,
-    dataset_type,
-    val_split: float = 0.2,
-    batch_size: int = 8,
-    seed: int = 42,
-):
-    full_dataset = dataset_type(paths, augment=False)
-
-    n = len(full_dataset)
-    n_val  = max(int(n * val_split), 1)
-    n_train = n - n_val
-
-    rng = torch.Generator().manual_seed(seed)
-    indices = torch.randperm(n, generator=rng).tolist()
-
-    train_indices = indices[:n_train]
-    val_indices   = indices[n_train:]
-
-    train_set = _AugmentedSubset(full_dataset, train_indices, augment=True)
-    val_set = _AugmentedSubset(full_dataset, val_indices,   augment=False)
-
-    weights = []
-    for idx in train_indices:
-        d  = np.load(full_dataset.paths[idx], allow_pickle=True)
-        frac = float(d["scd_pixel_fraction"])
-        weights.append(1.0 + frac)
-
-    sampler = WeightedRandomSampler(weights=weights, num_samples=len(weights), replacement=True)
-
-    train_loader = DataLoader(train_set, batch_size=batch_size, sampler=sampler, num_workers=0)
-    val_loader = DataLoader(val_set,   batch_size=batch_size, shuffle=False,   num_workers=0)
-
-    print(f"Train: {n_train} | Val: {n_val}")
-    return train_loader, val_loader, val_set
-
 REGION_GROUPS = {
     'Brazil': ['Brazil'],
-    'USA': ['USA'],
+    'USA': ['USA', 'Texas'],
     'Karoo': ['Karoo'],
     'Russia': ['Russia', 'Russia2', 'Russia3'],
     'Australia': ['Australia']
@@ -92,7 +55,6 @@ def train_fold(model_type, train_paths, val_paths, epochs, model_info, batch_siz
     for p in train_set.paths:
         d = np.load(p, allow_pickle=True)
         w.append(1.0 + float(d["scd_pixel_fraction"]))
-    sampler = WeightedRandomSampler(w, num_samples=len(w), replacement=True)
 
     loader_args = DATASET_ARGS.get(model_type, DATASET_ARGS["default"]).copy()
 
@@ -227,6 +189,3 @@ def compare(models, epochs, paths=None, cv=True):
         else:
             return('please provide paths (as a list)')
             
-def plot_val_metrics():
-    ...
-

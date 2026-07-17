@@ -23,20 +23,32 @@ class MaskRCNN(nn.Module):
         self,
         num_classes=2,
         pretrained=True,
-        anchor_sizes=((16,), (32,), (64,), (128,), (256,)), # default
-        aspect_ratios=((0.5, 1.0, 2.0),) * 5, # default
-        trainable_backbone_layers=3,
-        loss_weights=None,
+        anchor_sizes=((12,), (24,), (44,), (70,), (110,)), # decreased to match SCD size population.
+        aspect_ratios=((0.8, 1.0, 1.25),) * 5, # default, elongated doesn't match subcircular appearance (square bounding boxes)
+
+        # added custom loss weighting to prioritise object id
+        loss_weights= {
+            "loss_objectness": 5.0,
+            "loss_rpn_box_reg": 1.0,
+            "loss_classifier": 5.0,
+            "loss_box_reg": 1.0,
+            "loss_mask": 1.0,
+        },
         freeze=False,
     ):
         super().__init__()
  
+        # changed proposal thresholds to maximise precision
         weights = "DEFAULT" if pretrained else None
         self.model = maskrcnn_resnet50_fpn(
             weights=weights,
             weights_backbone="DEFAULT" if pretrained else None,
-            trainable_backbone_layers=trainable_backbone_layers,
+            rpn_fg_iou_thresh=0.70, # rpn proposal thresholds
+            rpn_bg_iou_thresh=0.30,
+            box_fg_iou_thresh=0.65, # roi classification threshold
+            box_bg_iou_thresh=0.4,
         )
+
         in_channels = 5
  
         self._replace_input_conv(in_channels)
@@ -45,7 +57,7 @@ class MaskRCNN(nn.Module):
         self._set_anchor_generator(anchor_sizes, aspect_ratios)
         self._replace_heads(num_classes)
  
-        # multiplies each named loss the model returns, e.g. {"loss_box_reg": 2.0}
+        # multiplies each named loss the model returns
         self.loss_weights = loss_weights or {}
 
         if freeze:
@@ -268,6 +280,72 @@ class MaskRCNNDataset(Dataset):
             iscrowd = torch.zeros((len(boxes),), dtype=torch.int64)
 
         return boxes, labels, masks, areas, iscrowd
+    
+    # same augmentation changes as made in FPNCN
+    def _spatial_augment(self, image, mask):
+        """
+        Apply identical spatial transformations to every channel and the mask.
+        """
+        image = image.copy()
+        mask = mask.copy()
+
+        if random.random() > 0.5:
+            image = image[:, :, ::-1]
+            mask = mask[:, ::-1]
+
+        if random.random() > 0.5:
+            image = image[:, ::-1, :]
+            mask = mask[::-1, :]
+
+        k = random.choice([0, 1, 2, 3])
+        if k:
+            image = np.rot90(image, k, axes=(1, 2))
+            mask = np.rot90(mask, k)
+
+        return (
+            np.ascontiguousarray(image),
+            np.ascontiguousarray(mask),
+        )
+    
+    def _augment_dem(self, dem):
+        """
+        Apply perturbations while the DEM is still in elevation units.
+        """
+        dem = dem.copy().astype(np.float32)
+
+
+        if random.random() > 0.5:
+            sigma = random.uniform(0.3, 0.8)
+            dem = gaussian_filter(dem, sigma=sigma).astype(np.float32)
+
+        if random.random() > 0.5:
+            # 2% of the DEM's local standard deviation, rather than 0.02 metres
+            noise_std = 0.02 * (dem.std() + 1e-6)
+            noise = np.random.normal(
+                0.0,
+                noise_std,
+                size=dem.shape,
+            ).astype(np.float32)
+
+            dem += noise
+
+        return dem.astype(np.float32)
+
+    @staticmethod
+    def _normalise_band(band, name):
+        band = band.astype(np.float32)
+
+        if name in {"DEM_SLOPE",  "DEM"}:
+            transformed = band
+        else:
+            transformed = np.sign(band) * np.log1p(np.abs(band))
+
+        median = np.median(transformed)
+        q75, q25 = np.percentile(transformed, [75, 25])
+        iqr = q75 - q25
+        scaled = (transformed - median) / (iqr + 1e-6)
+
+        return scaled
 
     def __getitem__(self, idx):
         path = self.paths[idx]
@@ -280,35 +358,45 @@ class MaskRCNNDataset(Dataset):
         image = d["image"][band_indices].astype(np.float32)
         mask = d["labels"].astype(np.float32)
 
-        for i, name in enumerate(_BANDS_TO_LOAD):
-          band = image[i].astype(np.float32)
+        # safe for any adjustments
+        dem_idx = _BANDS_TO_LOAD.index("DEM")
 
-          if name == ["DEM_SLOPE"]:
-              band = np.log1p(np.maximum(band, 0))
-
-          elif name == ['LAPLACE']:
-              band = np.sign(band) * np.log1p(np.abs(band))
-
-          image[i] = (band - band.mean()) / (band.std() + 1e-6)
+        # dem in metres
+        raw_dem = image[dem_idx].copy()
 
         if self.augment:
-            image, mask = self._augment(image, mask)
+            # physical dem pertubations
+            raw_dem = self._augment_dem(raw_dem)
+            image[dem_idx] = raw_dem
 
-        # hillshade test
-        dem = image[0]
-        hillshade = calculate_hillshade(
-        dem,
-    )
-        
+            # rotate / flip
+            image, mask = self._spatial_augment(image, mask)
+
+            # Retrieve the spatially transformed raw DEM.
+            raw_dem = image[dem_idx]
+
+        # Hillshade is calculated from the unnormalised DEM.
+        hillshade = calculate_hillshade(raw_dem).astype(np.float32)
+
+        # Normalise bands.
+        for i, name in enumerate(_BANDS_TO_LOAD):
+            image[i] = self._normalise_band(image[i], name)
+
+        # normalise hillshade seperately.
+        hillshade = (
+            hillshade - hillshade.mean()
+        ) / (
+            hillshade.std() + 1e-6
+        )
+
         image = np.concatenate(
-        [image, hillshade[None, :, :]],
-        axis=0,
-    )
-
+            [image, hillshade[None, :, :]],
+            axis=0,
+        ).astype(np.float32)
+        
         boxes, labels, masks, areas, iscrowd = self._mask_to_instances(mask)
 
         image = torch.from_numpy(np.ascontiguousarray(image)).float()
-
 
         target = {
             "boxes": boxes,
@@ -441,15 +529,18 @@ def object_f1_from_instance_masks(pred_masks, gt_masks):
     return tp, fp, fn
 
 
-def evaluate_maskrcnn_metrics(model, val_loader, device, mask_thresh=0.5, score_thresh=0.5):
+# recomp to make sure IoU and pixel-f1 were calculated at same level (previously image averaged vs global.)
+def evaluate_maskrcnn_metrics(
+    model,
+    val_loader,
+    device,
+    mask_thresh=0.5,
+    score_thresh=0.5,
+):
     model.eval()
 
-    total_tp = 0
-    total_fp = 0
-    total_fn = 0
+    total_tp = total_fp = total_fn = 0
     ptp = pfp = pfn = 0
-
-    ious = []
 
     with torch.no_grad():
         for images, targets in val_loader:
@@ -460,12 +551,10 @@ def evaluate_maskrcnn_metrics(model, val_loader, device, mask_thresh=0.5, score_
 
                 height, width = image.shape[-2:]
 
-
-                # Ground-truth combined binary mask
-                gt_instance_masks = target_dict["masks"].detach().cpu()
+                gt_instance_masks = target_dict["masks"].detach().cpu().bool()
 
                 if gt_instance_masks.shape[0] > 0:
-                    target_mask = gt_instance_masks.bool().any(dim=0)
+                    target_mask = gt_instance_masks.any(dim=0)
                 else:
                     target_mask = torch.zeros(
                         (height, width),
@@ -477,30 +566,23 @@ def evaluate_maskrcnn_metrics(model, val_loader, device, mask_thresh=0.5, score_
 
                 keep = scores >= score_thresh
 
-                # AI assistance with figuring out channels / dimensions for metric calculation 
-                # [N_pred, 1, H, W] -> [N_pred, H, W]
+
                 pred_instance_masks = (
                     raw_pred_masks[keep, 0] >= mask_thresh
                 )
 
-                # [N_gt, H, W]
-                gt_instance_masks = (
-                    target_dict["masks"]
-                    .detach()
-                    .cpu()
-                    .bool()
-                )
-
+                # Object-level counts
                 tp, fp, fn = object_f1_from_instance_masks(
                     pred_instance_masks,
                     gt_instance_masks,
                 )
 
-                total_fn += fn
-                total_fp += fp
                 total_tp += tp
+                total_fp += fp
+                total_fn += fn
 
-                # Combined predicted mask: [H, W]
+
+                # Merge predicted instances
                 if pred_instance_masks.shape[0] > 0:
                     pred_mask = pred_instance_masks.any(dim=0)
                 else:
@@ -509,40 +591,33 @@ def evaluate_maskrcnn_metrics(model, val_loader, device, mask_thresh=0.5, score_
                         dtype=torch.bool,
                     )
 
-                # Pixel-level metrics using Boolean logic. AI assistance (ChatGPT) with boolean logic 
-                ptp += torch.logical_and(
-                    pred_mask,
-                    target_mask,
-                ).sum().item()
+                # Global pixel counts
+                ptp += (pred_mask & target_mask).sum().item()
+                pfp += (pred_mask & ~target_mask).sum().item()
+                pfn += (~pred_mask & target_mask).sum().item()
 
-                pfp += torch.logical_and(
-                    pred_mask,
-                    ~target_mask,
-                ).sum().item()
+    eps = 1e-8
 
-                pfn += torch.logical_and(
-                    ~pred_mask,
-                    target_mask,
-                ).sum().item()
+    # Object-level metrics
+    precision = total_tp / (total_tp + total_fp + eps)
+    recall = total_tp / (total_tp + total_fn + eps)
+    f1 = 2 * total_tp / (2 * total_tp + total_fp + total_fn + eps)
 
-                # IoU
-                pred_union = pred_mask.cpu().numpy()
-                gt_union = target_mask.cpu().numpy()
+    # Pixel-level metrics, all calculated from identical global counts
+    p_precision = ptp / (ptp + pfp + eps)
+    p_recall = ptp / (ptp + pfn + eps)
+    p_f1 = 2 * ptp / (2 * ptp + pfp + pfn + eps)
+    pixel_iou = ptp / (ptp + pfp + pfn + eps)
 
-                ious.append(binary_iou(pred_union, gt_union))
-
-    precision = total_tp / (total_tp + total_fp + 1e-8)
-    recall = total_tp / (total_tp + total_fn + 1e-8)
-    f1 = 2 * precision * recall / (precision + recall + 1e-8)
-
-
-    p_precision = (ptp + 1e-6) / (ptp + pfp + 1e-6)
-    p_recall = (ptp + 1e-6) / (ptp + pfn + 1e-6)
-    p_f1 = 2 * p_precision * p_recall / (p_precision + p_recall + 1e-8) 
-
-    mean_iou = float(np.mean(ious)) if len(ious) > 0 else 0.0
-
-    return precision, recall, f1, mean_iou, p_precision, p_recall, p_f1
+    return (
+        precision,
+        recall,
+        f1,
+        pixel_iou,
+        p_precision,
+        p_recall,
+        p_f1,
+    )
 
 # ai assistance with mask rcnn train functionality and helper functions. original code repo from paper is hard to understand
 # ChatGPT and Claude Sonnet 5 used - whenever I have said AI is used its these models.
@@ -595,24 +670,24 @@ STAGE_LRS = {
         "layer3": 0.0,
     },
     2: {
-        "rpn": 1e-3,
-        "roi_heads": 1e-3,
+        "rpn": 5e-4,
+        "roi_heads": 5e-4,
         "conv1": 5e-6,
         "fpn": 1e-5,
         "layer4": 0.0,
         "layer3": 0.0,
     },
     3: {
-        "rpn": 1e-3,
-        "roi_heads": 1e-3,
+        "rpn": 5e-4,
+        "roi_heads": 5e-4,
         "conv1": 1e-6,
         "fpn": 3e-6,
         "layer4": 1e-6,
         "layer3": 0.0,
     },
     4: {
-        "rpn": 1e-3,
-        "roi_heads": 1e-3,
+        "rpn": 1e-4,
+        "roi_heads": 1e-4,
         "conv1": 5e-7,
         "fpn": 1e-6,
         "layer4": 5e-7,
@@ -731,8 +806,8 @@ def rcnn_train(model, _, train_loader, val_loader, epochs):
             model,
             val_loader,
             device,
-            mask_thresh=0.625,
-            score_thresh=0.6
+            mask_thresh=0.55,
+            score_thresh=0.77
         )
 
         val_precisions.append(precision)

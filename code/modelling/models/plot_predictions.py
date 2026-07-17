@@ -142,14 +142,12 @@ class FPNCentreNetPlotter():
 
         return preds
             
-        
-
-
 class Plotter():
 
-    def __init__(self, models: list, loaders: list, device):
+    def __init__(self, models: dict, loaders: dict, device):
 
         self.models = models
+        print(models)
         self.loaders = loaders
         self.plotters = self._build_plotters()
         self.device = device
@@ -204,11 +202,10 @@ class Plotter():
             return dem, gt
 
 
-    def plot(self, images=None):
+    def plot(self):
         
         # build figure
-
-        fig, axes = plt.subplots(len(images), 2 + len(self.models))
+        fig, axes = plt.subplots(len(self.loaders['MaskRCNN']), 2 + len(self.models))
 
         for i, rows in enumerate(axes):
             dem, gt = self.get_base_images(i)

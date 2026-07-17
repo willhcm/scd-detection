@@ -284,7 +284,7 @@ class ScaleNormalisedDataStack:
         # comparable across variable-resolution tiles.
         # needs to depend on res
         # manual is probably overkill, just automatic 10 * res. can change later if needed.
-        self.rr_sigma_m = 10.0 * dem_source.res
+        self.rr_sigma_m = 12.0 * dem_source.res
 
         self.layer_names = features or self.DEFAULT_LAYERS.copy()
         self.layer_names.append("LABELS")
@@ -588,14 +588,15 @@ class ScaleNormalisedDataStack:
         # no longer need to worry about self.labelled, as this will not be used to produce deployment tiles!
         # that will be done using image pyramid.
         labels = tile_data[self.layer_index["LABELS"]].astype(np.uint8)
+        image = tile_data[:self.layer_index["LABELS"]].astype(np.float32)
 
         np.savez_compressed(str(Path(out_path) / name),
-                            image=self._tile_name, 
+                            image=image, 
                             layer_names=np.array(self.layer_names),
                             res=np.array(req["res"], dtype=np.float32),
                             labels=labels,
                             scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)),
-                            object_ids = np.array(req['object_ids']),
+                            object_ids = np.array(req.get("object_ids", [])),
                             positive=np.array(positive))
 
 

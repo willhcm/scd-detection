@@ -8,11 +8,12 @@ from rasterio.enums import Resampling
 from rasterio.warp import reproject
 import numpy as np
 import torch
-from datastack import DataSource, _bounds_inside, OVERLAP_SIGMA_MULTIPLIER
+from ScaleNormalisedDataStack import DataSource, _bounds_inside, OVERLAP_SIGMA_MULTIPLIER
 from rasterio.enums import Resampling
 from scipy.ndimage import sobel, gaussian_filter, laplace
 from ModelWrapper import ModelWrapper
 from helpers import calculate_hillshade
+import tqdm
 
 # AI assistance with conversion of DataStack logic to a deployment system. 
 # dont need to export tiles as they will only be used once at inference
@@ -24,7 +25,7 @@ class Deployer():
 
     def __init__(self, dem_path, model_type, model_state_dict, device, resolutions, tile_size=512, stride_frac=0.75):
         self.dem_path = dem_path
-        self.model_type = self.model_type
+        self.model_type = model_type
         self.model_dict = model_state_dict
         self.model = self.build_wrapper()
 
@@ -41,7 +42,7 @@ class Deployer():
 
     def _make_tile(self, dem_source, bounds, res):
 
-        sigma_m = 10.0 * res
+        sigma_m = 12.0 * res
         sigma_px = max(1.0, sigma_m / res)
         overlap_px = max(4, int(round(OVERLAP_SIGMA_MULTIPLIER * sigma_px)))
         overlap_m = overlap_px * res
@@ -53,16 +54,22 @@ class Deployer():
 
         if not _bounds_inside(padded_bounds, dem_source.bounds):
             return None
+        
+        dem = dem_source.reproject_to_shape(
+            dem_source.crs, bounds, self.tile_size, self.tile_size, resampling=Resampling.cubic
+        ).astype(np.float32)
+
+
+        # handles dirty DEM export from QGIS
+        empty = (dem == 0) | np.isnan(dem)
+        empty_frac = float(empty.sum()) / empty.size
+        if empty_frac > 0.1:
+            return None
 
         dem_padded = dem_source.reproject_to_shape(
             dem_source.crs, padded_bounds, padded_size, padded_size, resampling=Resampling.cubic
         ).astype(np.float32)
 
-        # handles dirty DEM export from QGIS
-        empty = (dem_padded == 0) | np.isnan(dem)
-        empty_frac = float(empty.sum()) / empty.size
-        if empty_frac > 0.1:
-            return None
 
         # gradient 
         sx = sobel(dem_padded, axis=0)
@@ -81,10 +88,6 @@ class Deployer():
         s, e = overlap_px, overlap_px + self.tile_size
         slope, rr, lap = slope[s:e, s:e], rr[s:e, s:e], lap[s:e, s:e]
 
-        dem = dem_source.reproject_to_shape(
-            dem_source.crs, bounds, self.tile_size, self.tile_size, resampling=Resampling.cubic
-        ).astype(np.float32)
-
         hillshade = calculate_hillshade(
         dem,
     )
@@ -92,69 +95,149 @@ class Deployer():
         return np.stack([dem, rr, slope, lap, hillshade], axis=0)
 
     def _predict_tile(self, tile):
+
         tile = self._prepare_tile(tile)
         x = torch.from_numpy(tile).unsqueeze(0).float()
-        preds = self.model.predict(x)
+        preds = self.model.predict(x, self.device)
 
         return preds
     
     def _prepare_tile(self, tile):
-    
 
         for i, name in enumerate(TILE_ORDER):
             band = tile[i].astype(np.float32)
 
-            if name == ["DEM_SLOPE"]:
+            if name == "SLOPE":
                 band = np.log1p(np.maximum(band, 0))
 
-            elif name == ['LAPLACE']:
+            elif name == 'LAPLACE':
                 band = np.sign(band) * np.log1p(np.abs(band))
 
             tile[i] = (band - band.mean()) / (band.std() + 1e-6)
 
-            return tile
+        return tile
 
+    # changed to deal with combined masks for stitching: needs to be adapted for fpn_cn, whose combined masks are often noisy due to edge artefacts with circle predictions
     def predict_at_resolution(self, resolution):
 
-        dem_source = DataSource.from_tiff_utm(self.dem_path, native_res=resolution)
+        dem_source = DataSource.from_tiff_utm(
+            self.dem_path,
+            native_res=resolution,
+        )
+
         h, w = dem_source.height, dem_source.width
         transform = dem_source.transform
 
-        # decide on weightings, centre should be weighting more highly but needs to depend on overlap size.
         prob_map = np.zeros((h, w), dtype=np.float32)
         weight_map = np.zeros((h, w), dtype=np.float32)
 
-        stride_m = int(self.tile_size * self.stride_frac) * resolution
+        stride_px = max(1, int(round(self.tile_size * self.stride_frac)))
+        stride_m = stride_px * resolution
         tile_w_m = self.tile_size * resolution
+
         minx, miny, maxx, maxy = dem_source.bounds
 
-        x0 = minx
-        while x0 < maxx:
-            y0 = miny
-            while y0 < maxy:
-                bounds = (x0, y0, x0 + tile_w_m, y0 + tile_w_m)
-                tile = self._make_tile(dem_source, bounds, resolution)
+        x_positions = np.arange(
+            minx,
+            maxx - tile_w_m + 0.5 * resolution,
+            stride_m,
+        )
 
-                if tile is not None:
-                    pred = self._predict_tile(tile)
-                    col0, row0 = ~transform * (x0, y0 + tile_w_m)
-                    col0, row0 = int(round(col0)), int(round(row0))
-                    row1, col1 = row0 + self.tile_size, col0 + self.tile_size
+        y_positions = np.arange(
+            miny,
+            maxy - tile_w_m + 0.5 * resolution,
+            stride_m,
+        )
 
-                    if row1 <= h and col1 <= w:
-                        prob_map[row0:row1, col0:col1] += pred
-                        weight_map[row0:row1, col0:col1] += 1.0
+        total_tiles = len(x_positions) * len(y_positions)
 
-                y0 += stride_m
-            x0 += stride_m
+        skipped_tiles = 0
+        predicted_tiles = 0
 
-        weight_map[weight_map == 0] = 1.0
-        prob_map /= weight_map
+        progress = tqdm.tqdm(
+            total=total_tiles,
+            desc=f"Inference at {resolution:g} m",
+            unit="tile",
+            dynamic_ncols=True,
+        )
+
+        with torch.inference_mode():
+
+            for x0 in x_positions:
+                for y0 in y_positions:
+
+                    bounds = (
+                        float(x0),
+                        float(y0),
+                        float(x0 + tile_w_m),
+                        float(y0 + tile_w_m),
+                    )
+
+                    tile = self._make_tile(
+                        dem_source,
+                        bounds,
+                        resolution,
+                    )
+
+                    if tile is None:
+                        skipped_tiles += 1
+
+                    else:
+                        pred = self._predict_tile(tile)
+
+                        # Convert tensor output to a 2D NumPy array if needed.
+                        if torch.is_tensor(pred):
+                            pred = pred.detach().float().cpu().numpy()
+
+                        pred = np.asarray(pred).squeeze()
+
+                        col0, row0 = ~transform * (
+                            x0,
+                            y0 + tile_w_m,
+                        )
+
+                        col0 = int(round(col0))
+                        row0 = int(round(row0))
+
+                        row1 = row0 + self.tile_size
+                        col1 = col0 + self.tile_size
+
+                        if (
+                            row0 >= 0
+                            and col0 >= 0
+                            and row1 <= h
+                            and col1 <= w
+                        ):
+                            prob_map[row0:row1, col0:col1] += pred
+                            weight_map[row0:row1, col0:col1] += 1.0
+                            predicted_tiles += 1
+                        else:
+                            skipped_tiles += 1
+
+                    progress.update(1)
+                    progress.set_postfix(
+                        predicted=predicted_tiles,
+                        skipped=skipped_tiles,
+                    )
+
+        progress.close()
+
+        valid = weight_map > 0
+        prob_map[valid] /= weight_map[valid]
+        prob_map[~valid] = np.nan
+
+        print(
+            f"Completed {resolution:g} m inference: "
+            f"{predicted_tiles}/{total_tiles} tiles predicted, "
+            f"{skipped_tiles} skipped."
+        )
 
         return prob_map, transform, dem_source.crs
 
-    def predict(self):
+    def _predict(self):
 
+        self.model.model.eval()
+        self.model.model.to(self.device)
         preds = {}
         for res in self.resolutions:
             prob_map, transform, crs = self.predict_at_resolution(res)
@@ -166,22 +249,40 @@ class Deployer():
 
         base_res = base_res or min(preds)
         base = preds[base_res]
+
         stack = [base["prob"]]
 
         for res, p in preds.items():
             if res == base_res:
                 continue
-            resampled = np.empty_like(base["prob"])
+
+            resampled = np.full_like(
+                base["prob"],
+                np.nan,
+                dtype=np.float32,
+            )
+
             reproject(
                 source=p["prob"],
                 destination=resampled,
                 src_transform=p["transform"],
                 src_crs=p["crs"],
+                src_nodata=np.nan,
                 dst_transform=base["transform"],
                 dst_crs=base["crs"],
+                dst_nodata=np.nan,
                 resampling=Resampling.bilinear,
+                init_dest_nodata=True,
             )
+
             stack.append(resampled)
 
-        # need to decide on how to stitch predictions, max works but maybe not optimal.
-        return np.stack(stack, axis=0).max(axis=0), base["transform"], base["crs"]
+        stacked = np.stack(stack, axis=0)
+
+        finite = np.isfinite(stacked)
+        filled = np.where(finite, stacked, -np.inf)
+
+        merged = filled.max(axis=0)
+        merged[~finite.any(axis=0)] = np.nan
+
+        return merged, base["transform"], base["crs"]
