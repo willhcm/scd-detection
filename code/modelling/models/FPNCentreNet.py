@@ -5,7 +5,7 @@ from torchvision.models.detection import maskrcnn_resnet50_fpn
 from torchvision.models.detection import MaskRCNN_ResNet50_FPN_Weights
 import torch.nn as nn
 import torch
-from CentreNetStrided import decode_centernet_predictions
+from depreciated.CentreNetStrided import decode_centernet_predictions
 import torch.nn.functional as F
 import numpy as np
 from scipy.ndimage import label, center_of_mass, gaussian_filter

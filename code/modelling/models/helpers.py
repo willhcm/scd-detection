@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.ndimage import label, center_of_mass, maximum_filter
+from scipy.ndimage import label, center_of_mass, maximum_filter, uniform_filter
 
 
 
@@ -163,3 +163,9 @@ def calculate_hillshade(dem, cell_size=1.0, altitude_deg=45.0, z_factor=1.0):
         az = np.radians(360 - az_deg + 90)
         hs += np.cos(alt) * np.cos(slope) + np.sin(alt) * np.sin(slope) * np.cos(az - aspect)
     return np.clip(hs / 8, 0, 1).astype(np.float32)
+
+
+def compute_tpi(dem, window_size, edge_mode="reflect"):
+    local_mean = uniform_filter(dem.astype(np.float64), size=window_size, mode=edge_mode)
+    tpi = dem - local_mean
+    return tpi
