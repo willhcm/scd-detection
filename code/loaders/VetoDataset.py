@@ -5,6 +5,8 @@ from rasterio.enums import Resampling
 from rasterio.features import rasterize
 from rasterio.transform import from_bounds
 from ScaleNormalisedDataStack import ShapeLabels, DataSource
+from IPython.display import clear_output
+
 
 class VetoLoader:
 
@@ -19,15 +21,29 @@ class VetoLoader:
         self.target_crs = self.spectral.crs
         self.tiles = []
 
-    def _make_tile(self, obj, crop_pixels=64):
-        """
-        Extract a fixed-size crop at native Planet resolution.
-        """
+    def _make_tile(
+        self,
+        obj,
+        tile_size=96,
+        min_crop_pixels=64,
+        object_fraction=0.5,
+    ):
+
 
         cx = obj["cx"]
         cy = obj["cy"]
 
-        crop_width_m = crop_pixels * self.spectral.res
+        # Minimum crop extent at native Planet resolution.
+        min_crop_width_m = min_crop_pixels * self.spectral.res
+
+        # Ensure the object occupies at most 50% of the crop width.
+        object_crop_width_m = obj["diameter"] / object_fraction
+
+        crop_width_m = max(
+            min_crop_width_m,
+            object_crop_width_m,
+        )
+
         half_width = crop_width_m / 2
 
         tile_bounds = (
@@ -40,21 +56,24 @@ class VetoLoader:
         rgb = self.spectral.reproject_to_shape(
             target_crs=self.target_crs,
             tile_bounds=tile_bounds,
-            out_width=crop_pixels,
-            out_height=crop_pixels,
+            out_width=tile_size,
+            out_height=tile_size,
             resampling=Resampling.bilinear,
         )
 
-        transform = from_bounds(
+        if np.all(rgb == 0):
+            return None
+
+        tile_transform = from_bounds(
             *tile_bounds,
-            crop_pixels,
-            crop_pixels,
+            tile_size,
+            tile_size,
         )
 
         mask = rasterize(
             [(obj["geom"], 1)],
-            out_shape=(crop_pixels, crop_pixels),
-            transform=transform,
+            out_shape=(tile_size, tile_size),
+            transform=tile_transform,
             fill=0,
             dtype=np.uint8,
         )
@@ -66,6 +85,7 @@ class VetoLoader:
             "area": obj["area"],
             "diameter": obj["diameter"],
             "bounds": tile_bounds,
+            "mask_fraction": float(mask.mean()),
         }
 
     # for colab manual labelling
@@ -98,12 +118,12 @@ class VetoLoader:
         plt.show()
 
     # for colab manual labelling again 
-    def label(self, tile_size=224, padding=1.0, min_area=10):
+    def label(self, min_area=10):
         
         objs = self.predictions.objects(
             self.target_crs
         )
-
+        print(len(objs))
         for obj in objs:
 
             if obj["area"] < min_area:
@@ -111,6 +131,10 @@ class VetoLoader:
 
             tile = self._make_tile(obj)
 
+            if tile is None:
+                continue
+
+            clear_output(wait=True)
             self._show_tile(tile)
 
             answer = input(

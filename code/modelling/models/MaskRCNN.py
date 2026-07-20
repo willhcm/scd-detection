@@ -1,15 +1,12 @@
-import torchvision
 from torchvision.models.detection import maskrcnn_resnet50_fpn
-from torchvision.models.detection import MaskRCNN_ResNet50_FPN_Weights
 import torch.nn as nn
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
-import glob
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset
 import random
 import numpy as np
-from scipy.ndimage import label, find_objects, gaussian_filter, center_of_mass
+from scipy.ndimage import label, find_objects, gaussian_filter
 from torchvision.models.detection.rpn import RPNHead
 from torchvision.models.detection.anchor_utils import AnchorGenerator
 from helpers import calculate_hillshade, compute_tpi

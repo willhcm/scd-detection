@@ -4,9 +4,21 @@ import torch.nn.functional as F
 from torchvision.models import resnet18, ResNet18_Weights
 import numpy as np
 
-class VetoDataset(nn.Module):
+class VetoTrainingDataset(nn.Module):
 
-    def __init__(self):
+    def __init__(self, ):
+        super().__init__()
+        ...
+
+    def __len__(self):
+        ...
+
+    def __getitem__(self):
+        ...
+
+class VetoTestingDataset(nn.Module):
+
+    def __init__(self, ):
         super().__init__()
         ...
 
