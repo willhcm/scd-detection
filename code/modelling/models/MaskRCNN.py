@@ -44,7 +44,7 @@ class MaskRCNN(nn.Module):
             trainable_backbone_layers=3
         )
 
-        in_channels = 6
+        in_channels = 7
  
         self._replace_input_conv(in_channels)
         self.model.transform.image_mean = [0.0] * in_channels
@@ -333,6 +333,10 @@ class MaskRCNNDataset(Dataset):
     def __getitem__(self, idx):
         path = self.paths[idx]
         d = np.load(path, allow_pickle=True)
+        res = d['res']
+        res_value = np.log(res) / np.log(15.0)
+
+        res_channel = np.ones((512, 512), dtype=np.float32) * res_value
 
         layer_names = list(d["layer_names"])
         li = {name: i for i, name in enumerate(layer_names)}
@@ -373,10 +377,9 @@ class MaskRCNNDataset(Dataset):
         )
 
         tpi_s = compute_tpi(raw_dem, 21)
-        #tpi_c = compute_tpi(raw_dem, 51)
 
         image = np.concatenate(
-            [image, hillshade[None, :, :], tpi_s[None, :, :]],
+            [image, hillshade[None, :, :], tpi_s[None, :, :], res_channel[None, :, :]],
             axis=0,
         ).astype(np.float32)
         

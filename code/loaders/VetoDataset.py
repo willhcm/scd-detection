@@ -19,24 +19,16 @@ class VetoLoader:
         self.target_crs = self.spectral.crs
         self.tiles = []
 
-    def _make_tile(
-        self,
-        obj,
-        tile_size=224,
-        padding=1.0,
-    ):
+    def _make_tile(self, obj, crop_pixels=64):
         """
-        Extract an RGB crop centred on one predicted candidate.
+        Extract a fixed-size crop at native Planet resolution.
         """
 
         cx = obj["cx"]
         cy = obj["cy"]
 
-        # padding=1.0 gives approximately one object diameter
-        # of context around each side.
-        crop_width = obj["diameter"] * (1 + 2 * padding)
-
-        half_width = crop_width / 2
+        crop_width_m = crop_pixels * self.spectral.res
+        half_width = crop_width_m / 2
 
         tile_bounds = (
             cx - half_width,
@@ -48,22 +40,21 @@ class VetoLoader:
         rgb = self.spectral.reproject_to_shape(
             target_crs=self.target_crs,
             tile_bounds=tile_bounds,
-            out_width=tile_size,
-            out_height=tile_size,
+            out_width=crop_pixels,
+            out_height=crop_pixels,
             resampling=Resampling.bilinear,
         )
 
-        tile_transform = from_bounds(
+        transform = from_bounds(
             *tile_bounds,
-            tile_size,
-            tile_size,
+            crop_pixels,
+            crop_pixels,
         )
 
-        # Rasterise only the current candidate, not every candidate in the bounds
         mask = rasterize(
             [(obj["geom"], 1)],
-            out_shape=(tile_size, tile_size),
-            transform=tile_transform,
+            out_shape=(crop_pixels, crop_pixels),
+            transform=transform,
             fill=0,
             dtype=np.uint8,
         )
@@ -93,7 +84,7 @@ class VetoLoader:
         )
 
         plt.figure(figsize=(5, 5))
-        plt.imshow(rgb_display)
+        plt.imshow(rgb_display, interpolation='nearest')
 
         # Show the Mask R-CNN candidate outline.
         plt.contour(
@@ -107,7 +98,7 @@ class VetoLoader:
         plt.show()
 
     # for colab manual labelling again 
-    def label(self, tile_size=224, padding=1.0, min_area=20):
+    def label(self, tile_size=224, padding=1.0, min_area=10):
         
         objs = self.predictions.objects(
             self.target_crs
@@ -118,11 +109,7 @@ class VetoLoader:
             if obj["area"] < min_area:
                 continue
 
-            tile = self._make_tile(
-                obj,
-                tile_size=tile_size,
-                padding=padding,
-            )
+            tile = self._make_tile(obj)
 
             self._show_tile(tile)
 
