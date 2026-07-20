@@ -38,13 +38,13 @@ class Deployer():
     def build_wrapper(self):
         return ModelWrapper(self.model_dict)
 
-    def _predict(self):
+    def predict(self, stride_frac = 0.5):
 
         self.model.model.eval()
         self.model.model.to(self.device)
         preds = {}
         for res in self.resolutions:
-            predictor = ResPredictor(res, self.dem_path, self.model, self.device, self.tile_size)
+            predictor = ResPredictor(res, self.dem_path, self.model, self.device, self.tile_size, stride_frac=stride_frac)
             prob_map, transform, crs = predictor.predict()
             preds[res] = {"prob": prob_map, "transform": transform, "crs": crs}
 
@@ -135,6 +135,7 @@ class ResPredictor():
 
         lap = laplace(dem_padded)
 
+        # cut to size!
         s, e = self.overlap_px, self.overlap_px + self.tile_size
         dem = dem_padded[s:e, :]
         rr = rr[s:e, :]

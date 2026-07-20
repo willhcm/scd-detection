@@ -2,7 +2,7 @@ from MaskRCNN import MaskRCNN
 import torch
 
 PRED_ARGS = {
-             'MaskRCNN': {'score_threshold': 0.85,
+             'MaskRCNN': {'score_threshold': 0.77,
                           'mask_threshold': 0.75},
              }
 
