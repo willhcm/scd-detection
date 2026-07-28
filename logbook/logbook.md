@@ -44,4 +44,6 @@ Aim:
 - Presented research to H2 research group and discussed next steps for general hydrogen research in the department.
 
  
+## Meeting Notes
 
+- Image Pyramid idea is novel, implementation needs to be improved and cross-geography LOOCV at deployment level.
