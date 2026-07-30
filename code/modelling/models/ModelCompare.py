@@ -28,18 +28,19 @@ DATASET_ARGS = {
 }
 
 REGION_GROUPS = {
+    'Russia': ['Russia', 'Russia2', 'Russia3'],
     'Brazil': ['Brazil'],
     'USA': ['USA', 'Texas'],
     'Karoo': ['Karoo'],
-    'Russia': ['Russia', 'Russia2', 'Russia3'],
-    'Australia': ['Australia']
+    'Australia': ['Australia'],
 }
 
 def _region_paths(region_name):
     paths = []
     for d in REGION_GROUPS[region_name]:
         paths.extend(glob.glob(f"/content/drive/MyDrive/IRP/Tiles/ScalesCombined/{d}/*.npz"))
-        negs = glob.glob(f"/content/drive/MyDrive/IRP/NegativeFarming/{d}/*.npz")[::3]
+        negs = glob.glob(f"/content/drive/MyDrive/IRP/Tiles/Negatives/{d}/*.npz")
+
         paths.extend(negs)
     return sorted(paths)
 
@@ -152,6 +153,7 @@ def _run_cv_comparison(epochs, models):
             print(f"\n=== fold: holding out {held_out} ===")
             val_paths = _region_paths(held_out)
             train_paths = [p for r in REGION_GROUPS if r != held_out for p in _region_paths(r)]
+            train_paths.extend(glob.glob(f"/content/drive/MyDrive/IRP/Tiles/UKNegatives/*.npz"))
 
             metrics, best_model, val_loader = train_fold(model, train_paths, val_paths, epochs, model_info)
             if model not in cv_results:

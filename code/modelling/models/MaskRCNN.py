@@ -11,8 +11,64 @@ from torchvision.models.detection.rpn import RPNHead
 from torchvision.models.detection.anchor_utils import AnchorGenerator
 from helpers import calculate_hillshade, compute_tpi
 from MaskRCNNFunctions import evaluate_maskrcnn_metrics, build_staged_optimizer, apply_training_stage
+import copy
+from tqdm.auto import tqdm
 
 _BANDS_TO_LOAD = ['DEM', 'DEM_SLOPE', 'RR', 'LAPLACE']
+
+class ResolutionFiLM(nn.Module):
+    """
+    Generates per-channel gamma/beta from a scalar resolution value.
+    """
+
+    def __init__(self, out_channels=256, hidden=64):
+        super().__init__()
+        self.gen = nn.Sequential(
+            nn.Linear(1, hidden),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden, out_channels * 2),
+        )
+        self.out_channels = out_channels
+
+        nn.init.zeros_(self.gen[-1].weight)
+        nn.init.zeros_(self.gen[-1].bias)
+
+    def forward(self, cond):
+        gamma, beta = self.gen(cond).chunk(2, dim=1)
+        return gamma, beta
+
+
+class FiLMBackbone(nn.Module):
+    """
+    Wraps torchvision's BackboneWithFPN so every FPN level gets modulated
+    by a resolution conditioning vector before being handed to the RPN/ROI heads.
+    FiLM.
+    """
+
+    def __init__(self, backbone_with_fpn):
+        super().__init__()
+        self.body = backbone_with_fpn.body
+        self.fpn = backbone_with_fpn.fpn
+        self.out_channels = backbone_with_fpn.out_channels
+
+        self.film = ResolutionFiLM(out_channels=self.out_channels)
+        self._cond = None
+
+    def set_condition(self, cond):
+        # cond: (B, 1) tensor, same device + batch order as the images
+        self._cond = cond
+
+    def forward(self, x):
+        feats = self.fpn(self.body(x))
+
+        if self._cond is None:
+            return feats
+
+        gamma, beta = self.film(self._cond)
+        gamma = gamma[:, :, None, None]
+        beta = beta[:, :, None, None]
+
+        return {k: v * (1 + gamma) + beta for k, v in feats.items()}
 
 class MaskRCNN(nn.Module):
     """
@@ -41,13 +97,16 @@ class MaskRCNN(nn.Module):
             trainable_backbone_layers=3
         )
 
-        in_channels = 7
+        in_channels = 5
  
         self._replace_input_conv(in_channels)
         self.model.transform.image_mean = [0.0] * in_channels
         self.model.transform.image_std = [1.0] * in_channels
         self._set_anchor_generator(anchor_sizes, aspect_ratios)
         self._replace_heads(num_classes)
+
+        # add FiLM conditioning to backbone to encode resolution
+        self.model.backbone = FiLMBackbone(self.model.backbone)
  
         # multiplies each named loss the model returns
         self.loss_weights = loss_weights or {}
@@ -59,6 +118,9 @@ class MaskRCNN(nn.Module):
         # Freeze backbone.
         for parameter in self.model.backbone.parameters():
             parameter.requires_grad = False
+
+        for parameter in self.model.backbone.film.parameters():
+            parameter.requires_grad = True
 
         # Heads always train.
         for parameter in self.model.rpn.parameters():
@@ -152,32 +214,9 @@ class MaskRCNNDataset(Dataset):
         min_instance_area=20,
     ):
         self.augment = augment
-        self.paths = []
+        self.paths = all_paths
         self.min_instance_area = min_instance_area
 
-        skipped_shape = 0
-        skipped_missing = 0
-
-        for p in sorted(all_paths):
-            d = np.load(p, allow_pickle=True)
-
-            if skip_partial:
-                _, h, w = d["image"].shape
-                if h != tile_size or w != tile_size:
-                    skipped_shape += 1
-                    continue
-
-            layer_names = list(d["layer_names"]) if "layer_names" in d else []
-            if any(b not in layer_names for b in _BANDS_TO_LOAD):
-                skipped_missing += 1
-                continue
-
-            self.paths.append(p)
-
-        print(
-            f"Found {len(self.paths)} tiles "
-            f"({skipped_shape} partial, {skipped_missing} missing bands skipped)"
-        )
 
     def __len__(self):
         return len(self.paths)
@@ -333,8 +372,6 @@ class MaskRCNNDataset(Dataset):
         res = d['res']
         res_value = np.log(res) / np.log(15.0)
 
-        res_channel = np.ones((512, 512), dtype=np.float32) * res_value
-
         layer_names = list(d["layer_names"])
         li = {name: i for i, name in enumerate(layer_names)}
         band_indices = [li[b] for b in _BANDS_TO_LOAD]
@@ -373,16 +410,12 @@ class MaskRCNNDataset(Dataset):
             hillshade.std() + 1e-6
         )
 
-        tpi_s = compute_tpi(raw_dem, 21)
-
         image = np.concatenate(
-            [image, hillshade[None, :, :], tpi_s[None, :, :], res_channel[None, :, :]],
+            [image, hillshade[None, :, :]],
             axis=0,
         ).astype(np.float32)
         
         boxes, labels, masks, areas, iscrowd = self._mask_to_instances(mask)
-
-        image = torch.from_numpy(np.ascontiguousarray(image)).float()
 
         target = {
             "boxes": boxes,
@@ -391,14 +424,14 @@ class MaskRCNNDataset(Dataset):
             "image_id": torch.tensor([idx]),
             "area": areas,
             "iscrowd": iscrowd,
+            "resolution": torch.tensor([res_value], dtype=torch.float32)
         }
+
+        image = torch.from_numpy(image)
 
         return image, target
 
 def rcnn_train(model, _, train_loader, val_loader, epochs):
-
-    import copy
-    from tqdm.auto import tqdm
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
@@ -463,7 +496,9 @@ def rcnn_train(model, _, train_loader, val_loader, epochs):
                 for t in targets
             ]
 
-            loss_dict = model(images, targets)
+            resolutions = torch.stack([t["resolution"] for t in targets]).to(device)
+            
+            loss_dict = model(images, resolutions, targets)
 
             losses = sum(loss for loss in loss_dict.values())
 

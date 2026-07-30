@@ -221,6 +221,7 @@ def evaluate_maskrcnn_metrics(
 # ai assistance with mask rcnn train functionality and helper functions. original code repo from paper is hard to understand
 # ChatGPT and Claude Sonnet 5 used - whenever I have said AI is used its these models.
 
+
 def build_staged_optimizer(model, weight_decay=1e-4):
     return torch.optim.AdamW(
         [

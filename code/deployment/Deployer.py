@@ -4,7 +4,6 @@
 # merge tiles back and generate prediction mask (vectorised for memory efficiency probably)
 
 import rasterio
-from rasterio.enums import Resampling
 from rasterio.warp import reproject
 import numpy as np
 import torch
@@ -14,26 +13,36 @@ from scipy.ndimage import sobel, gaussian_filter, laplace
 from ModelWrapper import ModelWrapper
 from helpers import calculate_hillshade, compute_tpi
 from tqdm.auto import tqdm
+from PostProcesser import PostProcessor
+from Veto import VetoClassifier
+import geopandas as gpd
+from pathlib import Path
+from rasterio.features import shapes, sieve
+from shapely.geometry import shape
 
 # AI assistance with conversion of DataStack logic to a deployment system. 
 # dont need to export tiles as they will only be used once at inference
 # unlike in training, where several epochs are run
 
-TILE_ORDER = ['DEM', 'RR', 'SLOPE', 'LAPLACE', 'HILLSHADE', 'TPI']
+TILE_ORDER = ['DEM', 'RR', 'SLOPE', 'LAPLACE', 'HILLSHADE']
 
 class Deployer():
 
-    def __init__(self, dem_path, model_state_dict, device, resolutions, tile_size=512):
+    def __init__(self, dem_path, rgb_path, model_state_dict, veto_model_dict, device, resolutions, tile_size=512, veto=True):
         self.dem_path = dem_path
+        self.rgb_path = rgb_path
         self.model_dict = model_state_dict
         self.model = self.build_wrapper()
 
         # clear memory of now duplicate state dict.
         del self.model_dict
 
+        self.veto_model = VetoClassifier()
+        self.veto_model.load_state_dict(veto_model_dict)
         self.device = device
         self.resolutions = resolutions
         self.tile_size = tile_size
+        self.to_veto = veto
 
     def build_wrapper(self):
         return ModelWrapper(self.model_dict)
@@ -93,6 +102,25 @@ class Deployer():
         return merged, base["transform"], base["crs"]
     
 
+    def veto(self, merged, transform, crs, veto_model, veto_device):
+        postproc = PostProcessor(
+            tile_size=self.tile_size,
+            device=veto_device,
+            model=veto_model,
+            rgb_path=self.rgb_path
+        )
+        stitched, rejected, out_transform, out_crs = postproc.predict(merged, transform, crs)
+        return stitched, rejected, out_transform, out_crs
+
+    def sweep(self, stride_frac=0.75):
+        predictions = self.predict(stride_frac)
+        merged, transform, crs = self.merge_predictions_pyramid(predictions)
+
+        if self.to_veto:
+            cleaned, rejected, out_transform, out_crs = self.veto(merged, transform, crs, self.veto_model, self.device)
+            return cleaned, rejected, out_transform, out_crs
+        else:
+            return merged, transform, crs
 
 # self contained res predictor to decrease amount of calculations needed to be made repetitively!
 class ResPredictor():
@@ -116,6 +144,9 @@ class ResPredictor():
     # cache derivaties and dem for entire x-extent of DEM region.
     # overlap is at 50%, so halves the amount of intensive calculations required.
     def _make_row_strip(self, dem_source, y0, x_positions, tile_w_m, resolution):
+
+        res_value = np.log(resolution) / np.log(15.0)
+        
         minx = x_positions[0] - self.overlap_m
         maxx = x_positions[-1] + tile_w_m + self.overlap_m
         strip_bounds = (minx, y0 - self.overlap_m, maxx, y0 + tile_w_m + self.overlap_m)
@@ -143,9 +174,8 @@ class ResPredictor():
         lap = lap[s:e, :]
 
         hillshade = calculate_hillshade(dem)
-        tpi = compute_tpi(dem, 21)
 
-        strip = {'DEM': dem, 'RR': rr, 'SLOPE': slope, 'LAPLACE': lap, 'HILLSHADE': hillshade, 'TPI': tpi}
+        strip = {'DEM': dem, 'RR': rr, 'SLOPE': slope, 'LAPLACE': lap, 'HILLSHADE': hillshade, 'RES': res_value}
         return strip, minx
 
     # get next x tile from y-horizontal strip
@@ -164,6 +194,7 @@ class ResPredictor():
     def predict(self):
 
         resolution = self.res
+        res_value = np.log(resolution) / np.log(15.0)
 
         # msame logic as before
         dem_source = DataSource.from_tiff_utm(self.dem_path, native_res=resolution)
@@ -216,9 +247,10 @@ class ResPredictor():
             # create tensor from batch_tiles list.
             stacked = np.stack(batch_tiles, axis=0)
             x = torch.from_numpy(stacked).float()
+            resolutions = torch.full((len(batch_tiles), 1), res_value, dtype=torch.float32)
 
             # outputs (prob map)
-            masks = self.model.predict(x, self.device) 
+            masks = self.model.predict(x, resolutions, self.device) 
 
             # saves to correct locations in global prob_map and weight_map
             for mask, (row0, col0) in zip(masks, batch_locs):
@@ -311,3 +343,56 @@ class ResPredictor():
 
         self._weight_kernel = kernel
         return kernel
+    
+    def save_predictions(self, sweep_outputs, output_path, threshold=0.75, min_pixels = 8):
+        probability_map, transform, crs = sweep_outputs
+
+        # Threshold predictions and exclude NaN areas.
+        binary = (
+            np.isfinite(probability_map)
+            & (probability_map >= threshold)
+        ).astype(np.uint8)
+
+        # Remove small connected predictions.
+        if min_pixels > 1:
+            binary = sieve(
+                binary,
+                size=min_pixels,
+                connectivity=8,
+            )
+
+        polygons = [
+            shape(geometry)
+            for geometry, value in shapes(
+                binary,
+                mask=binary.astype(bool),
+                transform=transform,
+                connectivity=8,
+            )
+            if value == 1
+        ]
+
+        gdf = gpd.GeoDataFrame(
+            {
+                "object_id": np.arange(1, len(polygons) + 1),
+                "geometry": polygons,
+            },
+            crs=crs,
+        )
+
+        # Meaningful when the CRS is projected in metres.
+        if not gdf.empty:
+            gdf["area_m2"] = gdf.geometry.area
+
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        gdf.to_file(
+            output_path,
+            driver="ESRI Shapefile",
+            index=False,
+        )
+
+        print(f"Saved {len(gdf)} objects to {output_path}")
+
+        return gdf
