@@ -3,71 +3,101 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.models import resnet18, ResNet18_Weights
 import numpy as np
+from veto_helpers import VETO_SCALAR_NAMES
 
-class VetoTrainingDataset(nn.Module):
+def replace_first_conv(
+    model,
+    in_channels,
+    copy_pretrained=True,
+):
+    old_conv = model.conv1
 
-    
-    def __init__(
-        self,
-        all_paths,
-        tile_size=512,
-        skip_partial=True,
-        augment=False,
-        min_instance_area=20,
-    ):
-        self.augment = augment
-        self.paths = all_paths
-        self.min_instance_area = min_instance_area
+    new_conv = nn.Conv2d(
+        in_channels,
+        old_conv.out_channels,
+        kernel_size=old_conv.kernel_size,
+        stride=old_conv.stride,
+        padding=old_conv.padding,
+        bias=False,
+    )
 
+    if copy_pretrained:
+        with torch.no_grad():
 
-    def __len__(self):
-        return len(self.paths)
+            channels_to_copy = min(3, in_channels)
 
-    def __len__(self):
-        ...
+            new_conv.weight[:, :channels_to_copy,].copy_(old_conv.weight[:, :channels_to_copy,])
 
-    def __getitem__(self):
-        ...
+            if in_channels > 3:
+                mean_weight = old_conv.weight.mean(dim=1, keepdim=True)
+
+                new_conv.weight[:, 3:].copy_( mean_weight.repeat(1, in_channels - 3, 1, 1))
+
+    model.conv1 = new_conv
+    return model
 
 
 class VetoClassifier(nn.Module):
 
-    def __init__(self, dropout=0.2, in_channels=4):
+    # 3 encoder branches and shared classifier
+    def __init__(self, scalar_dim=len(VETO_SCALAR_NAMES), dropout=0.3):
         super().__init__()
 
-        base_model = resnet18(
-            weights=ResNet18_Weights.DEFAULT
+        # Local Planet RGB + candidate mask.
+        self.rgb_encoder = resnet18(ResNet18_Weights.DEFAULT)
+        self.rgb_encoder = replace_first_conv(self.rgb_encoder, in_channels=4,copy_pretrained=True)
+        rgb_feature_dim = (self.rgb_encoder.fc.in_features)
+        self.rgb_encoder.fc = nn.Identity()
+
+        # Relative DEM + slope + candidate mask.
+        self.dem_encoder = resnet18(weights=None)
+
+        dem_feature_dim = (self.dem_encoder.fc.in_features)
+        self.dem_encoder.fc = nn.Identity()
+
+        self.scalar_encoder = nn.Sequential(
+            nn.Linear(scalar_dim, 32),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout * 0.5),
+            nn.Linear(32, 32),
+            nn.ReLU(inplace=True),
         )
 
-        n_features = base_model.fc.in_features
-
-        if in_channels > 3:
-            old_conv1 = base_model.conv1
-            new_conv1 = nn.Conv2d(
-                in_channels, old_conv1.out_channels,
-                kernel_size=old_conv1.kernel_size,
-                stride=old_conv1.stride,
-                padding=old_conv1.padding,
-                bias=old_conv1.bias is not None,
-            )
-            with torch.no_grad():
-                new_conv1.weight[:, :3] = old_conv1.weight
-                new_conv1.weight[:, 3:] = old_conv1.weight.mean(dim=1, keepdim=True)
-            base_model.conv1 = new_conv1
-
-        # ResNet now returns the pooled [B, 512] so i can run my own classifier. (replaces fully connected layer with identity matrix)
-        base_model.fc = nn.Identity()
-
-        self.backbone = base_model
-
+        # shared after fusing
         self.classifier = nn.Sequential(
+            nn.Linear(rgb_feature_dim + dem_feature_dim + 32,
+                      256),
+            nn.ReLU(inplace=True),
             nn.Dropout(dropout),
-            nn.Linear(n_features, 1),
-        )
+            nn.Linear(256, 64),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout),
+            nn.Linear(64, 1))
 
-    def forward(self, x):
-        features = self.backbone(x)
-        logits = self.classifier(features)
+        # defaults make scalar standardisation a no-op until statistics are assigned
+        self.register_buffer("scalar_mean", torch.zeros(scalar_dim))
 
-        # removes extra dim
-        return logits.squeeze(1)
+        self.register_buffer("scalar_std", torch.ones(scalar_dim))
+
+    def set_scalar_statistics(self, mean, std):
+        mean = torch.as_tensor(mean, dtype=torch.float32)
+
+        std = torch.as_tensor(std, dtype=torch.float32).clamp_min(1e-6) # no 0 divide
+
+        self.scalar_mean.copy_(mean)
+        self.scalar_std.copy_(std)
+
+    def forward(self, rgb_local, dem_context, scalar_features):
+
+        # get feature encodings
+        rgb_features = self.rgb_encoder(rgb_local)
+        dem_features = self.dem_encoder(dem_context)
+
+        # prep scalars, and get encodings
+        scalar_features = (scalar_features - self.scalar_mean) / self.scalar_std.clamp_min(1e-6)
+        scalar_features = self.scalar_encoder(scalar_features)
+
+        # concat encodings
+        fused = torch.cat([rgb_features, dem_features, scalar_features,], dim=1)
+
+        # classi

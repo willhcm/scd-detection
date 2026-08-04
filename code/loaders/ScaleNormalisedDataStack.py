@@ -4,8 +4,7 @@ import geopandas as gpd
 from pathlib import Path
 from rasterio.warp import Resampling, calculate_default_transform, reproject
 from rasterio.crs import CRS
-from rasterio.transform import from_bounds, array_bounds
-from rasterio.features import rasterize
+from rasterio.transform import from_bounds, array_bounds 
 from shapely.geometry import box
 from scipy.ndimage import sobel, gaussian_filter, laplace
 from pyproj import Transformer

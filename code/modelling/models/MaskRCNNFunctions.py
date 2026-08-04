@@ -2,7 +2,11 @@ import numpy as np
 from scipy.ndimage import label, center_of_mass 
 import torch
 
+# AI assistance with:
 
+# collate_fn. (didnt know what this was)
+# maskRCNN evaluation metrics (IoU, F1 etc and definition of a 'matched object')
+# training functionality (specifically fine-tuning and incremental unfreezing in rcnn_train.)
 STAGE_LRS = {
     1: {
         "rpn": 1e-3,

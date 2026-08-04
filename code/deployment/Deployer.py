@@ -19,6 +19,7 @@ import geopandas as gpd
 from pathlib import Path
 from rasterio.features import shapes, sieve
 from shapely.geometry import shape
+from veto_helpers import VETO_SCALAR_NAMES
 
 # AI assistance with conversion of DataStack logic to a deployment system. 
 # dont need to export tiles as they will only be used once at inference
@@ -26,23 +27,65 @@ from shapely.geometry import shape
 
 TILE_ORDER = ['DEM', 'RR', 'SLOPE', 'LAPLACE', 'HILLSHADE']
 
-class Deployer():
+class Deployer:
 
-    def __init__(self, dem_path, rgb_path, model_state_dict, veto_model_dict, device, resolutions, tile_size=512, veto=True):
+    def __init__(
+        self,
+        dem_path,
+        rgb_path,
+        model_state_dict,
+        veto_model_dict,
+        device,
+        resolutions,
+        tile_size=512,
+        veto=True,
+
+        # Veto-classifier settings.
+        veto_tile_size=96,
+        veto_context_tile_size=300,
+        veto_batch_size=16,
+        veto_threshold=0.95,
+        context_scale=4.0,
+        min_context_width_m=768.0,
+        max_context_width_m=4000.0,
+        native_res = 30,
+    ):
         self.dem_path = dem_path
         self.rgb_path = rgb_path
-        self.model_dict = model_state_dict
-        self.model = self.build_wrapper()
-
-        # clear memory of now duplicate state dict.
-        del self.model_dict
-
-        self.veto_model = VetoClassifier()
-        self.veto_model.load_state_dict(veto_model_dict)
         self.device = device
         self.resolutions = resolutions
+        self.native_res = native_res
+        # Mask R-CNN deployment tile size.
         self.tile_size = tile_size
+
+        self.model_dict = model_state_dict
+        self.model = self.build_wrapper()
+        del self.model_dict
+
+        self.veto_model = VetoClassifier(
+            scalar_dim=len(VETO_SCALAR_NAMES),
+            dropout=0.3,
+        )
+
+        self.veto_model.load_state_dict(
+            veto_model_dict
+        )
+
+        self.veto_model.to(self.device)
+        self.veto_model.eval()
+
         self.to_veto = veto
+
+        self.veto_tile_size = veto_tile_size
+        self.veto_context_tile_size = veto_context_tile_size
+        self.veto_batch_size = veto_batch_size
+        self.veto_threshold = veto_threshold
+
+        self.context_scale = context_scale
+        self.min_context_width_m = min_context_width_m
+        self.max_context_width_m = max_context_width_m
+
+        self.base_res = None
 
     def build_wrapper(self):
         return ModelWrapper(self.model_dict)
@@ -53,74 +96,254 @@ class Deployer():
         self.model.model.to(self.device)
         preds = {}
         for res in self.resolutions:
-            predictor = ResPredictor(res, self.dem_path, self.model, self.device, self.tile_size, stride_frac=stride_frac)
+            predictor = ResPredictor(
+                res,
+                self.dem_path,
+                self.model,
+                self.device,
+                self.tile_size,
+                stride_frac=stride_frac,
+            )
+
             prob_map, transform, crs = predictor.predict()
-            preds[res] = {"prob": prob_map, "transform": transform, "crs": crs}
+
+            # Remove undersized objects independently at this resolution.
+            prob_map = self.clean(
+                probability_map=prob_map,
+                resolution=res,
+                threshold=0.5,
+                min_area_m2=900.0,
+                min_pixels_floor=1,
+            )
+
+            preds[res] = {
+                "prob": prob_map,
+                "transform": transform,
+                "crs": crs,
+    }
 
         return preds
-
-    def merge_predictions_pyramid(self, preds, base_res=None):
-
-        base_res = base_res or min(preds)
-        base = preds[base_res]
-
-        stack = [base["prob"]]
-
-        for res, p in preds.items():
-            if res == base_res:
-                continue
-
-            resampled = np.full_like(
-                base["prob"],
-                np.nan,
-                dtype=np.float32,
-            )
-
-            reproject(
-                source=p["prob"],
-                destination=resampled,
-                src_transform=p["transform"],
-                src_crs=p["crs"],
-                src_nodata=np.nan,
-                dst_transform=base["transform"],
-                dst_crs=base["crs"],
-                dst_nodata=np.nan,
-                resampling=Resampling.bilinear,
-                init_dest_nodata=True,
-            )
-
-            stack.append(resampled)
-
-        stacked = np.stack(stack, axis=0)
-
-        finite = np.isfinite(stacked)
-        filled = np.where(finite, stacked, -np.inf)
-
-        merged = filled.max(axis=0)
-        merged[~finite.any(axis=0)] = np.nan
-
-        return merged, base["transform"], base["crs"]
     
+    def merge_predictions_pyramid(self,
+        preds,
+        support_threshold=0.65,
+        min_support=2,
+        single_scale_keep=0.995,
+        return_support=True):
 
-    def veto(self, merged, transform, crs, veto_model, veto_device):
-        postproc = PostProcessor(
-            tile_size=self.tile_size,
-            device=veto_device,
-            model=veto_model,
-            rgb_path=self.rgb_path
+        base_res = min(preds)
+        self.base_res = base_res
+
+        base = preds[base_res]
+        base_prob = np.asarray(base["prob"], dtype=np.float32)
+        output_shape = base_prob.shape
+
+        # init empty arrays (nan for probs as 0 has a meaning)
+        max_probability = np.full(output_shape, np.nan, dtype=np.float32)
+        support_count = np.zeros(output_shape, dtype=np.uint16)
+        coverage_count = np.zeros(output_shape, dtype=np.uint16)
+
+        # for each pixel at each resolution, add its value to arrays
+        for res, prediction in preds.items():
+
+            if res == base_res:
+                current = base_prob
+
+            else:
+                current = np.full(
+                    output_shape,
+                    np.nan,
+                    dtype=np.float32,
+                )
+
+                reproject(
+                    source=np.asarray(
+                        prediction["prob"],
+                        dtype=np.float32,
+                    ),
+                    destination=current,
+                    src_transform=prediction["transform"],
+                    src_crs=prediction["crs"],
+                    src_nodata=np.nan,
+                    dst_transform=base["transform"],
+                    dst_crs=base["crs"],
+                    dst_nodata=np.nan,
+                    resampling=Resampling.bilinear,
+                    init_dest_nodata=True,
+                )
+
+            # is it not currently NaN?
+            valid = np.isfinite(current)
+
+            # pixels have been covered, so add 1
+            coverage_count[valid] += 1
+
+            # if pixel is valid and prob > support threshold, add 1 to support count
+            support_count[valid & (current >= support_threshold)] += 1
+
+            # was the pixel previously NaN (not predicted before?)
+            # if so, add to probability map (doesnt overwrite previous probs)
+            previously_empty = valid & ~np.isfinite(max_probability)
+            max_probability[previously_empty] = current[previously_empty]
+
+            # does the pixel have a previous probability value?
+            # if so, take the max(previous, current)
+            overlap = valid & np.isfinite(max_probability)
+            max_probability[overlap] = np.maximum(max_probability[overlap], current[overlap])
+
+        merged = max_probability.copy()
+
+        # Remove unsupported predictions unless one resolution is extremely sure.
+        insufficient_support = ((coverage_count > 0) & (support_count < min_support) & (max_probability < single_scale_keep))
+        merged[insufficient_support] = 0.0
+        merged[coverage_count == 0] = np.nan
+
+        if return_support:
+            return merged, base["transform"], base["crs"], support_count, coverage_count
+ 
+        return merged, base["transform"], base["crs"]
+
+    def clean(
+        self,
+        probability_map,
+        resolution,
+        threshold=0.5,
+        min_area_m2=200.0,
+        min_pixels_floor=1,
+    ):
+        
+        probability_map = np.asarray(
+            probability_map,
+            dtype=np.float32,
         )
-        stitched, rejected, out_transform, out_crs = postproc.predict(merged, transform, crs)
-        return stitched, rejected, out_transform, out_crs
+
+        valid = np.isfinite(probability_map)
+
+        binary = (
+            valid
+            & (probability_map >= threshold)
+        ).astype(np.uint8)
+
+        # pixel area is resolution squared 
+        min_pixels = max(
+            int(min_pixels_floor),
+            int(np.ceil(min_area_m2 / (resolution ** 2))),
+        )
+
+        if min_pixels > 1 and binary.any():
+            cleaned_binary = sieve(
+                binary,
+                size=min_pixels,
+                connectivity=8,
+            ).astype(bool)
+        else:
+            cleaned_binary = binary.astype(bool)
+
+        # Preserve the original shape and original probabilities.
+        cleaned_probability = np.zeros_like(
+            probability_map,
+            dtype=np.float32,
+        )
+
+        cleaned_probability[cleaned_binary] = probability_map[cleaned_binary]
+
+        # Preserve genuinely uncovered areas as NaN.
+        cleaned_probability[~valid] = np.nan
+
+        return cleaned_probability
+    
+    def veto(self,merged, transform, crs):
+        postproc = PostProcessor(
+            tile_size=self.veto_tile_size,
+            context_tile_size=self.veto_context_tile_size,
+            device=self.device,
+            model=self.veto_model,
+            rgb_path=self.rgb_path,
+            dem_path=self.dem_path,
+            batch_size=self.veto_batch_size,
+            detect_threshold=0.75,
+            veto_threshold=self.veto_threshold,
+            min_crop_pixels=64,
+            object_fraction=0.5,
+            context_scale=self.context_scale,
+            min_context_width_m=self.min_context_width_m,
+            max_context_width_m=self.max_context_width_m)
+        
+        (stitched, rejected, veto_probability_map, out_transform, out_crs) = postproc.predict(merged,
+                                                                                             transform,
+                                                                                             crs)
+
+        return (stitched, rejected, veto_probability_map, out_transform, out_crs)
 
     def sweep(self, stride_frac=0.75):
-        predictions = self.predict(stride_frac)
-        merged, transform, crs = self.merge_predictions_pyramid(predictions)
 
-        if self.to_veto:
-            cleaned, rejected, out_transform, out_crs = self.veto(merged, transform, crs, self.veto_model, self.device)
-            return cleaned, rejected, out_transform, out_crs
-        else:
-            return merged, transform, crs
+        predictions = self.predict(stride_frac)
+
+        (merged, transform, crs, support, coverage) = self.merge_predictions_pyramid(predictions)
+
+        if not self.to_veto:
+            return (predictions, merged, transform, crs, support, coverage)
+
+        (cleaned, rejected, veto_probability_map, out_transform, out_crs) = self.veto(merged, transform, crs)
+
+        return (predictions, cleaned, rejected, veto_probability_map, out_transform,
+            out_crs, support, coverage)
+
+    def merge_predictions(self, cleaned, transform, crs, output_path):
+
+        # native res should determine smallest resolvable objects.
+        # for 30m, smallest objects should be say 3x3 or 4 px * 4 px. this translates to 90*90, and around 10000m2
+        if self.native_res == 30:
+            min_m2 = 8100        
+        if self.native_res == 1:
+            min_m2 = 36 # 6m x 6m
+
+        # 900 = 30m * 30m. (minimum SCD size wanted)
+        scd_min_size = 400 / (self.base_res ** 2)
+        min_m2_in_px = min_m2 / self.base_res
+
+        min_pixels = int(np.floor(max(10, min_m2_in_px, scd_min_size)))
+
+        binary = (
+            np.isfinite(cleaned)
+            & (cleaned >= 0.85)).astype(np.uint8)
+        
+        binary = sieve(
+                binary,
+                size=min_pixels,
+                connectivity=8,
+            )
+
+        polygons = [shape(geometry) for geometry, value in shapes(binary,
+                                                                mask=binary.astype(bool),
+                                                                transform=transform,
+                                                                connectivity=8) if value == 1]
+
+        gdf = gpd.GeoDataFrame(
+            {
+                "object_id": np.arange(1, len(polygons) + 1),
+                "geometry": polygons,
+            },
+            crs=crs,
+        )
+
+        # Meaningful when the CRS is projected in metres.
+        if not gdf.empty:
+            gdf["area_m2"] = gdf.geometry.area
+
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        gdf.to_file(
+            output_path,
+            driver="ESRI Shapefile",
+            index=False,
+        )
+
+        print(f"Saved {len(gdf)} objects to {output_path}")
+
+        return gdf
+
 
 # self contained res predictor to decrease amount of calculations needed to be made repetitively!
 class ResPredictor():
@@ -139,6 +362,31 @@ class ResPredictor():
         self.padded_size = self.tile_size + 2 * self.overlap_px
         self.stride_frac = stride_frac
         self.batch_size = batch_size
+
+    # handles edges better than previous x and y position calculations. forces a tile at the edges.
+    @staticmethod
+    def _axis_positions(axis_min, axis_max, tile_width_m, stride_m, overlap_m, resolution):
+        first = axis_min + overlap_m
+        last = axis_max - overlap_m - tile_width_m
+
+        if last < first:
+            return np.empty(0, dtype=np.float64)
+
+        positions = np.arange(
+            first,
+            last + 0.5 * resolution,
+            stride_m,
+            dtype=np.float64,
+        )
+
+        # Force a final tile against the valid far edge.
+        if positions.size == 0:
+            positions = np.array([first], dtype=np.float64)
+
+        elif last - positions[-1] > 0.5 * resolution:
+            positions = np.append(positions, last)
+
+        return positions
 
 
     # cache derivaties and dem for entire x-extent of DEM region.
@@ -212,8 +460,23 @@ class ResPredictor():
 
         # calculate tile positions (using stride and res)
         minx, miny, maxx, maxy = dem_source.bounds
-        x_positions = np.arange(minx, maxx - tile_w_m + 0.5 * resolution, stride_m)
-        y_positions = np.arange(miny, maxy - tile_w_m + 0.5 * resolution, stride_m)
+        x_positions = self._axis_positions(
+                        minx,
+                        maxx,
+                        tile_w_m,
+                        stride_m,
+                        self.overlap_m,
+                        resolution,
+                    )
+
+        y_positions = self._axis_positions(
+            miny,
+            maxy,
+            tile_w_m,
+            stride_m,
+            self.overlap_m,
+            resolution,
+        )
 
         # moving valid checks from make_tile to save compute on skips.
 
@@ -343,56 +606,4 @@ class ResPredictor():
 
         self._weight_kernel = kernel
         return kernel
-    
-    def save_predictions(self, sweep_outputs, output_path, threshold=0.75, min_pixels = 8):
-        probability_map, transform, crs = sweep_outputs
 
-        # Threshold predictions and exclude NaN areas.
-        binary = (
-            np.isfinite(probability_map)
-            & (probability_map >= threshold)
-        ).astype(np.uint8)
-
-        # Remove small connected predictions.
-        if min_pixels > 1:
-            binary = sieve(
-                binary,
-                size=min_pixels,
-                connectivity=8,
-            )
-
-        polygons = [
-            shape(geometry)
-            for geometry, value in shapes(
-                binary,
-                mask=binary.astype(bool),
-                transform=transform,
-                connectivity=8,
-            )
-            if value == 1
-        ]
-
-        gdf = gpd.GeoDataFrame(
-            {
-                "object_id": np.arange(1, len(polygons) + 1),
-                "geometry": polygons,
-            },
-            crs=crs,
-        )
-
-        # Meaningful when the CRS is projected in metres.
-        if not gdf.empty:
-            gdf["area_m2"] = gdf.geometry.area
-
-        output_path = Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        gdf.to_file(
-            output_path,
-            driver="ESRI Shapefile",
-            index=False,
-        )
-
-        print(f"Saved {len(gdf)} objects to {output_path}")
-
-        return gdf

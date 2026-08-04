@@ -2,8 +2,8 @@ from MaskFilm import MaskRCNN
 import torch
 
 PRED_ARGS = {
-             'MaskRCNN': {'score_threshold': 0.80,
-                          'mask_threshold': 0.75},
+             'MaskRCNN': {'score_threshold': 0.70,
+                          'mask_threshold': 0.50},
              }
 
 

@@ -16,6 +16,8 @@ from tqdm.auto import tqdm
 
 _BANDS_TO_LOAD = ['DEM', 'DEM_SLOPE', 'RR', 'LAPLACE']
 
+# ChatGPT assistance with FiLM encodings for resolution
+# specifically with incorporation into pre-existing MaskRCNN wrapper and condition-setting for forward()
 class ResolutionFiLM(nn.Module):
     """
     Generates per-channel gamma/beta from a scalar resolution value.
@@ -81,11 +83,11 @@ class MaskRCNN(nn.Module):
         pretrained=True,
         anchor_sizes= ((20,), (40,), (62,), (120,), (220,)), # decreased to match SCD size population.
         aspect_ratios=((0.75, 1.0, 1.35),) * 5, # default, elongated doesn't match subcircular appearance (square bounding boxes)
-        loss_weights = None,
+        loss_weights = None, # depreciated but kept for future.
     ):
         super().__init__()
 
-        # changed proposal thresholds to maximise precision
+        # changed proposal thresholds 
         weights = "DEFAULT" if pretrained else None
         self.model = maskrcnn_resnet50_fpn(
             weights=weights,
@@ -191,7 +193,9 @@ class MaskRCNN(nn.Module):
     def set_loss_weights(self, weights: dict):
         self.loss_weights.update(weights)
  
-    def forward(self, images, targets=None):
+    def forward(self, images, resolutions= None , targets=None):
+        self.model.backbone.set_condition(resolutions)
+
         if self.training:
             loss_dict = self.model(images, targets)
  
@@ -202,57 +206,18 @@ class MaskRCNN(nn.Module):
  
         return self.model(images, targets)
 
-
+# AI assistance with several refactors of dataset when changing augmentation and channel logic.
 class MaskRCNNDataset(Dataset):
 
-    def __init__(
-        self,
-        all_paths,
-        tile_size=512,
-        skip_partial=True,
-        augment=False,
-        min_instance_area=20,
-    ):
+    # remove path checking for time optimisation
+    def __init__(self, all_paths, augment=False, min_instance_area=20):
+
         self.augment = augment
         self.paths = all_paths
         self.min_instance_area = min_instance_area
 
-
     def __len__(self):
         return len(self.paths)
-
-    def _augment(self, image, mask):
-        image, mask = image.copy(), mask.copy()
-
-        if random.random() > 0.5:
-            image = image[:, :, ::-1]
-            mask = mask[:, ::-1]
-
-        if random.random() > 0.5:
-            image = image[:, ::-1, :]
-            mask = mask[::-1, :]
-
-        k = random.choice([0, 1, 2, 3])
-        if k:
-            image = np.rot90(image, k, axes=(1, 2))
-            mask = np.rot90(mask, k)
-
-        image = np.ascontiguousarray(image)
-        mask = np.ascontiguousarray(mask)
-
-        if random.random() > 0.5:
-            noise = np.random.normal(0, 0.02, size=image[0].shape).astype(np.float32)
-            image[0] = image[0] + noise
-
-        if random.random() > 0.5:
-            sigma = random.uniform(0.3, 0.8)
-            image[0] = gaussian_filter(image[0], sigma=sigma)
-
-        if random.random() > 0.5:
-            scale = random.uniform(0.9, 1.1)
-            image[0] = image[0] * scale
-
-        return image, mask
 
     def _mask_to_instances(self, mask):
         binary = mask > 0

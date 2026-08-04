@@ -7,7 +7,7 @@ import numpy as np
 import torch.nn as nn
 from blocks import _AugmentedSubset
 from sklearn.model_selection import train_test_split
-
+from MaskRCNN import MaskRCNN, MaskRCNNDataset, rcnn_train
 
 def collate_fn(batch):
     return tuple(zip(*batch))
@@ -33,6 +33,7 @@ REGION_GROUPS = {
     'USA': ['USA', 'Texas'],
     'Karoo': ['Karoo'],
     'Australia': ['Australia'],
+    'France': ['France']
 }
 
 def _region_paths(region_name):
@@ -40,7 +41,6 @@ def _region_paths(region_name):
     for d in REGION_GROUPS[region_name]:
         paths.extend(glob.glob(f"/content/drive/MyDrive/IRP/Tiles/ScalesCombined/{d}/*.npz"))
         negs = glob.glob(f"/content/drive/MyDrive/IRP/Tiles/Negatives/{d}/*.npz")
-
         paths.extend(negs)
     return sorted(paths)
 
@@ -51,11 +51,6 @@ def train_fold(model_type, train_paths, val_paths, epochs, model_info, batch_siz
 
     train_set = model_info['dataset'](train_paths, augment=True)
     val_set = model_info['dataset'](val_paths, augment=False)
-
-    w = []
-    for p in train_set.paths:
-        d = np.load(p, allow_pickle=True)
-        w.append(1.0 + float(d["scd_pixel_fraction"]))
 
     loader_args = DATASET_ARGS.get(model_type, DATASET_ARGS["default"]).copy()
 
@@ -100,6 +95,11 @@ def train_model(model_type, paths, epochs, model_info, batch_size=8):
     # init datasets (custom per model)
     train_set = model_info['dataset'](train_paths, augment=True)
     val_set = model_info['dataset'](val_paths, augment=False)
+
+    w = []
+    for p in train_set.paths:
+        d = np.load(p, allow_pickle=True)
+        w.append(1.0 + float(d["scd_pixel_fraction"]))
 
     # decide loader args and init loaders
     loader_args = DATASET_ARGS.get(model_type, DATASET_ARGS["default"]).copy()
@@ -191,3 +191,25 @@ def compare(models, epochs, paths=None, cv=True):
         else:
             return('please provide paths (as a list)')
             
+# only considering maskRCNN now
+def train_for_deployment(model, held_out):
+
+    val_paths = _region_paths(held_out)
+    train_paths = []
+    for region_name in REGION_GROUPS.keys():
+        if region_name == held_out:
+            continue
+        else:
+            train_paths.extend(_region_paths(region_name))
+
+    val_set = MaskRCNNDataset(val_paths)
+    train_set = MaskRCNNDataset(train_paths)
+
+    val_loader = DataLoader(val_set, batch_size=4, collate_fn=collate_fn)
+    train_loader = DataLoader(train_set, batch_size=4, collate_fn=collate_fn)
+    
+    _, train_losses, val_precisions, val_recalls, val_f1s, model, val_loader = rcnn_train(model, None, train_loader, val_loader, epochs=50)
+
+    return model.state_dict()
+
+    
