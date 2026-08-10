@@ -47,3 +47,10 @@ Aim:
 ## Meeting Notes
 
 - Image Pyramid idea is novel, implementation needs to be improved and cross-geography LOOCV at deployment level.
+
+## Direction Notes (10/08)
+
+- Finalising MaskRCNN implementation and running final training and deployment runs.
+- Figure drafts compiled and writing plan outlined.
+- Image Pyramid parameters finalised
+- Deployment runs completed on folded-out regions
