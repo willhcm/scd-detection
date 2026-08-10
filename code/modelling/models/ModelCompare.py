@@ -23,9 +23,7 @@ DATASET_ARGS = {
     },
     "FPNCentreNet": {
         "batch_size": 4,
-        "collate_fn": None,
-    },
-}
+        "collate_fn": None}}
 
 REGION_GROUPS = {
     'Russia': ['Russia', 'Russia2', 'Russia3'],
@@ -33,7 +31,8 @@ REGION_GROUPS = {
     'USA': ['USA', 'Texas'],
     'Karoo': ['Karoo'],
     'Australia': ['Australia'],
-    'France': ['France']
+    'France': ['France'],
+    'UK': ['UKQuantock', 'UKTraining', 'EastQuantock']
 }
 
 def _region_paths(region_name):
@@ -201,6 +200,11 @@ def train_for_deployment(model, held_out):
             continue
         else:
             train_paths.extend(_region_paths(region_name))
+
+    if held_out == 'France':
+        dirs = ['EastQuantock', 'UKTraining', 'UKQuantock']
+        for d in dirs:
+            train_paths.extend(glob.glob(f"/content/drive/MyDrive/IRP/Tiles/ScalesCombined/{d}/*.npz"))
 
     val_set = MaskRCNNDataset(val_paths)
     train_set = MaskRCNNDataset(train_paths)

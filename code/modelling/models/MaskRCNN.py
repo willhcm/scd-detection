@@ -9,7 +9,7 @@ import numpy as np
 from scipy.ndimage import label, find_objects, gaussian_filter
 from torchvision.models.detection.rpn import RPNHead
 from torchvision.models.detection.anchor_utils import AnchorGenerator
-from helpers import calculate_hillshade, compute_tpi
+from helpers import calculate_hillshade
 from MaskRCNNFunctions import evaluate_maskrcnn_metrics, build_staged_optimizer, apply_training_stage
 import copy
 from tqdm.auto import tqdm
@@ -351,10 +351,7 @@ class MaskRCNNDataset(Dataset):
         raw_dem = image[dem_idx].copy()
 
         if self.augment:
-            # physical dem pertubations
-            raw_dem = self._augment_dem(raw_dem)
-            image[dem_idx] = raw_dem
-
+            # removed physical pertubations for now 
             # rotate / flip
             image, mask = self._spatial_augment(image, mask)
 
@@ -502,9 +499,7 @@ def rcnn_train(model, _, train_loader, val_loader, epochs):
             f"Val F1: {val_f1:.4f} | "
             f"Pixel P: {p_precision:.4f} | "
             f"Pixel R: {p_recall:.4f} | "
-            f"Pixel F1: {p_f1:.4f} | "
-
-        )
+            f"Pixel F1: {p_f1:.4f} | ")
 
         if val_f1 > best_f1:
             best_f1 = val_f1

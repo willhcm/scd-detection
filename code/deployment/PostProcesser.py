@@ -1,12 +1,3 @@
-# post processing
-
-# want a neural network based off spectral bands (just RGB)
-# this will only serve to reject/deny predictions: idea being it will see anthropogenic structures, etc and know they arent SCDs
-# therefore increasing precision!
-# this will not affect recall, the model won't be able to see new candidates, just already predicted ones, with the aim of screening 
-# bad predictions out
-
-# also: shape based screening -> angular predictions with one straight side (edge artefact) might be removable?
 from tqdm.auto import tqdm
 from scipy.ndimage import label as ndi_label
 from skimage.measure import regionprops
@@ -14,8 +5,84 @@ import numpy as np
 import torch
 from rasterio.enums import Resampling
 from rasterio.transform import from_bounds
-from ScaleNormalisedDataStack import DataSource
-from veto_helpers import build_dem_context, VETO_SCALAR_NAMES
+from veto_helpers import build_dem_context
+import rasterio as rio
+from rasterio.warp import reproject
+
+# windowed data source to limit RAM usage during deployment with huge rasters
+class WindowedDataSource:
+
+    def __init__(self, path, type="DEM", nominal_res=None):
+        self.path = path
+        self.type = type
+
+        # only read metadata here
+        with rio.open(path) as src:
+            self.crs = src.crs
+            self.bounds = src.bounds
+            self.width = src.width
+            self.height = src.height
+            self.transform = src.transform
+            self.count = src.count
+
+            # set res
+            if nominal_res is None:
+                self.res = float(abs(src.res[0]))
+            else:
+                self.res = float(nominal_res)
+
+    @classmethod
+    def from_tiff(cls, path, type="DEM"):
+        return cls(path=path, type=type)
+
+    @classmethod
+    def from_tiff_utm(cls, path, native_res, type="DEM"):
+        # no longer reproject whole raster in init
+        # native_res is retained as the nominal pixel resolution.
+        return cls(path=path, type=type, nominal_res=native_res)
+
+    def reproject_to_shape(
+        self,
+        target_crs,
+        tile_bounds,
+        out_width,
+        out_height,
+        resampling=Resampling.bilinear):
+
+        dst_transform = from_bounds(*tile_bounds, out_width, out_height)
+
+        with rio.open(self.path) as src:
+
+            if self.type == "RGB":
+
+                out = np.full((3, out_height, out_width), np.nan, dtype=np.float32)
+
+                for band_index in range(3):
+
+                    reproject(
+                        source=rio.band(src, band_index + 1),
+                        destination=out[band_index],
+                        src_transform=src.transform,
+                        src_crs=src.crs,
+                        dst_transform=dst_transform,
+                        dst_crs=target_crs,
+                        resampling=resampling,
+                        dst_nodata=np.nan)
+                    
+            else:
+                out = np.full((out_height, out_width), np.nan, dtype=np.float32)
+
+                reproject(
+                    source=rio.band(src, 1),
+                    destination=out,
+                    src_transform=src.transform,
+                    src_crs=src.crs,
+                    dst_transform=dst_transform,
+                    dst_crs=target_crs,
+                    resampling=resampling,
+                    dst_nodata=np.nan)
+
+        return out
 
 class PostProcessor:
 
@@ -28,14 +95,14 @@ class PostProcessor:
         rgb_path,
         dem_path,
         batch_size=32,
-        detect_threshold=0.75,
-        veto_threshold=0.95,
+        detect_threshold=0.40,
+        veto_threshold=0.90,
         min_crop_pixels=64,
         object_fraction=0.5,
         context_scale=4.0,
         min_context_width_m=768.0,
         max_context_width_m=4000.0):
-        
+
         self.tile_size = tile_size
         self.context_tile_size = context_tile_size
 
@@ -49,8 +116,8 @@ class PostProcessor:
         self.dem_path = dem_path
 
         # data source objects
-        self.rgb_source = DataSource.from_tiff_utm(rgb_path,native_res=3, type="RGB")
-        self.dem_source = DataSource.from_tiff(dem_path,type="DEM")
+        self.rgb_source = WindowedDataSource.from_tiff_utm(rgb_path,native_res=3, type="RGB")
+        self.dem_source = WindowedDataSource.from_tiff(dem_path,type="DEM")
 
         # hyperparameters
         self.batch_size = batch_size
@@ -305,15 +372,17 @@ class PostProcessor:
         # ndimage label
         labeled, n_objects = ndi_label(binary)
 
+        del binary
+
         # gets region properties (i.e. area, centroid, bbox)
         objects = regionprops(labeled, intensity_image=prob_raster)
 
         # create empty arrays to stamp values onto
         stitched = np.zeros_like(prob_raster, dtype=np.float32)
-        veto_map = np.zeros_like(prob_raster, dtype=np.float32)
+        veto_map = np.zeros_like(prob_raster, dtype=np.int8) #int8, only positive 1 or 0.
 
         # Stores the veto probability for each assessed object.
-        veto_probability_map = np.zeros_like(prob_raster, dtype=np.float32)
+        veto_probability_map = np.zeros_like(prob_raster, dtype=np.float16)
 
         # init tracking ints and lists for each batch 
         accepted = 0
@@ -330,8 +399,7 @@ class PostProcessor:
             total=len(objects),
             desc="Vetoing predictions",
             unit="obj",
-            dynamic_ncols=True,
-        )
+            dynamic_ncols=True)
 
         def flush_batch():
             nonlocal accepted

@@ -100,4 +100,5 @@ class VetoClassifier(nn.Module):
         # concat encodings
         fused = torch.cat([rgb_features, dem_features, scalar_features,], dim=1)
 
-        # classi
+        # classify and return
+        return self.classifier(fused).squeeze(1)    

@@ -25,7 +25,7 @@ from veto_helpers import VETO_SCALAR_NAMES
 # dont need to export tiles as they will only be used once at inference
 # unlike in training, where several epochs are run
 
-TILE_ORDER = ['DEM', 'RR', 'SLOPE', 'LAPLACE', 'HILLSHADE']
+TILE_ORDER = ['DEM',  'DEM_SLOPE', 'RR','LAPLACE', 'HILLSHADE']
 
 class Deployer:
 
@@ -41,15 +41,15 @@ class Deployer:
         veto=True,
 
         # Veto-classifier settings.
-        veto_tile_size=96,
-        veto_context_tile_size=300,
+        veto_tile_size=96, 
+        veto_context_tile_size=224,
         veto_batch_size=16,
-        veto_threshold=0.95,
+        veto_threshold=0.90,
         context_scale=4.0,
         min_context_width_m=768.0,
         max_context_width_m=4000.0,
-        native_res = 30,
-    ):
+        native_res = 30):
+        
         self.dem_path = dem_path
         self.rgb_path = rgb_path
         self.device = device
@@ -103,18 +103,10 @@ class Deployer:
                 self.device,
                 self.tile_size,
                 stride_frac=stride_frac,
+                rr_sigma_m = 12 * self.native_res
             )
 
             prob_map, transform, crs = predictor.predict()
-
-            # Remove undersized objects independently at this resolution.
-            prob_map = self.clean(
-                probability_map=prob_map,
-                resolution=res,
-                threshold=0.5,
-                min_area_m2=900.0,
-                min_pixels_floor=1,
-            )
 
             preds[res] = {
                 "prob": prob_map,
@@ -122,13 +114,13 @@ class Deployer:
                 "crs": crs,
     }
 
-        return preds
+        return preds   
     
     def merge_predictions_pyramid(self,
         preds,
         support_threshold=0.65,
         min_support=2,
-        single_scale_keep=0.995,
+        single_scale_keep=0.90,
         return_support=True):
 
         base_res = min(preds)
@@ -168,7 +160,7 @@ class Deployer:
                     dst_transform=base["transform"],
                     dst_crs=base["crs"],
                     dst_nodata=np.nan,
-                    resampling=Resampling.bilinear,
+                    resampling=Resampling.nearest,
                     init_dest_nodata=True,
                 )
 
@@ -202,57 +194,9 @@ class Deployer:
             return merged, base["transform"], base["crs"], support_count, coverage_count
  
         return merged, base["transform"], base["crs"]
-
-    def clean(
-        self,
-        probability_map,
-        resolution,
-        threshold=0.5,
-        min_area_m2=200.0,
-        min_pixels_floor=1,
-    ):
-        
-        probability_map = np.asarray(
-            probability_map,
-            dtype=np.float32,
-        )
-
-        valid = np.isfinite(probability_map)
-
-        binary = (
-            valid
-            & (probability_map >= threshold)
-        ).astype(np.uint8)
-
-        # pixel area is resolution squared 
-        min_pixels = max(
-            int(min_pixels_floor),
-            int(np.ceil(min_area_m2 / (resolution ** 2))),
-        )
-
-        if min_pixels > 1 and binary.any():
-            cleaned_binary = sieve(
-                binary,
-                size=min_pixels,
-                connectivity=8,
-            ).astype(bool)
-        else:
-            cleaned_binary = binary.astype(bool)
-
-        # Preserve the original shape and original probabilities.
-        cleaned_probability = np.zeros_like(
-            probability_map,
-            dtype=np.float32,
-        )
-
-        cleaned_probability[cleaned_binary] = probability_map[cleaned_binary]
-
-        # Preserve genuinely uncovered areas as NaN.
-        cleaned_probability[~valid] = np.nan
-
-        return cleaned_probability
     
     def veto(self,merged, transform, crs):
+
         postproc = PostProcessor(
             tile_size=self.veto_tile_size,
             context_tile_size=self.veto_context_tile_size,
@@ -261,14 +205,15 @@ class Deployer:
             rgb_path=self.rgb_path,
             dem_path=self.dem_path,
             batch_size=self.veto_batch_size,
-            detect_threshold=0.75,
+            detect_threshold=0.40,
             veto_threshold=self.veto_threshold,
             min_crop_pixels=64,
             object_fraction=0.5,
             context_scale=self.context_scale,
             min_context_width_m=self.min_context_width_m,
             max_context_width_m=self.max_context_width_m)
-        
+
+            
         (stitched, rejected, veto_probability_map, out_transform, out_crs) = postproc.predict(merged,
                                                                                              transform,
                                                                                              crs)
@@ -298,15 +243,15 @@ class Deployer:
         if self.native_res == 1:
             min_m2 = 36 # 6m x 6m
 
-        # 900 = 30m * 30m. (minimum SCD size wanted)
-        scd_min_size = 400 / (self.base_res ** 2)
-        min_m2_in_px = min_m2 / self.base_res
+        # 225 = 15m * 15m. (minimum SCD size wanted)
+        scd_min_size = 100 / (self.base_res ** 2)
+        min_m2_in_px = min_m2 / (self.base_res ** 2)
 
         min_pixels = int(np.floor(max(10, min_m2_in_px, scd_min_size)))
 
         binary = (
             np.isfinite(cleaned)
-            & (cleaned >= 0.85)).astype(np.uint8)
+            & (cleaned >= 0.40)).astype(np.uint8)
         
         binary = sieve(
                 binary,
@@ -348,21 +293,41 @@ class Deployer:
 # self contained res predictor to decrease amount of calculations needed to be made repetitively!
 class ResPredictor():
 
-    def __init__(self, res, dem_path, model, device, tile_size=512, stride_frac = 0.5, batch_size=16):
+    def __init__(self, res, dem_path, model, device, tile_size=512, stride_frac = 0.5, batch_size=16, rr_sigma_m=None):
         
         self.device = device
         self.dem_path = dem_path
         self.model = model
         self.res = res
-        self.sigma_m = 12.0 * res
-        self.tile_size= tile_size
-        self.sigma_px = max(1.0, self.sigma_m / res)
-        self.overlap_px = max(4, int(round(OVERLAP_SIGMA_MULTIPLIER * self.sigma_px)))
-        self.overlap_m = self.overlap_px * res
-        self.padded_size = self.tile_size + 2 * self.overlap_px
+        self.tile_size = tile_size
         self.stride_frac = stride_frac
         self.batch_size = batch_size
 
+        
+        # now handing rr properly (resolution dependent)
+        if rr_sigma_m is None:
+            rr_sigma_m = 12.0 * res
+
+        self.sigma_m = float(rr_sigma_m)
+
+        self.sigma_px = max(
+            1.0,
+            self.sigma_m / res,
+        )
+
+        self.overlap_px = max(
+            4,
+            int(round(
+                OVERLAP_SIGMA_MULTIPLIER
+                * self.sigma_px
+            )),
+        )
+
+        self.overlap_m = self.overlap_px * res
+        self.padded_size = (
+            self.tile_size
+            + 2 * self.overlap_px
+        )
     # handles edges better than previous x and y position calculations. forces a tile at the edges.
     @staticmethod
     def _axis_positions(axis_min, axis_max, tile_width_m, stride_m, overlap_m, resolution):
@@ -423,7 +388,7 @@ class ResPredictor():
 
         hillshade = calculate_hillshade(dem)
 
-        strip = {'DEM': dem, 'RR': rr, 'SLOPE': slope, 'LAPLACE': lap, 'HILLSHADE': hillshade, 'RES': res_value}
+        strip = {'DEM': dem, 'RR': rr, 'DEM_SLOPE': slope, 'LAPLACE': lap, 'HILLSHADE': hillshade, 'RES': res_value}
         return strip, minx
 
     # get next x tile from y-horizontal strip
@@ -571,9 +536,10 @@ class ResPredictor():
     def _normalise_band(self, band, name):
         band = band.astype(np.float32)
 
-        if name == 'TPI':
-            return band
-        elif name in {"DEM_SLOPE",  "DEM"}:
+        if name == "HILLSHADE":
+            return (band - band.mean()) / (band.std() + 1e-6)
+
+        if name in {"DEM_SLOPE",  "DEM"}:
             transformed = band
         else:
             transformed = np.sign(band) * np.log1p(np.abs(band))

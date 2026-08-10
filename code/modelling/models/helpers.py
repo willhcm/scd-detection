@@ -164,7 +164,7 @@ def calculate_hillshade(dem, cell_size=1.0, altitude_deg=45.0, z_factor=1.0):
         hs += np.cos(alt) * np.cos(slope) + np.sin(alt) * np.sin(slope) * np.cos(az - aspect)
     return np.clip(hs / 8, 0, 1).astype(np.float32)
 
-
+# redundant
 def compute_tpi(dem, window_size, edge_mode="reflect"):
     local_mean = uniform_filter(dem.astype(np.float64), size=window_size, mode=edge_mode)
     tpi = dem - local_mean

@@ -11,6 +11,7 @@ STAGE_LRS = {
     1: {
         "rpn": 1e-3,
         "roi_heads": 1e-3,
+        "film": 1e-3,
         "conv1": 1e-4,
         "fpn": 0.0,
         "layer4": 0.0,
@@ -19,6 +20,7 @@ STAGE_LRS = {
     2: {
         "rpn": 1e-3,
         "roi_heads": 1e-3,
+        "film": 1e-3,
         "conv1": 1e-5,
         "fpn": 1e-5,
         "layer4": 0.0,
@@ -28,6 +30,7 @@ STAGE_LRS = {
         "rpn": 5e-4,
         "roi_heads": 5e-4,
         "conv1": 5e-5,
+        "film": 1e-4,
         "fpn": 3e-6,
         "layer4": 1e-6,
         "layer3": 0.0,
@@ -36,6 +39,7 @@ STAGE_LRS = {
         "rpn": 1e-4,
         "roi_heads": 1e-4,
         "conv1": 5e-6,
+        "film": 1e-5,
         "fpn": 1e-6,
         "layer4": 5e-7,
         "layer3": 1e-7,
@@ -148,7 +152,13 @@ def evaluate_maskrcnn_metrics(
     with torch.no_grad():
         for images, targets in val_loader:
             images_device = [image.to(device) for image in images]
-            outputs = model(images_device)
+            resolutions = torch.stack([
+                target["resolution"]
+                for target in targets
+            ]).to(device)
+            outputs = model(images_device, resolutions=resolutions)
+
+            
 
             for image, output, target_dict in zip(images, outputs, targets):
 
@@ -232,6 +242,11 @@ def build_staged_optimizer(model, weight_decay=1e-4):
             {
                 "name": "rpn",
                 "params": model.model.rpn.parameters(),
+                "lr": 1e-3,
+            },
+            {
+                "name": "film",
+                "params": model.model.backbone.film.parameters(),
                 "lr": 1e-3,
             },
             {
