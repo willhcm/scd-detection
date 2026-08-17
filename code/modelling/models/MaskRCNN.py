@@ -10,7 +10,7 @@ from scipy.ndimage import label, find_objects, gaussian_filter
 from torchvision.models.detection.rpn import RPNHead
 from torchvision.models.detection.anchor_utils import AnchorGenerator
 from helpers import calculate_hillshade
-from MaskRCNNFunctions import evaluate_maskrcnn_metrics, build_staged_optimizer, apply_training_stage
+from code.helpers.MaskRCNNFunctions import evaluate_maskrcnn_metrics, build_staged_optimizer, apply_training_stage
 import copy
 from tqdm.auto import tqdm
 
@@ -523,9 +523,9 @@ def rcnn_train(model, _, train_loader, val_loader, epochs):
 
         scheduler.step()
 
-        if bad_epochs >= patience:
-            print("early stopping")
-            break
+        #if bad_epochs >= patience:
+            #print("early stopping")
+            #break
 
     model.load_state_dict(best_state)
 

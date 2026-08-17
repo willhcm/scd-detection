@@ -5,7 +5,7 @@ import torch
 from skimage.feature import peak_local_max
 import matplotlib.patches as patches
 from mask_rcnn_plots import plot_preds as plot_maskrcnn_preds
-from SegNet import SegNet
+from code.depreciated.SegNet import SegNet
 from MaskRCNN import MaskRCNN
 from FPNCentreNet import FPNCentreNet, decode_multilevel_predictions
 from matplotlib.patches import Circle

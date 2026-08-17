@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.ndimage import label, center_of_mass 
 import torch
+from sklearn.metrics import roc_auc_score
 
 # AI assistance with:
 
@@ -298,3 +299,79 @@ def apply_training_stage(model, optimizer, stage):
             f"lr={group['lr']:.2e}, "
             f"trainable={n_trainable:,}"
         )
+
+# helper for roc evaluation 
+def mask_iou(pred_mask, gt_mask):
+    pred_mask = pred_mask.astype(bool)
+    gt_mask = gt_mask.astype(bool)
+
+    intersection = np.logical_and(pred_mask, gt_mask).sum()
+    union = np.logical_or(pred_mask, gt_mask).sum()
+
+    return intersection / union if union > 0 else 0.0
+
+# run after no cv training to evaluate performance
+def get_object_roc_values(model, val_loader, device,
+                            mask_threshold=0.5,
+                            iou_threshold=0.5):
+
+    model.eval()
+
+    y_true = []
+    y_score = []
+
+    with torch.no_grad():
+
+        for images, targets in val_loader:
+
+            images = [img.to(device) for img in images]
+            outputs = model(images)
+
+            for output, target in zip(outputs, targets):
+
+                pred_scores = (output["scores"].detach().cpu().numpy())
+                pred_masks = (output["masks"][:, 0].detach().cpu().numpy()>= mask_threshold)
+
+                gt_masks = (target["masks"].detach().cpu().numpy().astype(bool))
+                matched_gt = set()
+
+                # process highest-confidence predictions first
+                order = np.argsort(pred_scores)[::-1]
+
+                for pred_idx in order:
+
+                    pred_mask = pred_masks[pred_idx]
+                    score = pred_scores[pred_idx]
+
+                    best_iou = 0.0
+                    best_gt = None
+
+                    for gt_idx, gt_mask in enumerate(gt_masks):
+
+                        # ground-truth object already claimed
+                        if gt_idx in matched_gt:
+                            continue
+
+                        iou = mask_iou(pred_mask, gt_mask)
+
+                        if iou > best_iou:
+                            best_iou = iou
+                            best_gt = gt_idx
+
+                    # TP object
+                    if (best_gt is not None and best_iou >= iou_threshold):
+                        y_true.append(1)
+                        matched_gt.add(best_gt)
+
+                    # FP object
+                    else:
+                        y_true.append(0)
+
+                    y_score.append(score)
+
+    y_true = np.asarray(y_true)
+    y_score = np.asarray(y_score)
+
+    auc = roc_auc_score(y_true, y_score)
+
+    return auc, y_true, y_score

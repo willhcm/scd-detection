@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.models import resnet18, ResNet18_Weights
 import numpy as np
-from veto_helpers import VETO_SCALAR_NAMES
+from code.helpers.veto_helpers import VETO_SCALAR_NAMES
 
 def replace_first_conv(
     model,

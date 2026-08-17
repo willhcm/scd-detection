@@ -8,6 +8,7 @@ import torch.nn as nn
 from blocks import _AugmentedSubset
 from sklearn.model_selection import train_test_split
 from MaskRCNN import MaskRCNN, MaskRCNNDataset, rcnn_train
+from sklearn.metrics import roc_auc_score
 
 def collate_fn(batch):
     return tuple(zip(*batch))
@@ -42,6 +43,47 @@ def _region_paths(region_name):
         negs = glob.glob(f"/content/drive/MyDrive/IRP/Tiles/Negatives/{d}/*.npz")
         paths.extend(negs)
     return sorted(paths)
+
+def get_roc_values(model, val_loader, device=None):
+
+    if device is None:
+        device = next(model.parameters()).device
+
+    model.eval()
+
+    y_true = []
+    y_score = []
+
+    with torch.no_grad():
+
+        for images, targets in val_loader:
+
+            images = [img.to(device) for img in images]
+
+            outputs = model(images)
+
+            for output, target in zip(outputs, targets):
+
+                # does this tile contain an SCD (GT)?
+                has_object = len(target["boxes"]) > 0
+                y_true.append(int(has_object))
+
+                # confidence of most confident detection
+                scores = output["scores"]
+
+                if len(scores) > 0:
+                    max_score = scores.max().item()
+                else:
+                    max_score = 0.0
+
+                y_score.append(max_score)
+
+    y_true = np.asarray(y_true)
+    y_score = np.asarray(y_score)
+
+    auc = roc_auc_score(y_true, y_score)
+
+    return auc, y_true, y_score
 
 def train_fold(model_type, train_paths, val_paths, epochs, model_info, batch_size=8):
     """ 
@@ -201,6 +243,7 @@ def train_for_deployment(model, held_out):
         else:
             train_paths.extend(_region_paths(region_name))
 
+    train_paths.extend(glob.glob('/content/drive/MyDrive/IRP/Tiles/UknegApproved/*.npz'))
     if held_out == 'France':
         dirs = ['EastQuantock', 'UKTraining', 'UKQuantock']
         for d in dirs:
@@ -213,6 +256,7 @@ def train_for_deployment(model, held_out):
     train_loader = DataLoader(train_set, batch_size=4, collate_fn=collate_fn)
     
     _, train_losses, val_precisions, val_recalls, val_f1s, model, val_loader = rcnn_train(model, None, train_loader, val_loader, epochs=50)
+
 
     return model.state_dict()
 
