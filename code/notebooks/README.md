@@ -6,6 +6,6 @@ This directory contains all the jupyter notebooks used for model development, in
 
 ```/plots/``` contains code used to generate plots seen in the report (and others)
 
-```/geostats/``` contains code for geostatistics of SCD predictions 
+```/geostats/``` contains code for geostatistics of SCD predictions. This is very exploratory, and not formalised at all. 
 
-```/field/``` contains code for statistical analysis of soil gas hydrogen concentration measurements obtained during the field campaign undertaken as part of this study.
+```/field/``` contains code for statistical analysis of soil gas hydrogen concentration measurements obtained during the field campaign undertaken as part of this study. This is very exploratory, and not formalised at all. 
