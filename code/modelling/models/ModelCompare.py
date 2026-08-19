@@ -36,11 +36,11 @@ REGION_GROUPS = {
     'UK': ['UKQuantock', 'UKTraining', 'EastQuantock']
 }
 
-def _region_paths(region_name):
+def _region_paths(region_name, root):
     paths = []
     for d in REGION_GROUPS[region_name]:
-        paths.extend(glob.glob(f"/content/drive/MyDrive/IRP/Tiles/ScalesCombined/{d}/*.npz"))
-        negs = glob.glob(f"/content/drive/MyDrive/IRP/Tiles/Negatives/{d}/*.npz")
+        paths.extend(glob.glob(f"{root}/ScalesCombined/{d}/*.npz"))
+        negs = glob.glob(f"{root}/Negatives/{d}/*.npz")
         paths.extend(negs)
     return sorted(paths)
 
@@ -233,7 +233,7 @@ def compare(models, epochs, paths=None, cv=True):
             return('please provide paths (as a list)')
             
 # only considering maskRCNN now
-def train_for_deployment(model, held_out):
+def train_for_deployment(model, held_out, root):
 
     val_paths = _region_paths(held_out)
     train_paths = []
@@ -241,13 +241,13 @@ def train_for_deployment(model, held_out):
         if region_name == held_out:
             continue
         else:
-            train_paths.extend(_region_paths(region_name))
+            train_paths.extend(_region_paths(region_name, root))
 
-    train_paths.extend(glob.glob('/content/drive/MyDrive/IRP/Tiles/UknegApproved/*.npz'))
+    train_paths.extend(glob.glob(f'{root}/UknegApproved/*.npz'))
     if held_out == 'France':
         dirs = ['EastQuantock', 'UKTraining', 'UKQuantock']
         for d in dirs:
-            train_paths.extend(glob.glob(f"/content/drive/MyDrive/IRP/Tiles/ScalesCombined/{d}/*.npz"))
+            train_paths.extend(glob.glob(f"{root}/{d}/*.npz"))
 
     val_set = MaskRCNNDataset(val_paths)
     train_set = MaskRCNNDataset(train_paths)
@@ -256,7 +256,6 @@ def train_for_deployment(model, held_out):
     train_loader = DataLoader(train_set, batch_size=4, collate_fn=collate_fn)
     
     _, train_losses, val_precisions, val_recalls, val_f1s, model, val_loader = rcnn_train(model, None, train_loader, val_loader, epochs=50)
-
 
     return model.state_dict()
 
