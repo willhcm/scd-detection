@@ -38,7 +38,16 @@ code/
 
 ## Modelling Methods
 
-Predictions of candidate SCDs are generated using the following model architecture and inference strategy
+Predictions of candidate SCDs are generated using the following model architecture and inference strategy.
+
+![ModelFigure](datastore/assets/Model.png)
+*Schematic of deep learning methodology for scale-invariant SCD detection: (a)
+adapted Mask R-CNN architecture for SCD detection, (b) inference strategy using a Scale-
+Normalised Image Pyramid (SNIP) to maximise the receptive field of the inference mech-
+anism, (c) DEM and DEM-derivative input channels, (d) architecture of the veto classifier
+used to screen candidates. RPN = Regional Proposal Network, FPN = Feature Pyramid
+Network, ROI = Region or Interest, FiLM = Feature-Wise Linear Modulation, CNN = Con-
+volutional Neural Network, FFN = Feed Forward Network*
 
 ## Misc
 
