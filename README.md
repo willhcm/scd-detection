@@ -4,6 +4,7 @@ Short introductory sentence or two
 
 ## Repository Structure
 
+```text
 code/
 ├── deployment/
 │   ├── Deployer.py
@@ -32,7 +33,8 @@ code/
     ├── field/
     ├── geostats/
     ├── plots/
-    └── reproduce.ipynb 
+    └── reproduce.ipynb
+```
 
 ## Modelling Methods
 
