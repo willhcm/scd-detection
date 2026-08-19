@@ -1,84 +1,63 @@
-from SegNet import SegNet
-from FPNCentreNet import FPNCentreNet
-from MaskRCNN import MaskRCNN
+from MaskFilm import MaskRCNN
 import torch
-from FPNCentreNet import decode_multilevel_predictions, decode_centernet_predictions, simple_detection_nms
 
-# args required to instantiate each model correctly.
-INIT_ARGS = {}
-PRED_ARGS = {'SegNet': {'threshold': 0.75},
-             'MaskRCNN': {'score_threshold': 0.5,
-                          'mask_threshold': 0.5},
-            'FPNCentreNet': {'decode_args': {}}
-             }
+PRED_ARGS = {
+    "MaskRCNN": {"score_threshold": 0.60,
+                  "mask_threshold": 0.55}}
 
 
-class ModelWrapper():
+class ModelWrapper:
 
-    def __init__(self, model_type, model_dict):
+    def __init__(self, model_dict):
 
-        if model_type not in ['SegNet', 'MaskRCNN', 'FPNCentreNet']:
-            print('please enter a valid model type')
-            return
-
-        self.model_type = model_type
-        self.model = model_type(**INIT_ARGS)
+        self.model = MaskRCNN()
         self.model.load_state_dict(model_dict)
-        self.pred_args = PRED_ARGS[model_type]
-    
-    def _predict_seg_net(self, images, device):
-        images = images.to(device)
-        logits = self.model(images)
-        preds = (torch.sigmoid(logits) >= self.pred_args['threshold']).float()
+        self.pred_args = PRED_ARGS["MaskRCNN"].copy()
 
-        return preds
-
-    def _pred_mask_rcnn(self, images, device):
+    # edited to return actual prob map not thresholded masks.
+    def _pred_mask_rcnn(
+        self,
+        images,
+        resolutions,
+        device):
 
         images = images.to(device)
+        resolutions = resolutions.to(device)
         height, width = images.shape[-2:]
-        output = self.model(images)
-        scores = output["scores"].detach().cpu()
-        raw_pred_masks = output["masks"].detach().cpu()
-        keep = scores >= self.pred_args['score_threshold']
-        pred_instance_masks = (
-                    raw_pred_masks[keep, 0] >= self.pred_args[['mask_threshold']]
-                )
 
-        # convert from instance masks to combined masks.s
-        if pred_instance_masks.shape[0] > 0:
-            pred_mask = pred_instance_masks.any(dim=0)
-        else:
-            pred_mask = torch.zeros(
-                (height, width),
-                dtype=torch.bool,
-            )
-        
-        return pred_mask
+        # Torchvision detection models expect a list of
+        # tensors with shape [C, H, W].
+        image_list = list(images.unbind(0))
+        if resolutions.dim() == 1:
+            resolutions = resolutions.unsqueeze(1)
 
-    def _pred_fpn_centrenet(self, images, device):
-        images = images.to(device)
-        # may need to add an extra dim as functions built before work for batches e.g. [B, H, W] not [H, W]
-        outputs = self.model(images)
-        detections = decode_multilevel_predictions(outputs, image_index=0)
+        outputs = self.model(image_list, resolutions=resolutions)
 
-        return detections
+        score_threshold = self.pred_args["score_threshold"]
+        mask_threshold = self.pred_args["mask_threshold"]
 
-    def predict(self, images, device):
-        """ 
-        Public method
-        
-        Takes images on cpu, puts to device """
+        probability_maps = []
 
-        if type(self.model) == SegNet:
-            return self._predict_seg_net(self, images, device)
-        
-        elif type(self.model) == MaskRCNN:
-            return self._pred_mask_rcnn(self, images, device)
-        
-        elif type(self.model) == FPNCentreNet:
-            return self._pred_fpn_centrenet(self, images, device)
-        else: # now already handled in init.
-            print(f'Please enter a valid model, got {type(self.model)}')
+        for output in outputs:
 
-    
+            scores = output["scores"].detach().cpu()
+            raw_masks = (output["masks"].detach().cpu()[:, 0])
+            keep = scores >= score_threshold
+
+            if keep.any():
+
+                kept_masks = raw_masks[keep]
+
+                kept_masks = torch.where(kept_masks >= mask_threshold, kept_masks, torch.zeros_like(kept_masks))
+
+                tile_probability = (kept_masks.max(dim=0).values)
+
+            else:
+                tile_probability = torch.zeros((height, width), dtype=torch.float32)
+
+            probability_maps.append(tile_probability.float())
+
+        return probability_maps
+
+    def predict(self, images, resolutions, device):
+        return self._pred_mask_rcnn(images, resolutions, device)

@@ -5,7 +5,7 @@ from torchvision.models.detection import maskrcnn_resnet50_fpn
 from torchvision.models.detection import MaskRCNN_ResNet50_FPN_Weights
 import torch.nn as nn
 import torch
-from CentreNetStrided import decode_centernet_predictions
+from code.depreciated.CentreNetStrided import decode_centernet_predictions
 import torch.nn.functional as F
 import numpy as np
 from scipy.ndimage import label, center_of_mass, gaussian_filter
@@ -65,7 +65,10 @@ _BANDS_TO_LOAD = ["DEM", "DEM_SLOPE", "RR", "LAPLACE"]
 # MODEL == OPTIMISED!
 
 # nvm, threshold too strict for lower confidence cross-val. also struggling on regions with larger SCDs, so reduced p2 and p3 threshold specifically.
+# results very poor in deployment.
 
+# hallucinating, very low precision.
+# think it is because it has not seen many tiles at 1m resolution, so its being confused by the fine details. Adding 1m negatives to dataset from completely unused regions - random.
 
 class PANNeck(nn.Module):
     def __init__(self, channels=256):
@@ -491,8 +494,13 @@ class MultiLevelCentreNetDataset(Dataset):
     def __len__(self):
         return len(self.paths)
 
-    def _augment(self, image, mask):
-        image, mask = image.copy(), mask.copy()
+    # split spatial and physical dem augmentations
+    def _spatial_augment(self, image, mask):
+        """
+        Apply identical spatial transformations to every channel and the mask.
+        """
+        image = image.copy()
+        mask = mask.copy()
 
         if random.random() > 0.5:
             image = image[:, :, ::-1]
@@ -507,49 +515,113 @@ class MultiLevelCentreNetDataset(Dataset):
             image = np.rot90(image, k, axes=(1, 2))
             mask = np.rot90(mask, k)
 
-        image = np.ascontiguousarray(image)
-        mask = np.ascontiguousarray(mask)
+        return (
+            np.ascontiguousarray(image),
+            np.ascontiguousarray(mask),
+        )
+    
+    def _augment_dem(self, dem):
+        """
+        Apply perturbations while the DEM is still in elevation units.
+        """
+        dem = dem.copy().astype(np.float32)
 
-        # DEM-only perturbations, same spirit as your current dataset
         if random.random() > 0.5:
-            noise = np.random.normal(0, 0.02, size=image[0].shape).astype(np.float32)
-            image[0] = image[0] + noise
+            # 2% of the DEM's local standard deviation, rather than 0.02 metres
+            noise_std = 0.02 * (dem.std() + 1e-6)
+            noise = np.random.normal(
+                0.0,
+                noise_std,
+                size=dem.shape,
+            ).astype(np.float32)
+
+            dem += noise
 
         if random.random() > 0.5:
             sigma = random.uniform(0.3, 0.8)
-            image[0] = gaussian_filter(image[0], sigma=sigma)
+            dem = gaussian_filter(dem, sigma=sigma).astype(np.float32)
 
         if random.random() > 0.5:
             scale = random.uniform(0.9, 1.1)
-            image[0] = image[0] * scale
 
-        return image, mask
+            # Scale relief around the mean instead of scaling absolute elevation.
+            dem_mean = dem.mean()
+            dem = dem_mean + scale * (dem - dem_mean)
 
+        return dem.astype(np.float32)
+
+    # test robust scaling.
+    # works! better results than log -> z
+    @staticmethod
+    def _normalise_band(band, name):
+        band = band.astype(np.float32)
+
+        if name in {"DEM_SLOPE", "DEM"}:
+            transformed = band
+        else:
+            transformed = np.sign(band) * np.log1p(np.abs(band))
+
+        median = np.median(transformed)
+        q75, q25 = np.percentile(transformed, [75, 25])
+        iqr = q75 - q25
+        scaled = (transformed - median) / (iqr + 1e-6)
+
+        return scaled
+
+    # rebuilt for splitting spatial and physical dem augmentation.
+    # and adding hillshade calculation before rotations etc.
+    # next: add tpi? test and see results in a strict ablation.
     def __getitem__(self, idx):
         path = self.paths[idx]
-        d = np.load(path, allow_pickle=True)
 
-        layer_names = list(d["layer_names"])
-        li = {name: i for i, name in enumerate(layer_names)}
+        with np.load(path, allow_pickle=True) as d:
+            layer_names = list(d["layer_names"])
+            layer_indices = {
+                name: i for i, name in enumerate(layer_names)
+            }
 
-        band_indices = [li[b] for b in _BANDS_TO_LOAD]
+            band_indices = [
+                layer_indices[name]
+                for name in _BANDS_TO_LOAD
+            ]
 
-        image = d["image"][band_indices].astype(np.float32)
-        mask = d["labels"].astype(np.float32)
+            image = d["image"][band_indices].astype(np.float32)
+            mask = d["labels"].astype(np.float32)
 
-        for i, name in enumerate(_BANDS_TO_LOAD):
-          band = image[i].astype(np.float32)
+        dem_idx = _BANDS_TO_LOAD.index("DEM")
 
-          if name == ["DEM_SLOPE"]:
-              band = np.log1p(np.maximum(band, 0))
+        # dem in metres
+        raw_dem = image[dem_idx].copy()
 
-          elif name == ['LAPLACE']:
-              band = np.sign(band) * np.log1p(np.abs(band))
-
-          image[i] = (band - band.mean()) / (band.std() + 1e-6)
-          
         if self.augment:
-            image, mask = self._augment(image, mask)
+            # physical dem pertubations
+            raw_dem = self._augment_dem(raw_dem)
+            image[dem_idx] = raw_dem
+
+            # rotate / flip
+            image, mask = self._spatial_augment(image, mask)
+
+            # Retrieve the spatially transformed raw DEM.
+            raw_dem = image[dem_idx]
+
+        # Hillshade is calculated from the unnormalised DEM.
+        hillshade = calculate_hillshade(raw_dem).astype(np.float32)
+
+        # Normalise bands.
+        for i, name in enumerate(_BANDS_TO_LOAD):
+            image[i] = self._normalise_band(image[i], name)
+
+        # normalise hillshade seperately.
+        hillshade = (
+            hillshade - hillshade.mean()
+        ) / (
+            hillshade.std() + 1e-6
+        )
+
+        image = np.concatenate(
+            [image, hillshade[None, :, :]],
+            axis=0,
+        ).astype(np.float32)
 
         targets_np = build_multilevel_centernet_targets(
             mask=mask,
@@ -557,24 +629,25 @@ class MultiLevelCentreNetDataset(Dataset):
             level_radius_bins=self.level_radius_bins,
         )
 
-        # hillshade test
-        dem = image[0]
-        hillshade = calculate_hillshade(
-        dem,
-    )
-        image = np.concatenate(
-        [image, hillshade[None, :, :]],
-        axis=0,
-    )
-
         targets = {}
-        for level, t in targets_np.items():
+
+        for level, target in targets_np.items():
             targets[level] = {
-                "heatmap": torch.from_numpy(np.ascontiguousarray(t["heatmap"])),
-                "weights": torch.from_numpy(np.ascontiguousarray(t["weights"])),
-                "offset": torch.from_numpy(np.ascontiguousarray(t["offset"])),
-                "radius": torch.from_numpy(np.ascontiguousarray(t["radius"])),
-                "obj_mask": torch.from_numpy(np.ascontiguousarray(t["obj_mask"])),
+                "heatmap": torch.from_numpy(
+                    np.ascontiguousarray(target["heatmap"])
+                ),
+                "weights": torch.from_numpy(
+                    np.ascontiguousarray(target["weights"])
+                ),
+                "offset": torch.from_numpy(
+                    np.ascontiguousarray(target["offset"])
+                ),
+                "radius": torch.from_numpy(
+                    np.ascontiguousarray(target["radius"])
+                ),
+                "obj_mask": torch.from_numpy(
+                    np.ascontiguousarray(target["obj_mask"])
+                ),
             }
 
         return (
@@ -709,10 +782,10 @@ def decode_multilevel_predictions(
     # thresholds tuned using score confidence at differnt levels
     if thresholds is None:
         thresholds = {
-            "0": 0.55,
-            "1": 0.65,
-            "2": 0.775,
-            "3": 0.6,
+            "0": 0.5,
+            "1": 0.6,
+            "2": 0.75,
+            "3": 0.70,
         }
 
     # need to tune likely
@@ -861,7 +934,7 @@ STAGE_LRS = {
         "layer3": 0.0,
     },
     4: {
-        "heads": 1e-6,
+        "heads": 5e-5,
         "conv1": 5e-7,
         "pan": 5e-7,
         "fpn": 1e-7,
@@ -1113,8 +1186,8 @@ class CentreNetLoss(nn.Module):
         alpha=2.0,
         beta=4.0,
         eps=1e-6,
-        off_weight=0.2,
-        rad_weight=0.1,
+        off_weight=0.5,
+        rad_weight=0.5,
         neg_scale=1,
     ):
         super().__init__()

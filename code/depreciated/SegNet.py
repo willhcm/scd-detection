@@ -3,11 +3,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from scipy.ndimage import label, maximum_filter, gaussian_filter
+from scipy.ndimage import gaussian_filter
 from datetime import datetime
-from scipy.ndimage import label, center_of_mass
 import random
-from torch.utils.data import TensorDataset, DataLoader, Dataset
+from torch.utils.data import Dataset
 from blocks import DoubleConv, ASPP, Down, Up
 from helpers import object_centroid_metrics, calculate_hillshade
 

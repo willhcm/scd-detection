@@ -4,8 +4,7 @@ import geopandas as gpd
 from pathlib import Path
 from rasterio.warp import Resampling, calculate_default_transform, reproject
 from rasterio.crs import CRS
-from rasterio.transform import from_bounds, array_bounds
-from rasterio.features import rasterize
+from rasterio.transform import from_bounds, array_bounds 
 from shapely.geometry import box
 from scipy.ndimage import sobel, gaussian_filter, laplace
 from pyproj import Transformer
@@ -100,8 +99,27 @@ class DataSource:
 
     def reproject_to_shape(self, target_crs, tile_bounds, out_width, out_height, resampling=Resampling.cubic):
         minx, miny, maxx, maxy = tile_bounds
-        transform = from_bounds(minx, miny, maxx, maxy, out_width, out_height)
-        out = np.empty((out_height, out_width), dtype=np.float32)
+
+        transform = from_bounds(
+            minx,
+            miny,
+            maxx,
+            maxy,
+            out_width,
+            out_height,
+        )
+
+        if self.data.ndim == 2:
+            out = np.empty(
+                (out_height, out_width),
+                dtype=np.float32,
+            )
+        else:
+            out = np.empty(
+                (self.data.shape[0], out_height, out_width),
+                dtype=np.float32,
+            )
+
         reproject(
             source=self.data,
             destination=out,
@@ -116,7 +134,10 @@ class DataSource:
     @classmethod
     def from_tiff(cls, path, type="DEM"):
         with rio.open(path) as src:
-            data = src.read(1).astype(np.float32)
+            if type == "DEM":
+                data = src.read(1).astype(np.float32)
+            elif type == "RGB":
+                data = src.read([1, 2, 3]).astype(np.float32)
             return cls(
                 type=type,
                 data=data,
@@ -128,31 +149,59 @@ class DataSource:
                 transform=src.transform,
             )
 
-    # changed to native res, no point re-sampling on load/init and then resampling again on _build_tile
+    # AI rewrite from taking onyl DEM to accepting RGB as needed for VetoDataset.py
     @classmethod
-    def from_tiff_utm(cls, path, native_res):
+    def from_tiff_utm(cls, path, native_res, type="DEM"):
+    
         with rio.open(path) as src:
-            utm_crs = CRS.from_epsg(_utm_epsg(src.crs, src.bounds))
-            transform, width, height = calculate_default_transform(
-                src.crs, utm_crs, src.width, src.height, *src.bounds,
-                resolution=native_res,
-            )
-            data = np.empty((height, width), dtype=np.float32)
-            
-            # no res reproj, just crs
-            reproject(
-                source=rio.band(src, 1), # data is always in band 1 for these DEM tiles. previous banding was for RGB. redundant.
-                destination=data,
-                src_transform=src.transform,
-                src_crs=src.crs,
-                dst_transform=transform,
-                dst_crs=utm_crs,
-                resampling=Resampling.cubic,
+            utm_crs = CRS.from_epsg(_utm_epsg(src.crs, src.bounds)
             )
 
-        bounds = array_bounds(height, width, transform)
+            transform, width, height = calculate_default_transform(
+                src.crs,
+                utm_crs,
+                src.width,
+                src.height,
+                *src.bounds,
+                resolution=native_res,
+            )
+
+            if type == "DEM":
+                data = np.empty((height, width),dtype=np.float32)
+
+                reproject(
+                    source=rio.band(src, 1),
+                    destination=data,
+                    src_transform=src.transform,
+                    src_crs=src.crs,
+                    dst_transform=transform,
+                    dst_crs=utm_crs,
+                    resampling=Resampling.cubic
+                )
+
+            elif type == "RGB":
+                if src.count < 3:
+                    raise ValueError(
+                        f"RGB raster requires at least 3 bands, "
+                        f"but {path} has {src.count}."
+                    )
+
+                data = np.empty((3, height, width), dtype=np.float32)
+
+                for band_index in range(3):
+                    reproject(
+                        source=rio.band(src, band_index + 1),
+                        destination=data[band_index],
+                        src_transform=src.transform,
+                        src_crs=src.crs,
+                        dst_transform=transform,
+                        dst_crs=utm_crs,
+                        resampling=Resampling.bilinear)
+
+        bounds = array_bounds(height, width,transform)
+
         return cls(
-            type="DEM",
+            type=type,
             data=data,
             res=native_res,
             crs=utm_crs,
@@ -161,9 +210,9 @@ class DataSource:
             height=height,
             transform=transform,
         )
+ 
 
 # DEM-derived feature helpers
-
 def _slope(a):
     sx = sobel(a["DEM"], axis=0)
     sy = sobel(a["DEM"], axis=1)
@@ -284,7 +333,7 @@ class ScaleNormalisedDataStack:
         # comparable across variable-resolution tiles.
         # needs to depend on res
         # manual is probably overkill, just automatic 10 * res. can change later if needed.
-        self.rr_sigma_m = 10.0 * dem_source.res
+        self.rr_sigma_m = 12.0 * dem_source.res
 
         self.layer_names = features or self.DEFAULT_LAYERS.copy()
         self.layer_names.append("LABELS")
@@ -588,14 +637,15 @@ class ScaleNormalisedDataStack:
         # no longer need to worry about self.labelled, as this will not be used to produce deployment tiles!
         # that will be done using image pyramid.
         labels = tile_data[self.layer_index["LABELS"]].astype(np.uint8)
+        image = tile_data[:self.layer_index["LABELS"]].astype(np.float32)
 
         np.savez_compressed(str(Path(out_path) / name),
-                            image=self._tile_name, 
+                            image=image, 
                             layer_names=np.array(self.layer_names),
                             res=np.array(req["res"], dtype=np.float32),
                             labels=labels,
                             scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)),
-                            object_ids = np.array(req['object_ids']),
+                            object_ids = np.array(req.get("object_ids", [])),
                             positive=np.array(positive))
 
 

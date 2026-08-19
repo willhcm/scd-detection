@@ -1,19 +1,77 @@
-import torchvision
 from torchvision.models.detection import maskrcnn_resnet50_fpn
-from torchvision.models.detection import MaskRCNN_ResNet50_FPN_Weights
 import torch.nn as nn
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
-import glob
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset
 import random
 import numpy as np
 from scipy.ndimage import label, find_objects, gaussian_filter
 from torchvision.models.detection.rpn import RPNHead
 from torchvision.models.detection.anchor_utils import AnchorGenerator
 from helpers import calculate_hillshade
- 
+from code.helpers.MaskRCNNFunctions import evaluate_maskrcnn_metrics, build_staged_optimizer, apply_training_stage
+import copy
+from tqdm.auto import tqdm
+
+_BANDS_TO_LOAD = ['DEM', 'DEM_SLOPE', 'RR', 'LAPLACE']
+
+# ChatGPT assistance with FiLM encodings for resolution
+# specifically with incorporation into pre-existing MaskRCNN wrapper and condition-setting for forward()
+class ResolutionFiLM(nn.Module):
+    """
+    Generates per-channel gamma/beta from a scalar resolution value.
+    """
+
+    def __init__(self, out_channels=256, hidden=64):
+        super().__init__()
+        self.gen = nn.Sequential(
+            nn.Linear(1, hidden),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden, out_channels * 2),
+        )
+        self.out_channels = out_channels
+
+        nn.init.zeros_(self.gen[-1].weight)
+        nn.init.zeros_(self.gen[-1].bias)
+
+    def forward(self, cond):
+        gamma, beta = self.gen(cond).chunk(2, dim=1)
+        return gamma, beta
+
+
+class FiLMBackbone(nn.Module):
+    """
+    Wraps torchvision's BackboneWithFPN so every FPN level gets modulated
+    by a resolution conditioning vector before being handed to the RPN/ROI heads.
+    FiLM.
+    """
+
+    def __init__(self, backbone_with_fpn):
+        super().__init__()
+        self.body = backbone_with_fpn.body
+        self.fpn = backbone_with_fpn.fpn
+        self.out_channels = backbone_with_fpn.out_channels
+
+        self.film = ResolutionFiLM(out_channels=self.out_channels)
+        self._cond = None
+
+    def set_condition(self, cond):
+        # cond: (B, 1) tensor, same device + batch order as the images
+        self._cond = cond
+
+    def forward(self, x):
+        feats = self.fpn(self.body(x))
+
+        if self._cond is None:
+            return feats
+
+        gamma, beta = self.film(self._cond)
+        gamma = gamma[:, :, None, None]
+        beta = beta[:, :, None, None]
+
+        return {k: v * (1 + gamma) + beta for k, v in feats.items()}
+
 class MaskRCNN(nn.Module):
     """
     Wrapper around torchvision's Mask R-CNN
@@ -23,20 +81,24 @@ class MaskRCNN(nn.Module):
         self,
         num_classes=2,
         pretrained=True,
-        anchor_sizes=((16,), (32,), (64,), (128,), (256,)), # default
-        aspect_ratios=((0.5, 1.0, 2.0),) * 5, # default
-        trainable_backbone_layers=3,
-        loss_weights=None,
-        freeze=False,
+        anchor_sizes= ((20,), (40,), (62,), (120,), (220,)), # decreased to match SCD size population.
+        aspect_ratios=((0.75, 1.0, 1.35),) * 5, # default, elongated doesn't match subcircular appearance (square bounding boxes)
+        loss_weights = None, # depreciated but kept for future.
     ):
         super().__init__()
- 
+
+        # changed proposal thresholds 
         weights = "DEFAULT" if pretrained else None
         self.model = maskrcnn_resnet50_fpn(
             weights=weights,
             weights_backbone="DEFAULT" if pretrained else None,
-            trainable_backbone_layers=trainable_backbone_layers,
+            rpn_fg_iou_thresh=0.70, # rpn proposal thresholds
+            rpn_bg_iou_thresh=0.30,
+            box_fg_iou_thresh=0.55, # roi classification threshold
+            box_bg_iou_thresh=0.45,
+            trainable_backbone_layers=3
         )
+
         in_channels = 5
  
         self._replace_input_conv(in_channels)
@@ -44,12 +106,12 @@ class MaskRCNN(nn.Module):
         self.model.transform.image_std = [1.0] * in_channels
         self._set_anchor_generator(anchor_sizes, aspect_ratios)
         self._replace_heads(num_classes)
- 
-        # multiplies each named loss the model returns, e.g. {"loss_box_reg": 2.0}
-        self.loss_weights = loss_weights or {}
 
-        if freeze:
-            self.freeze_backbone(True)
+        # add FiLM conditioning to backbone to encode resolution
+        self.model.backbone = FiLMBackbone(self.model.backbone)
+ 
+        # multiplies each named loss the model returns
+        self.loss_weights = loss_weights or {}
 
         self.set_training_stage(stage=1)
 
@@ -58,6 +120,9 @@ class MaskRCNN(nn.Module):
         # Freeze backbone.
         for parameter in self.model.backbone.parameters():
             parameter.requires_grad = False
+
+        for parameter in self.model.backbone.film.parameters():
+            parameter.requires_grad = True
 
         # Heads always train.
         for parameter in self.model.rpn.parameters():
@@ -124,19 +189,13 @@ class MaskRCNN(nn.Module):
         self.model.roi_heads.mask_predictor = MaskRCNNPredictor(
             mask_in_features, mask_hidden_layers, num_classes
         )
-
- 
-    def freeze_backbone(self, freeze=True):
-
-        backbone = self.model.backbone
-
-        for param in backbone.parameters():
-            param.requires_grad = not freeze
  
     def set_loss_weights(self, weights: dict):
         self.loss_weights.update(weights)
  
-    def forward(self, images, targets=None):
+    def forward(self, images, resolutions= None , targets=None):
+        self.model.backbone.set_condition(resolutions)
+
         if self.training:
             loss_dict = self.model(images, targets)
  
@@ -147,81 +206,18 @@ class MaskRCNN(nn.Module):
  
         return self.model(images, targets)
 
-_BANDS_TO_LOAD = ['DEM', 'DEM_SLOPE', 'RR', 'LAPLACE']
-
+# AI assistance with several refactors of dataset when changing augmentation and channel logic.
 class MaskRCNNDataset(Dataset):
 
-    def __init__(
-        self,
-        all_paths,
-        tile_size=512,
-        skip_partial=True,
-        augment=False,
-        min_instance_area=20,
-    ):
+    # remove path checking for time optimisation
+    def __init__(self, all_paths, augment=False, min_instance_area=20):
+
         self.augment = augment
-        self.paths = []
+        self.paths = all_paths
         self.min_instance_area = min_instance_area
-
-        skipped_shape = 0
-        skipped_missing = 0
-
-        for p in sorted(all_paths):
-            d = np.load(p, allow_pickle=True)
-
-            if skip_partial:
-                _, h, w = d["image"].shape
-                if h != tile_size or w != tile_size:
-                    skipped_shape += 1
-                    continue
-
-            layer_names = list(d["layer_names"]) if "layer_names" in d else []
-            if any(b not in layer_names for b in _BANDS_TO_LOAD):
-                skipped_missing += 1
-                continue
-
-            self.paths.append(p)
-
-        print(
-            f"Found {len(self.paths)} tiles "
-            f"({skipped_shape} partial, {skipped_missing} missing bands skipped)"
-        )
 
     def __len__(self):
         return len(self.paths)
-
-    def _augment(self, image, mask):
-        image, mask = image.copy(), mask.copy()
-
-        if random.random() > 0.5:
-            image = image[:, :, ::-1]
-            mask = mask[:, ::-1]
-
-        if random.random() > 0.5:
-            image = image[:, ::-1, :]
-            mask = mask[::-1, :]
-
-        k = random.choice([0, 1, 2, 3])
-        if k:
-            image = np.rot90(image, k, axes=(1, 2))
-            mask = np.rot90(mask, k)
-
-        image = np.ascontiguousarray(image)
-        mask = np.ascontiguousarray(mask)
-
-        if random.random() > 0.5:
-            noise = np.random.normal(0, 0.02, size=image[0].shape).astype(np.float32)
-            image[0] = image[0] + noise
-
-        if random.random() > 0.5:
-            sigma = random.uniform(0.3, 0.8)
-            image[0] = gaussian_filter(image[0], sigma=sigma)
-
-        if random.random() > 0.5:
-            scale = random.uniform(0.9, 1.1)
-            image[0] = image[0] * scale
-
-        return image, mask
 
     def _mask_to_instances(self, mask):
         binary = mask > 0
@@ -268,10 +264,78 @@ class MaskRCNNDataset(Dataset):
             iscrowd = torch.zeros((len(boxes),), dtype=torch.int64)
 
         return boxes, labels, masks, areas, iscrowd
+    
+    # same augmentation changes as made in FPNCN
+    def _spatial_augment(self, image, mask):
+        """
+        Apply identical spatial transformations to every channel and the mask.
+        """
+        image = image.copy()
+        mask = mask.copy()
+
+        if random.random() > 0.5:
+            image = image[:, :, ::-1]
+            mask = mask[:, ::-1]
+
+        if random.random() > 0.5:
+            image = image[:, ::-1, :]
+            mask = mask[::-1, :]
+
+        k = random.choice([0, 1, 2, 3])
+        if k:
+            image = np.rot90(image, k, axes=(1, 2))
+            mask = np.rot90(mask, k)
+
+        return (
+            np.ascontiguousarray(image),
+            np.ascontiguousarray(mask),
+        )
+    
+    def _augment_dem(self, dem):
+        """
+        Apply perturbations while the DEM is still in elevation units.
+        """
+        dem = dem.copy().astype(np.float32)
+
+
+        if random.random() > 0.5:
+            sigma = random.uniform(0.3, 0.8)
+            dem = gaussian_filter(dem, sigma=sigma).astype(np.float32)
+
+        if random.random() > 0.5:
+            # 2% of the DEM's local standard deviation, rather than 0.02 metres
+            noise_std = 0.02 * (dem.std() + 1e-6)
+            noise = np.random.normal(
+                0.0,
+                noise_std,
+                size=dem.shape,
+            ).astype(np.float32)
+
+            dem += noise
+
+        return dem.astype(np.float32)
+
+    @staticmethod
+    def _normalise_band(band, name):
+        band = band.astype(np.float32)
+
+        if name in {"DEM_SLOPE",  "DEM"}:
+            transformed = band
+        else:
+            transformed = np.sign(band) * np.log1p(np.abs(band))
+
+        median = np.median(transformed)
+        q75, q25 = np.percentile(transformed, [75, 25])
+        iqr = q75 - q25
+        scaled = (transformed - median) / (iqr + 1e-6)
+
+        return scaled
 
     def __getitem__(self, idx):
         path = self.paths[idx]
         d = np.load(path, allow_pickle=True)
+        res = d['res']
+        res_value = np.log(res) / np.log(15.0)
 
         layer_names = list(d["layer_names"])
         li = {name: i for i, name in enumerate(layer_names)}
@@ -280,35 +344,40 @@ class MaskRCNNDataset(Dataset):
         image = d["image"][band_indices].astype(np.float32)
         mask = d["labels"].astype(np.float32)
 
-        for i, name in enumerate(_BANDS_TO_LOAD):
-          band = image[i].astype(np.float32)
+        # safe for any adjustments
+        dem_idx = _BANDS_TO_LOAD.index("DEM")
 
-          if name == ["DEM_SLOPE"]:
-              band = np.log1p(np.maximum(band, 0))
-
-          elif name == ['LAPLACE']:
-              band = np.sign(band) * np.log1p(np.abs(band))
-
-          image[i] = (band - band.mean()) / (band.std() + 1e-6)
+        # dem in metres
+        raw_dem = image[dem_idx].copy()
 
         if self.augment:
-            image, mask = self._augment(image, mask)
+            # removed physical pertubations for now 
+            # rotate / flip
+            image, mask = self._spatial_augment(image, mask)
 
-        # hillshade test
-        dem = image[0]
-        hillshade = calculate_hillshade(
-        dem,
-    )
-        
+            # Retrieve the spatially transformed raw DEM.
+            raw_dem = image[dem_idx]
+
+        # Hillshade is calculated from the unnormalised DEM.
+        hillshade = calculate_hillshade(raw_dem).astype(np.float32)
+
+        # Normalise bands.
+        for i, name in enumerate(_BANDS_TO_LOAD):
+            image[i] = self._normalise_band(image[i], name)
+
+        # normalise hillshade seperately.
+        hillshade = (
+            hillshade - hillshade.mean()
+        ) / (
+            hillshade.std() + 1e-6
+        )
+
         image = np.concatenate(
-        [image, hillshade[None, :, :]],
-        axis=0,
-    )
-
+            [image, hillshade[None, :, :]],
+            axis=0,
+        ).astype(np.float32)
+        
         boxes, labels, masks, areas, iscrowd = self._mask_to_instances(mask)
-
-        image = torch.from_numpy(np.ascontiguousarray(image)).float()
-
 
         target = {
             "boxes": boxes,
@@ -317,335 +386,14 @@ class MaskRCNNDataset(Dataset):
             "image_id": torch.tensor([idx]),
             "area": areas,
             "iscrowd": iscrowd,
+            "resolution": torch.tensor([res_value], dtype=torch.float32)
         }
 
+        image = torch.from_numpy(image)
+
         return image, target
-    
-def collate_fn(batch):
-    return tuple(zip(*batch))
-
-def get_rcnn_loaders(train_paths, val_paths):
-
-    train_dataset = MaskRCNNDataset(train_paths, augment=True)
-    val_dataset = MaskRCNNDataset(val_paths, augment=False)
-
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=2,
-        shuffle=True,
-        collate_fn=collate_fn,
-        num_workers=0,
-        pin_memory=True,
-    )
-
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=2,
-        shuffle=False,
-        collate_fn=collate_fn,
-        num_workers=0,
-        pin_memory=True,
-    )
-
-    return val_loader, train_loader
-
-import numpy as np
-from scipy.ndimage import label, center_of_mass
-
-
-
-def binary_iou(pred_union, gt_union):
-    pred_union = pred_union.astype(bool)
-    gt_union = gt_union.astype(bool)
-
-    intersection = np.logical_and(pred_union, gt_union).sum()
-    union = np.logical_or(pred_union, gt_union).sum()
-
-    if union == 0:
-        return 1.0
-
-    return intersection / union
-
-
-def maskrcnn_outputs_to_binary_masks(outputs, threshold=0.5, score_thresh=0.5):
-    batch_masks = []
-
-    for out in outputs:
-        if len(out["scores"]) == 0:
-            batch_masks.append(None)
-            continue
-
-        keep = out["scores"] >= score_thresh
-
-        if keep.sum() == 0:
-            batch_masks.append(None)
-            continue
-
-        masks = out["masks"][keep, 0]  # [N, H, W]
-        binary = masks >= threshold
-
-        batch_masks.append(binary.cpu().numpy())
-
-    return batch_masks
-
-
-def object_f1_from_instance_masks(pred_masks, gt_masks):
-    """
-    pred_masks: [N_pred, H, W] or None
-    gt_masks:   [N_gt, H, W]
-    """
-
-    n_gt = gt_masks.shape[0]
-    n_pred = 0 if pred_masks is None else pred_masks.shape[0]
-
-    if n_gt == 0 and n_pred == 0:
-        return 0, 0, 0
-
-    if n_gt == 0:
-        return 0, n_pred, 0
-
-    if n_pred == 0:
-        return 0, 0, n_gt
-
-    gt_union = gt_masks.sum(axis=0) > 0
-    gt_labels, n_gt_cc = label(gt_union)
-
-    matched_gt = set()
-
-    tp = 0
-    fp = 0
-
-    for pm in pred_masks:
-        cy, cx = center_of_mass(pm)
-
-        if np.isnan(cx) or np.isnan(cy):
-            fp += 1
-            continue
-
-        r = int(round(cy))
-        c = int(round(cx))
-
-        r = np.clip(r, 0, gt_union.shape[0] - 1)
-        c = np.clip(c, 0, gt_union.shape[1] - 1)
-
-        gt_id = gt_labels[r, c]
-
-        if gt_id > 0 and gt_id not in matched_gt:
-            tp += 1
-            matched_gt.add(gt_id)
-        else:
-            fp += 1
-
-    fn = n_gt_cc - len(matched_gt)
-
-    return tp, fp, fn
-
-
-def evaluate_maskrcnn_metrics(model, val_loader, device, mask_thresh=0.5, score_thresh=0.5):
-    model.eval()
-
-    total_tp = 0
-    total_fp = 0
-    total_fn = 0
-    ptp = pfp = pfn = 0
-
-    ious = []
-
-    with torch.no_grad():
-        for images, targets in val_loader:
-            images_device = [image.to(device) for image in images]
-            outputs = model(images_device)
-
-            for image, output, target_dict in zip(images, outputs, targets):
-
-                height, width = image.shape[-2:]
-
-
-                # Ground-truth combined binary mask
-                gt_instance_masks = target_dict["masks"].detach().cpu()
-
-                if gt_instance_masks.shape[0] > 0:
-                    target_mask = gt_instance_masks.bool().any(dim=0)
-                else:
-                    target_mask = torch.zeros(
-                        (height, width),
-                        dtype=torch.bool,
-                    )
-
-                scores = output["scores"].detach().cpu()
-                raw_pred_masks = output["masks"].detach().cpu()
-
-                keep = scores >= score_thresh
-
-                # AI assistance with figuring out channels / dimensions for metric calculation 
-                # [N_pred, 1, H, W] -> [N_pred, H, W]
-                pred_instance_masks = (
-                    raw_pred_masks[keep, 0] >= mask_thresh
-                )
-
-                # [N_gt, H, W]
-                gt_instance_masks = (
-                    target_dict["masks"]
-                    .detach()
-                    .cpu()
-                    .bool()
-                )
-
-                tp, fp, fn = object_f1_from_instance_masks(
-                    pred_instance_masks,
-                    gt_instance_masks,
-                )
-
-                total_fn += fn
-                total_fp += fp
-                total_tp += tp
-
-                # Combined predicted mask: [H, W]
-                if pred_instance_masks.shape[0] > 0:
-                    pred_mask = pred_instance_masks.any(dim=0)
-                else:
-                    pred_mask = torch.zeros(
-                        (height, width),
-                        dtype=torch.bool,
-                    )
-
-                # Pixel-level metrics using Boolean logic. AI assistance (ChatGPT) with boolean logic 
-                ptp += torch.logical_and(
-                    pred_mask,
-                    target_mask,
-                ).sum().item()
-
-                pfp += torch.logical_and(
-                    pred_mask,
-                    ~target_mask,
-                ).sum().item()
-
-                pfn += torch.logical_and(
-                    ~pred_mask,
-                    target_mask,
-                ).sum().item()
-
-                # IoU
-                pred_union = pred_mask.cpu().numpy()
-                gt_union = target_mask.cpu().numpy()
-
-                ious.append(binary_iou(pred_union, gt_union))
-
-    precision = total_tp / (total_tp + total_fp + 1e-8)
-    recall = total_tp / (total_tp + total_fn + 1e-8)
-    f1 = 2 * precision * recall / (precision + recall + 1e-8)
-
-
-    p_precision = (ptp + 1e-6) / (ptp + pfp + 1e-6)
-    p_recall = (ptp + 1e-6) / (ptp + pfn + 1e-6)
-    p_f1 = 2 * p_precision * p_recall / (p_precision + p_recall + 1e-8) 
-
-    mean_iou = float(np.mean(ious)) if len(ious) > 0 else 0.0
-
-    return precision, recall, f1, mean_iou, p_precision, p_recall, p_f1
-
-# ai assistance with mask rcnn train functionality and helper functions. original code repo from paper is hard to understand
-# ChatGPT and Claude Sonnet 5 used - whenever I have said AI is used its these models.
-
-
-def build_staged_optimizer(model, weight_decay=1e-4):
-    return torch.optim.AdamW(
-        [
-            {
-                "name": "rpn",
-                "params": model.model.rpn.parameters(),
-                "lr": 1e-3,
-            },
-            {
-                "name": "roi_heads",
-                "params": model.model.roi_heads.parameters(),
-                "lr": 1e-3,
-            },
-            {
-                "name": "conv1",
-                "params": model.model.backbone.body.conv1.parameters(),
-                "lr": 5e-6,
-            },
-            {
-                "name": "fpn",
-                "params": model.model.backbone.fpn.parameters(),
-                "lr": 0.0,
-            },
-            {
-                "name": "layer4",
-                "params": model.model.backbone.body.layer4.parameters(),
-                "lr": 0.0,
-            },
-            {
-                "name": "layer3",
-                "params": model.model.backbone.body.layer3.parameters(),
-                "lr": 0.0,
-            },
-        ],
-        weight_decay=weight_decay,
-    )
-
-STAGE_LRS = {
-    1: {
-        "rpn": 1e-3,
-        "roi_heads": 1e-3,
-        "conv1": 1e-5,
-        "fpn": 0.0,
-        "layer4": 0.0,
-        "layer3": 0.0,
-    },
-    2: {
-        "rpn": 1e-3,
-        "roi_heads": 1e-3,
-        "conv1": 5e-6,
-        "fpn": 1e-5,
-        "layer4": 0.0,
-        "layer3": 0.0,
-    },
-    3: {
-        "rpn": 1e-3,
-        "roi_heads": 1e-3,
-        "conv1": 1e-6,
-        "fpn": 3e-6,
-        "layer4": 1e-6,
-        "layer3": 0.0,
-    },
-    4: {
-        "rpn": 1e-3,
-        "roi_heads": 1e-3,
-        "conv1": 5e-7,
-        "fpn": 1e-6,
-        "layer4": 5e-7,
-        "layer3": 1e-7,
-    },
-}
-
-
-def apply_training_stage(model, optimizer, stage):
-    model.set_training_stage(stage)
-
-    lrs = STAGE_LRS[stage]
-
-    for group in optimizer.param_groups:
-        group["lr"] = lrs[group["name"]]
-
-    print(f"Applied training stage {stage}")
-    for group in optimizer.param_groups:
-        n_trainable = sum(
-            parameter.numel()
-            for parameter in group["params"]
-            if parameter.requires_grad
-        )
-        print(
-            f"  {group['name']:8s} "
-            f"lr={group['lr']:.2e}, "
-            f"trainable={n_trainable:,}"
-        )
 
 def rcnn_train(model, _, train_loader, val_loader, epochs):
-
-    import copy
-    from tqdm.auto import tqdm
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
@@ -710,7 +458,9 @@ def rcnn_train(model, _, train_loader, val_loader, epochs):
                 for t in targets
             ]
 
-            loss_dict = model(images, targets)
+            resolutions = torch.stack([t["resolution"] for t in targets]).to(device)
+            
+            loss_dict = model(images, resolutions, targets)
 
             losses = sum(loss for loss in loss_dict.values())
 
@@ -731,8 +481,8 @@ def rcnn_train(model, _, train_loader, val_loader, epochs):
             model,
             val_loader,
             device,
-            mask_thresh=0.625,
-            score_thresh=0.6
+            mask_thresh=0.55,
+            score_thresh=0.77
         )
 
         val_precisions.append(precision)
@@ -749,9 +499,7 @@ def rcnn_train(model, _, train_loader, val_loader, epochs):
             f"Val F1: {val_f1:.4f} | "
             f"Pixel P: {p_precision:.4f} | "
             f"Pixel R: {p_recall:.4f} | "
-            f"Pixel F1: {p_f1:.4f} | "
-
-        )
+            f"Pixel F1: {p_f1:.4f} | ")
 
         if val_f1 > best_f1:
             best_f1 = val_f1
@@ -775,9 +523,9 @@ def rcnn_train(model, _, train_loader, val_loader, epochs):
 
         scheduler.step()
 
-        if bad_epochs >= patience:
-            print("early stopping")
-            break
+        #if bad_epochs >= patience:
+            #print("early stopping")
+            #break
 
     model.load_state_dict(best_state)
 

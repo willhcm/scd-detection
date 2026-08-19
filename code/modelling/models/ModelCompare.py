@@ -1,5 +1,4 @@
 import glob
-from torch.utils.data import WeightedRandomSampler
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,7 +7,8 @@ import numpy as np
 import torch.nn as nn
 from blocks import _AugmentedSubset
 from sklearn.model_selection import train_test_split
-
+from MaskRCNN import MaskRCNN, MaskRCNNDataset, rcnn_train
+from sklearn.metrics import roc_auc_score
 
 def collate_fn(batch):
     return tuple(zip(*batch))
@@ -24,61 +24,66 @@ DATASET_ARGS = {
     },
     "FPNCentreNet": {
         "batch_size": 4,
-        "collate_fn": None,
-    },
-}
-
-def get_loaders(
-    paths,
-    dataset_type,
-    val_split: float = 0.2,
-    batch_size: int = 8,
-    seed: int = 42,
-):
-    full_dataset = dataset_type(paths, augment=False)
-
-    n = len(full_dataset)
-    n_val  = max(int(n * val_split), 1)
-    n_train = n - n_val
-
-    rng = torch.Generator().manual_seed(seed)
-    indices = torch.randperm(n, generator=rng).tolist()
-
-    train_indices = indices[:n_train]
-    val_indices   = indices[n_train:]
-
-    train_set = _AugmentedSubset(full_dataset, train_indices, augment=True)
-    val_set = _AugmentedSubset(full_dataset, val_indices,   augment=False)
-
-    weights = []
-    for idx in train_indices:
-        d  = np.load(full_dataset.paths[idx], allow_pickle=True)
-        frac = float(d["scd_pixel_fraction"])
-        weights.append(1.0 + frac)
-
-    sampler = WeightedRandomSampler(weights=weights, num_samples=len(weights), replacement=True)
-
-    train_loader = DataLoader(train_set, batch_size=batch_size, sampler=sampler, num_workers=0)
-    val_loader = DataLoader(val_set,   batch_size=batch_size, shuffle=False,   num_workers=0)
-
-    print(f"Train: {n_train} | Val: {n_val}")
-    return train_loader, val_loader, val_set
+        "collate_fn": None}}
 
 REGION_GROUPS = {
-    'Brazil': ['Brazil'],
-    'USA': ['USA'],
-    'Karoo': ['Karoo'],
     'Russia': ['Russia', 'Russia2', 'Russia3'],
-    'Australia': ['Australia']
+    'Brazil': ['Brazil'],
+    'USA': ['USA', 'Texas'],
+    'Karoo': ['Karoo'],
+    'Australia': ['Australia'],
+    'France': ['France'],
+    'UK': ['UKQuantock', 'UKTraining', 'EastQuantock']
 }
 
-def _region_paths(region_name):
+def _region_paths(region_name, root):
     paths = []
     for d in REGION_GROUPS[region_name]:
-        paths.extend(glob.glob(f"/content/drive/MyDrive/IRP/Tiles/ScalesCombined/{d}/*.npz"))
-        negs = glob.glob(f"/content/drive/MyDrive/IRP/NegativeFarming/{d}/*.npz")[::3]
+        paths.extend(glob.glob(f"{root}/ScalesCombined/{d}/*.npz"))
+        negs = glob.glob(f"{root}/Negatives/{d}/*.npz")
         paths.extend(negs)
     return sorted(paths)
+
+def get_roc_values(model, val_loader, device=None):
+
+    if device is None:
+        device = next(model.parameters()).device
+
+    model.eval()
+
+    y_true = []
+    y_score = []
+
+    with torch.no_grad():
+
+        for images, targets in val_loader:
+
+            images = [img.to(device) for img in images]
+
+            outputs = model(images)
+
+            for output, target in zip(outputs, targets):
+
+                # does this tile contain an SCD (GT)?
+                has_object = len(target["boxes"]) > 0
+                y_true.append(int(has_object))
+
+                # confidence of most confident detection
+                scores = output["scores"]
+
+                if len(scores) > 0:
+                    max_score = scores.max().item()
+                else:
+                    max_score = 0.0
+
+                y_score.append(max_score)
+
+    y_true = np.asarray(y_true)
+    y_score = np.asarray(y_score)
+
+    auc = roc_auc_score(y_true, y_score)
+
+    return auc, y_true, y_score
 
 def train_fold(model_type, train_paths, val_paths, epochs, model_info, batch_size=8):
     """ 
@@ -87,12 +92,6 @@ def train_fold(model_type, train_paths, val_paths, epochs, model_info, batch_siz
 
     train_set = model_info['dataset'](train_paths, augment=True)
     val_set = model_info['dataset'](val_paths, augment=False)
-
-    w = []
-    for p in train_set.paths:
-        d = np.load(p, allow_pickle=True)
-        w.append(1.0 + float(d["scd_pixel_fraction"]))
-    sampler = WeightedRandomSampler(w, num_samples=len(w), replacement=True)
 
     loader_args = DATASET_ARGS.get(model_type, DATASET_ARGS["default"]).copy()
 
@@ -137,6 +136,11 @@ def train_model(model_type, paths, epochs, model_info, batch_size=8):
     # init datasets (custom per model)
     train_set = model_info['dataset'](train_paths, augment=True)
     val_set = model_info['dataset'](val_paths, augment=False)
+
+    w = []
+    for p in train_set.paths:
+        d = np.load(p, allow_pickle=True)
+        w.append(1.0 + float(d["scd_pixel_fraction"]))
 
     # decide loader args and init loaders
     loader_args = DATASET_ARGS.get(model_type, DATASET_ARGS["default"]).copy()
@@ -190,6 +194,7 @@ def _run_cv_comparison(epochs, models):
             print(f"\n=== fold: holding out {held_out} ===")
             val_paths = _region_paths(held_out)
             train_paths = [p for r in REGION_GROUPS if r != held_out for p in _region_paths(r)]
+            train_paths.extend(glob.glob(f"/content/drive/MyDrive/IRP/Tiles/UKNegatives/*.npz"))
 
             metrics, best_model, val_loader = train_fold(model, train_paths, val_paths, epochs, model_info)
             if model not in cv_results:
@@ -227,6 +232,31 @@ def compare(models, epochs, paths=None, cv=True):
         else:
             return('please provide paths (as a list)')
             
-def plot_val_metrics():
-    ...
+# only considering maskRCNN now
+def train_for_deployment(model, held_out, root):
 
+    val_paths = _region_paths(held_out)
+    train_paths = []
+    for region_name in REGION_GROUPS.keys():
+        if region_name == held_out:
+            continue
+        else:
+            train_paths.extend(_region_paths(region_name, root))
+
+    train_paths.extend(glob.glob(f'{root}/UknegApproved/*.npz'))
+    if held_out == 'France':
+        dirs = ['EastQuantock', 'UKTraining', 'UKQuantock']
+        for d in dirs:
+            train_paths.extend(glob.glob(f"{root}/{d}/*.npz"))
+
+    val_set = MaskRCNNDataset(val_paths)
+    train_set = MaskRCNNDataset(train_paths)
+
+    val_loader = DataLoader(val_set, batch_size=4, collate_fn=collate_fn)
+    train_loader = DataLoader(train_set, batch_size=4, collate_fn=collate_fn)
+    
+    _, train_losses, val_precisions, val_recalls, val_f1s, model, val_loader = rcnn_train(model, None, train_loader, val_loader, epochs=50)
+
+    return model.state_dict()
+
+    
