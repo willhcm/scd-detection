@@ -3,7 +3,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.models import resnet18, ResNet18_Weights
 import numpy as np
-from code.helpers.veto_helpers import VETO_SCALAR_NAMES
+from torch.utils.data import Dataset
+from pathlib import Path
+import sys
+import cv2
+
+CODE_DIR = Path("../../code").resolve()
+sys.path.insert(0, str(CODE_DIR))
+
+from helpers.veto_helpers import VETO_SCALAR_NAMES
 
 
 def replace_first_conv(
@@ -103,3 +111,86 @@ class VetoClassifier(nn.Module):
 
         # classify and return
         return self.classifier(fused).squeeze(1)    
+
+
+    # AI assistance in handling shapes and channels for VetoDataset
+class VetoDataset(Dataset):
+
+    def __init__(
+        self,
+        paths,
+        rgb_size=96,
+        dem_size=300,
+    ):
+        self.paths = list(paths)
+        self.rgb_size = rgb_size
+        self.dem_size = dem_size
+
+    def __len__(self):
+        return len(self.paths)
+
+    @staticmethod
+    # make sure rgb is [h, w, band]
+    def _ensure_rgb_hwc(rgb):
+        rgb = np.asarray(rgb)
+
+        if (rgb.ndim == 3 and rgb.shape[0] == 3 and rgb.shape[-1] != 3):
+            rgb = np.moveaxis(rgb, 0, -1)
+
+        return rgb
+
+    def __getitem__(self, idx):
+
+        path = self.paths[idx]
+
+        with np.load(path) as data:
+
+            rgb = data["rgb"].astype(np.float32, copy=True)
+
+            mask = data["mask"].astype(np.float32, copy=True)
+
+            dem_context = data["dem_context"].astype(np.float32, copy=True)
+
+            scalar_features = data["scalar_features"].astype(np.float32, copy=True)
+
+            label = float(data["label"])
+
+
+        # local RGB + candidate-mask branch
+        rgb = self._ensure_rgb_hwc(rgb)
+
+        mask = (mask > 0.5).astype(np.float32)
+
+        # add mask to rgb
+        rgb_local = np.concatenate([rgb, mask[..., None],], axis=-1,)
+
+        # bands to front
+        rgb_local = np.moveaxis(rgb_local, -1, 0)
+
+        # wider DEM-context branch
+
+        if dem_context.shape[1:] != (self.dem_size, self.dem_size):
+            # Resize in channels-last form.
+            dem_hwc = np.moveaxis(dem_context,0,-1, )
+
+            dem_hwc = cv2.resize(dem_hwc, (self.dem_size, self.dem_size), interpolation=cv2.INTER_LINEAR)
+
+            # Restore the candidate-mask channel using
+            # nearest-neighbour interpolation.
+            context_mask = cv2.resize(dem_context[2], (self.dem_size, self.dem_size), interpolation=cv2.INTER_NEAREST)
+
+            dem_hwc[..., 2] = (context_mask > 0.5).astype(np.float32)
+
+            dem_context = np.moveaxis(dem_hwc, -1, 0)
+
+        scalar_features = np.asarray(scalar_features, dtype=np.float32).reshape(-1)
+
+        # to tensors
+        rgb_local = torch.from_numpy(np.ascontiguousarray(rgb_local, dtype=np.float32))
+        dem_context = torch.from_numpy(np.ascontiguousarray(dem_context, dtype=np.float32))
+        scalar_features = torch.from_numpy(np.ascontiguousarray(scalar_features, dtype=np.float32))
+
+        # 1 is accept, 0 is reject
+        label = torch.tensor(label, dtype=torch.float32)
+
+        return (rgb_local, dem_context, scalar_features, label)

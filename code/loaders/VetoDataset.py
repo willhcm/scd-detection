@@ -8,7 +8,14 @@ from ScaleNormalisedDataStack import ShapeLabels, DataSource
 from IPython.display import clear_output
 import numpy as np
 import ipywidgets as widgets
-from veto_helpers import build_dem_context, VETO_SCALAR_NAMES
+
+from pathlib import Path
+import sys
+
+CODE_DIR = Path("../../code").resolve()
+sys.path.insert(0, str(CODE_DIR))
+
+from helpers.veto_helpers import build_dem_context, VETO_SCALAR_NAMES
 
 class VetoLoader:
 

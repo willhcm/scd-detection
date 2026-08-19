@@ -1,3 +1,9 @@
+from pathlib import Path
+import sys
+
+CODE_DIR = Path("../../code").resolve()
+sys.path.insert(0, str(CODE_DIR))
+
 from torchvision.models.detection import maskrcnn_resnet50_fpn
 import torch.nn as nn
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
@@ -9,8 +15,8 @@ import numpy as np
 from scipy.ndimage import label, find_objects, gaussian_filter
 from torchvision.models.detection.rpn import RPNHead
 from torchvision.models.detection.anchor_utils import AnchorGenerator
-from code.modelling.helpers import calculate_hillshade
-from code.helpers.MaskRCNNFunctions import evaluate_maskrcnn_metrics, build_staged_optimizer, apply_training_stage
+from modelling.helpers import calculate_hillshade
+from helpers.MaskRCNNFunctions import evaluate_maskrcnn_metrics, build_staged_optimizer, apply_training_stage
 import copy
 from tqdm.auto import tqdm
 

@@ -3,23 +3,29 @@
 # feed these into the model to generate predictions
 # merge tiles back and generate prediction mask (vectorised for memory efficiency probably)
 
+# ChatGPT assistance with these lines for importing whenever used
+
+from pathlib import Path
+import sys
+CODE_DIR = Path("../../code").resolve()
+sys.path.insert(0, str(CODE_DIR))
+
 import rasterio
 from rasterio.warp import reproject
 import numpy as np
 import torch
-from ScaleNormalisedDataStack import DataSource, _bounds_inside, OVERLAP_SIGMA_MULTIPLIER
+from loaders.ScaleNormalisedDataStack import DataSource, _bounds_inside, OVERLAP_SIGMA_MULTIPLIER
 from rasterio.enums import Resampling
 from scipy.ndimage import sobel, gaussian_filter, laplace
 from ModelWrapper import ModelWrapper
-from helpers import calculate_hillshade, compute_tpi
+from modelling.helpers import calculate_hillshade
 from tqdm.auto import tqdm
 from PostProcesser import PostProcessor
-from Veto import VetoClassifier
+from modelling.Veto import VetoClassifier
 import geopandas as gpd
-from pathlib import Path
 from rasterio.features import shapes, sieve
 from shapely.geometry import shape
-from veto_helpers import VETO_SCALAR_NAMES
+from helpers.veto_helpers import VETO_SCALAR_NAMES
 
 # AI assistance with conversion of DataStack logic to a deployment system. 
 # dont need to export tiles as they will only be used once at inference
@@ -234,6 +240,8 @@ class Deployer:
         return (predictions, cleaned, rejected, veto_probability_map, out_transform,
             out_crs, support, coverage)
 
+    # merges all veto-cleaned predictions and then sieves remaining predictions
+    # which are too physically small to be reasonably resolvable given the native DEM. 
     def merge_predictions(self, cleaned, transform, crs, output_path):
 
         # native res should determine smallest resolvable objects.
@@ -241,9 +249,9 @@ class Deployer:
         if self.native_res == 30:
             min_m2 = 8100        
         if self.native_res == 1:
-            min_m2 = 36 # 6m x 6m
+            min_m2 = 36 # 6m x 6m , structure has to be 6 pixels by 6 pixels to be reasonably predicted.
 
-        # 225 = 15m * 15m. (minimum SCD size wanted)
+        # 100 = 10m * 10m. (minimum SCD size reasonable wanted)
         scd_min_size = 100 / (self.base_res ** 2)
         min_m2_in_px = min_m2 / (self.base_res ** 2)
 
@@ -264,6 +272,8 @@ class Deployer:
                                                                 transform=transform,
                                                                 connectivity=8) if value == 1]
 
+
+        # to geodataframe for exporting
         gdf = gpd.GeoDataFrame(
             {
                 "object_id": np.arange(1, len(polygons) + 1),
@@ -272,13 +282,13 @@ class Deployer:
             crs=crs,
         )
 
-        # Meaningful when the CRS is projected in metres.
         if not gdf.empty:
             gdf["area_m2"] = gdf.geometry.area
 
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # export
         gdf.to_file(
             output_path,
             driver="ESRI Shapefile",

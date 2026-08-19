@@ -1,7 +1,6 @@
 import numpy as np
 from scipy.ndimage import label, center_of_mass 
 import torch
-from sklearn.metrics import roc_auc_score
 
 # AI assistance with:
 

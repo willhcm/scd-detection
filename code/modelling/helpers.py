@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.ndimage import label, center_of_mass, maximum_filter, uniform_filter
+from scipy.ndimage import label, center_of_mass
 # AI assistance with learning scipy.ndimage functionality.
 
 # GenAI assistance in creating this function, whcih takes in the predicted mask and compares the mask object centroids to
