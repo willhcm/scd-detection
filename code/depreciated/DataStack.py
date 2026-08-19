@@ -242,7 +242,7 @@ class DataStack:
     ]
 
     def __init__(self, dem_source: DataSource, label_shp: ShapeLabels = None,
-                 features=None, sigma_px: int = 10):
+                 features=None, sigma_px: int = 12):
 
         self.dem_source = dem_source
         self.label_shp = label_shp
@@ -259,9 +259,9 @@ class DataStack:
             self.target_bounds = dem_source.bounds
 
         self.layer_names = features or self.DEFAULT_LAYERS.copy()
-        if self.labelled:
-            self.layer_names = [l for l in self.layer_names if l != 'LABELS']
-            self.layer_names.append('LABELS')
+
+        self.layer_names = [l for l in self.layer_names if l != 'LABELS']
+        self.layer_names.append('LABELS')
 
         self.layer_index = {name: i for i, name in enumerate(self.layer_names)}
 
@@ -296,7 +296,7 @@ class DataStack:
         gdf = self.label_shp.gdf.to_crs(self.target_crs)
         tile_width = tile_size * self.target_res
         size_threshold = (tile_width * small_area_fraction) ** 2
-
+ 
         large = gdf[gdf.geometry.area >= size_threshold]
         small = gdf[gdf.geometry.area <  size_threshold]
 
@@ -447,10 +447,16 @@ class DataStack:
         available['DEM'] = self._pad(dem_clean, tile_size)
 
         if self.labelled:
-            available['LABELS'] = self.label_shp.rasterise(
-                tile_bounds, tile_size, self.target_crs
+            available["LABELS"] = self.label_shp.rasterise(
+                tile_bounds,
+                tile_size,
+                self.target_crs,
             )
-
+        else:
+            available["LABELS"] = np.zeros(
+                (tile_size, tile_size),
+                dtype=np.uint8,
+    )
         return np.stack([available[name] for name in self.layer_names], axis=0)
 
     @staticmethod
@@ -469,14 +475,14 @@ class DataStack:
             layer_names=np.array(self.layer_names),
             res=np.array(self.target_res),
         )
-        if self.labelled:
-            labels = tile_data[self.layer_index['LABELS']].astype(np.uint8)
-            kwargs.update(
-                labels=labels,
-                scd_present=np.array(bool(labels.sum() != 0)),
-                scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)),
-                confirmed=np.array(True),
-            )
+        
+        labels = tile_data[self.layer_index['LABELS']].astype(np.uint8)
+        kwargs.update(
+            labels=labels,
+            scd_present=np.array(bool(labels.sum() != 0)),
+            scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)),
+            confirmed=np.array(True),
+        )
         np.savez_compressed(str(Path(out_path) / name), **kwargs)
 
     def _random_tile_bounds(self, tile_size, rng):
