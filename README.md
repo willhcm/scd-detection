@@ -1,6 +1,6 @@
 # Automatic SCD Detection for Natural Hydrogen Exploration using a Scale-Normalised Mask R-CNN with an Image-Pyramid
 
-Short introductory sentence or two
+This repository contains the code for the deep learning strategy for scale-invariant cross-geography SCD detection, as outlined in the paper (in deliverables/). The training datasets for the MaskRCNN and Veto Classifier can be found here.
 
 ## Repository Structure
 
