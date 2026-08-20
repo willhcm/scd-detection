@@ -54,3 +54,8 @@ Aim:
 - Figure drafts compiled and writing plan outlined.
 - Image Pyramid parameters finalised
 - Deployment runs completed on folded-out regions
+
+## Direction Notes (20/8)
+
+- Paper draft finished and repo structured. Working on final revisions to the paper based on supervisor feedback.
+- Primarily aiming to cut words and refactor for conciseness as a priority, hoping for around 4000 words at the end. 
