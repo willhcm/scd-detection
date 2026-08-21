@@ -11,6 +11,9 @@ from rasterio.warp import reproject
 
 # windowed data source to limit RAM usage during deployment with huge rasters
 class WindowedDataSource:
+    """
+    A class to handle windowed reading and reprojection of raster data from a file.
+    """
 
     def __init__(self, path, type="DEM", nominal_res=None):
         self.path = path
@@ -85,6 +88,9 @@ class WindowedDataSource:
         return out
 
 class PostProcessor:
+    """
+    A class to handle post-processing of predictions, including vetoing false positives.
+    """
 
     def __init__(
         self,

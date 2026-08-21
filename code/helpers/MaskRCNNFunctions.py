@@ -48,9 +48,14 @@ STAGE_LRS = {
 
 
 def collate_fn(batch):
+    """
+    Custom collate function for PyTorch DataLoader to handle batches of data with varying sizes.
+    Mask R-CNN instance segmentation requires a custom collate function to properly handle the variable number of instances per image."""
     return tuple(zip(*batch))
 
 def maskrcnn_outputs_to_binary_masks(outputs, threshold=0.5, score_thresh=0.5):
+    """
+    Converts the raw outputs from a Mask R-CNN model into binary masks based on a specified threshold and score threshold."""
     batch_masks = []
  
     for out in outputs:
@@ -76,7 +81,9 @@ def maskrcnn_outputs_to_binary_masks(outputs, threshold=0.5, score_thresh=0.5):
 
 def object_f1_from_instance_masks(pred_masks, gt_masks):
     """
-    pred_masks: [N_pred, H, W] or None
+    Calculates the F1 score for object-level detection given predicted and ground truth instance masks.
+
+    pred_masks: [N_pred, H, W] or None (i.e. no scd predictions)
     gt_masks:   [N_gt, H, W]
     """
 
@@ -132,8 +139,10 @@ def evaluate_maskrcnn_metrics(
     val_loader,
     device,
     mask_thresh=0.55,
-    score_thresh=0.77,
-):
+    score_thresh=0.77):
+    """
+    Evaluates the Mask R-CNN model on a validation dataset and computes object-level and pixel-level metrics.
+    """
     model.eval()
 
     total_tp = total_fp = total_fn = 0
@@ -227,6 +236,10 @@ def evaluate_maskrcnn_metrics(
 
 
 def build_staged_optimizer(model, weight_decay=1e-4):
+    """
+    Builds an AdamW optimizer with different learning rates for different parts of the Mask R-CNN model.
+    This allows for staged training where different components of the model can be fine-tuned at different learning rates.
+    """
     return torch.optim.AdamW(
         [
             {
@@ -269,6 +282,9 @@ def build_staged_optimizer(model, weight_decay=1e-4):
     )
 
 def apply_training_stage(model, optimizer, stage):
+    """
+    Applies a specific training stage to the Mask R-CNN model.
+    """
     model.set_training_stage(stage)
 
     lrs = STAGE_LRS[stage]
@@ -288,13 +304,3 @@ def apply_training_stage(model, optimizer, stage):
             f"lr={group['lr']:.2e}, "
             f"trainable={n_trainable:,}"
         )
-
-# helper for roc evaluation 
-def mask_iou(pred_mask, gt_mask):
-    pred_mask = pred_mask.astype(bool)
-    gt_mask = gt_mask.astype(bool)
-
-    intersection = np.logical_and(pred_mask, gt_mask).sum()
-    union = np.logical_or(pred_mask, gt_mask).sum()
-
-    return intersection / union if union > 0 else 0.0

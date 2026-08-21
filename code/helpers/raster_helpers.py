@@ -14,9 +14,6 @@ import rasterio
 from rasterio.merge import merge
 from pathlib import Path
 import glob
-from scipy.ndimage import uniform_filter, grey_opening
-from skimage.morphology import disk
-
 
 def plot_coverage(dirs: list):
     '''Plots a coverage map from a dictionary of tifs. Takes a few minutes to run, as it needs to open all tifs.

@@ -80,15 +80,16 @@ class FiLMBackbone(nn.Module):
 
 class MaskRCNN(nn.Module):
     """
-    Wrapper around torchvision's Mask R-CNN
+    Wrapper around torchvision's Mask R-CNN model.
+    Includes custom modifications to allow for FiLM conditioning on resolution and custom anchor sizes/aspect ratios.
     """
- 
+
     def __init__(
         self,
         num_classes=2,
         pretrained=True,
         anchor_sizes= ((20,), (40,), (62,), (120,), (220,)), # decreased to match SCD size population.
-        aspect_ratios=((0.75, 1.0, 1.35),) * 5, # default, elongated doesn't match subcircular appearance (square bounding boxes)
+        aspect_ratios=((0.75, 1.0, 1.25),) * 5, # elongated doesn't match subcircular appearance (square bounding boxes)
         loss_weights = None, # depreciated but kept for future.
     ):
         super().__init__()
@@ -122,6 +123,13 @@ class MaskRCNN(nn.Module):
         self.set_training_stage(stage=1)
 
     def set_training_stage(self, stage):
+        """
+        Sets which parts of the model are trainable based on the training stage.
+        Stage 1: Train RPN, ROI heads, and new input conv.
+        Stage 2: Unfreeze FPN.
+        Stage 3: Unfreeze layer4 of the ResNet backbone.
+        Stage 4: Unfreeze layer3 of the ResNet backbone.
+        """
 
         # Freeze backbone.
         for parameter in self.model.backbone.parameters():
@@ -156,6 +164,8 @@ class MaskRCNN(nn.Module):
                 parameter.requires_grad = True
 
     def _replace_input_conv(self, in_channels):
+        """
+        Replaces the first convolutional layer of the backbone to accept a different number of input channels."""
         old_conv = self.model.backbone.body.conv1
 
         new_conv = nn.Conv2d(
@@ -164,8 +174,7 @@ class MaskRCNN(nn.Module):
             kernel_size=old_conv.kernel_size,
             stride=old_conv.stride,
             padding=old_conv.padding,
-            bias=False,
-        )
+            bias=False)
 
         with torch.no_grad():
             if in_channels == 3:
@@ -176,9 +185,10 @@ class MaskRCNN(nn.Module):
                 new_conv.weight.copy_(mean_weight.repeat(1, in_channels, 1, 1))
 
         self.model.backbone.body.conv1 = new_conv
- 
 
     def _set_anchor_generator(self, sizes, aspect_ratios):
+        """
+        Sets a custom anchor generator for the RPN with specified sizes and aspect ratios that suit typicalSCD morphology"""
         anchor_gen = AnchorGenerator(sizes=sizes, aspect_ratios=aspect_ratios)
         self.model.rpn.anchor_generator = anchor_gen
         num_anchors = anchor_gen.num_anchors_per_location()[0]
@@ -195,10 +205,7 @@ class MaskRCNN(nn.Module):
         self.model.roi_heads.mask_predictor = MaskRCNNPredictor(
             mask_in_features, mask_hidden_layers, num_classes
         )
- 
-    def set_loss_weights(self, weights: dict):
-        self.loss_weights.update(weights)
- 
+
     def forward(self, images, resolutions= None , targets=None):
         self.model.backbone.set_condition(resolutions)
 
@@ -214,6 +221,10 @@ class MaskRCNN(nn.Module):
 
 # AI assistance with several refactors of dataset when changing augmentation and channel logic.
 class MaskRCNNDataset(Dataset):
+    """
+    A PyTorch Dataset class for loading and preprocessing data for Mask R-CNN training.
+    Each item in the dataset consists of an image, target dictionary, and resolution value.
+    The target dictionary contains bounding boxes, labels, masks, and other relevant information."""
 
     # remove path checking for time optimisation
     def __init__(self, all_paths, augment=False, min_instance_area=20):
@@ -226,6 +237,9 @@ class MaskRCNNDataset(Dataset):
         return len(self.paths)
 
     def _mask_to_instances(self, mask):
+        """
+        Converts a binary mask into instance masks, bounding boxes, and other relevant information.
+        Returns a tuple of (boxes, labels, masks, areas, iscrowd)."""
         binary = mask > 0
 
         labelled, n = label(binary)
@@ -296,30 +310,6 @@ class MaskRCNNDataset(Dataset):
             np.ascontiguousarray(image),
             np.ascontiguousarray(mask),
         )
-    
-    def _augment_dem(self, dem):
-        """
-        Apply perturbations while the DEM is still in elevation units.
-        """
-        dem = dem.copy().astype(np.float32)
-
-
-        if random.random() > 0.5:
-            sigma = random.uniform(0.3, 0.8)
-            dem = gaussian_filter(dem, sigma=sigma).astype(np.float32)
-
-        if random.random() > 0.5:
-            # 2% of the DEM's local standard deviation, rather than 0.02 metres
-            noise_std = 0.02 * (dem.std() + 1e-6)
-            noise = np.random.normal(
-                0.0,
-                noise_std,
-                size=dem.shape,
-            ).astype(np.float32)
-
-            dem += noise
-
-        return dem.astype(np.float32)
 
     @staticmethod
     def _normalise_band(band, name):
@@ -357,7 +347,6 @@ class MaskRCNNDataset(Dataset):
         raw_dem = image[dem_idx].copy()
 
         if self.augment:
-            # removed physical pertubations for now 
             # rotate / flip
             image, mask = self._spatial_augment(image, mask)
 
@@ -400,15 +389,13 @@ class MaskRCNNDataset(Dataset):
         return image, target
 
 def rcnn_train(model, _, train_loader, val_loader, epochs):
+    """
+    Trains the Mask R-CNN model using the provided training and validation data loaders.
+    Returns the learning metrics and the best model state.
+    """
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
-
-    optimizer = torch.optim.AdamW(
-        [p for p in model.parameters() if p.requires_grad],
-        lr=5e-4,
-        weight_decay=1e-4
-    )
 
     EPOCHS = epochs
 
@@ -427,13 +414,10 @@ def rcnn_train(model, _, train_loader, val_loader, epochs):
     val_recalls = []
     val_f1s = []
     val_ious = []
-    patience = 20
     current_stage = 1
     bad_epochs = 0
-    optimizer = build_staged_optimizer(
-    model,
-    weight_decay=1e-4,
-)
+    optimizer = build_staged_optimizer(model, weight_decay=1e-4)
+    
     apply_training_stage(model, optimizer, current_stage)
 
     for epoch in range(EPOCHS):

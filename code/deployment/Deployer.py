@@ -35,6 +35,47 @@ TILE_ORDER = ['DEM',  'DEM_SLOPE', 'RR','LAPLACE', 'HILLSHADE']
 
 class Deployer:
 
+    # dosctring generated with assistance from Github Copilot Free.
+    """
+    Deployer class for running inference on a DEM and RGB dataset using a Mask R-CNN model and a Veto classifier.
+    This class handles the loading of the DEM and RGB data, running predictions at multiple resolutions, merging the predictions, and applying the Veto classifier to filter out false positives.
+
+    Parameters
+    ----------
+    dem_path: str
+        Path to the DEM file.      
+    rgb_path: str
+        Path to the RGB file.
+    model_state_dict: dict
+        State dictionary of the trained Mask R-CNN model.
+    veto_model_dict: dict
+        State dictionary of the trained Veto classifier model.
+    device: str
+        Device to run the inference on (e.g., 'cpu' or 'cuda').
+    resolutions: list
+        List of resolutions to run the inference at.
+    tile_size: int, optional
+        Size of the tiles to use for inference. Default is 512.
+    veto: bool, optional  
+        Whether to apply the Veto classifier to filter out false positives. Default is True.
+    veto_tile_size: int, optional  
+        Size of the tiles to use for the Veto classifier. Default is 96.
+    veto_context_tile_size: int, optional   
+        Size of the context tiles to use for the Veto classifier. Default is 224.
+    veto_batch_size: int, optional
+        Batch size to use for the Veto classifier. Default is 16.
+    veto_threshold: float, optional
+        Threshold to use for the Veto classifier. Default is 0.90.
+    context_scale: float, optional
+        Scale to use for the context tiles in the Veto classifier. Default is 4.0.
+    min_context_width_m: float, optional
+        Minimum width of the context tiles in meters for the Veto classifier. Default is 768.0.
+    max_context_width_m: float, optional
+        Maximum width of the context tiles in meters for the Veto classifier. Default is 4000.0.
+    native_res: float, optional 
+        Native resolution of the DEM in meters. Default is 30.
+    """
+
     def __init__(
         self,
         dem_path,
@@ -97,6 +138,9 @@ class Deployer:
         return ModelWrapper(self.model_dict)
 
     def predict(self, stride_frac = 0.5):
+        """
+        Predicts the probability maps for each resolution in self.resolutions using the Mask R-CNN model.
+        """
 
         self.model.model.eval()
         self.model.model.to(self.device)
@@ -128,6 +172,9 @@ class Deployer:
         min_support=2,
         single_scale_keep=0.90,
         return_support=True):
+        """
+        Merges the predictions from multiple resolutions into a single probability map.
+        """
 
         base_res = min(preds)
         self.base_res = base_res
@@ -202,6 +249,8 @@ class Deployer:
         return merged, base["transform"], base["crs"]
     
     def veto(self,merged, transform, crs):
+        """
+        Applies the Veto classifier to the merged predictions to filter out false positives."""
 
         postproc = PostProcessor(
             tile_size=self.veto_tile_size,
@@ -228,6 +277,46 @@ class Deployer:
 
     def sweep(self, stride_frac=0.75):
 
+        # Docstring generation aided by Github Copilot Free.
+        """
+        Runs the full inference pipeline: predicts probability maps at multiple resolutions, merges them, and applies the Veto classifier if enabled.
+
+        Returns
+        -------
+
+        If self.to_veto is False:
+            predictions: dict
+                Dictionary of predictions at each resolution.
+            merged: np.ndarray
+                Merged probability map.
+            transform: affine.Affine
+                Affine transform of the merged probability map.
+            crs: rasterio.crs.CRS
+                Coordinate reference system of the merged probability map.
+            support: np.ndarray
+                Support count for each pixel in the merged probability map.
+            coverage: np.ndarray
+                Coverage count for each pixel in the merged probability map.
+
+        If self.to_veto is True:
+            predictions: dict
+                Dictionary of predictions at each resolution.
+            cleaned: np.ndarray
+                Merged and Veto-cleaned probability map.
+            rejected: np.ndarray
+                Rejected predictions by the Veto classifier.
+            veto_probability_map: np.ndarray
+                Probability map from the Veto classifier.
+            out_transform: affine.Affine
+                Affine transform of the Veto-cleaned probability map.
+            out_crs: rasterio.crs.CRS
+                Coordinate reference system of the Veto-cleaned probability map.
+            support: np.ndarray
+                Support count for each pixel in the merged probability map.
+            coverage: np.ndarray
+                Coverage count for each pixel in the merged probability map.
+        """
+
         predictions = self.predict(stride_frac)
 
         (merged, transform, crs, support, coverage) = self.merge_predictions_pyramid(predictions)
@@ -243,6 +332,28 @@ class Deployer:
     # merges all veto-cleaned predictions and then sieves remaining predictions
     # which are too physically small to be reasonably resolvable given the native DEM. 
     def merge_predictions(self, cleaned, transform, crs, output_path):
+        """
+        
+        Merges the Veto-cleaned predictions into a single shapefile, sieving out predictions that are too small to be reasonably resolvable given the native DEM resolution.
+        Exports the merged predictions as a shapefile to the specified output path.
+
+        Parameters
+        ----------
+
+        cleaned: np.ndarray
+            Veto-cleaned probability map.
+        transform: affine.Affine
+            Affine transform of the Veto-cleaned probability map.
+        crs: rasterio.crs.CRS
+            Coordinate reference system of the Veto-cleaned probability map.
+        output_path: str    
+            Path to save the merged shapefile.
+
+        Returns
+        -------
+        gdf: geopandas.GeoDataFrame
+            GeoDataFrame containing the merged predictions as polygons.
+        """
 
         # native res should determine smallest resolvable objects.
         # for 30m, smallest objects should be say 3x3 or 4 px * 4 px. this translates to 90*90, and around 10000m2

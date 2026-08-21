@@ -11,6 +11,9 @@ PRED_ARGS = {
 
 
 class ModelWrapper:
+    """
+    A wrapper class for the Mask R-CNN model used for prediction.
+    """
 
     def __init__(self, model_dict):
 

@@ -88,6 +88,9 @@ def train_fold(model_type, train_paths, val_paths, epochs, model_info, batch_siz
 
 # written up from colab for reproducibility 
 def train_veto_classifier(model, epochs, paths):
+    """
+    Trains the Veto classifier model using the provided paths and number of epochs.
+    Returns the learning metrics and the best model state."""
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
@@ -267,6 +270,10 @@ def train_veto_classifier(model, epochs, paths):
 
 #Mask R-CNN specific
 def cross_validate(epochs, root):
+    """
+    Performs cross-validation for the Mask R-CNN model across different regions.
+    Returns the cross-validation results and the best model states for each held-out region.
+    """
     cv_results = {}
     best_states = {}
     for held_out in REGION_GROUPS:
@@ -283,6 +290,9 @@ def cross_validate(epochs, root):
             
 # only considering maskRCNN now
 def train_for_deployment(model, held_out, root):
+    """
+    Trains the Mask R-CNN model for deployment on a specific held-out region.
+    Returns the trained model state dictionary."""
 
     val_paths = _region_paths(held_out, root)
     train_paths = []

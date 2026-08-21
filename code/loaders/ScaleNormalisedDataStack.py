@@ -236,8 +236,7 @@ def _hillshade(cell_size=1.0, altitude_deg=45.0, z_factor=1.0):
     return _fn
 
 # residual relief
-def _make_rr(rr_sigma_m, tile_res):
-    sigma_px = max(1.0, rr_sigma_m / tile_res)
+def _make_rr(sigma_px, tile_res):
 
     def _fn(a):
         dem = a["DEM"].astype(np.float64)

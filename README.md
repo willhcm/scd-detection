@@ -1,8 +1,12 @@
 # Automatic SCD Detection for Natural Hydrogen Exploration using a Scale-Normalised Mask R-CNN with an Image-Pyramid
 
-This repository contains the code for the deep learning strategy for scale-invariant cross-geography SCD detection, as outlined in the paper (in deliverables/). The training datasets for the MaskRCNN and Veto Classifier can be found here.
+This repository contains the code for the deep learning strategy for scale-invariant cross-geography SCD detection, as outlined in the paper (in deliverables/). Code for reproducibility and accessing source data (and datasets collated in this study) can be found in code/reproduce.ipynb. 
 
 ## Repository Structure
+
+### Depreciated
+
+The depreciated directory contains many files which were used in development. 
 
 ```text
 code/
@@ -49,7 +53,9 @@ used to screen candidates. RPN = Regional Proposal Network, FPN = Feature Pyrami
 Network, ROI = Region or Interest, FiLM = Feature-Wise Linear Modulation, CNN = Con-
 volutional Neural Network, FFN = Feed Forward Network*
 
-## Misc
+## AI Statement
+
+AI was used throughout the IRP period for assistance with code generation, especially for the use of the rasterio package which I had not previously used. If an AI tool has had influence on the code, this is stated either above the relevant code or at the top of the python script where it's assistance is clearly explained. 
 
 
 

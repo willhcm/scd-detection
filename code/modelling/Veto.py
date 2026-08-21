@@ -40,14 +40,16 @@ def replace_first_conv(
             if in_channels > 3:
                 mean_weight = old_conv.weight.mean(dim=1, keepdim=True)
 
-                new_conv.weight[:, 3:].copy_( mean_weight.repeat(1, in_channels - 3, 1, 1))
+                new_conv.weight[:, 3:].copy_(mean_weight.repeat(1, in_channels - 3, 1, 1))
 
     model.conv1 = new_conv
     return model
 
 
 class VetoClassifier(nn.Module):
-
+    """
+    A neural network model to screen out false positives from Mask R-CNN predictions.
+    """
     # 3 encoder branches and shared classifier
     def __init__(self, scalar_dim=len(VETO_SCALAR_NAMES), dropout=0.3):
         super().__init__()
@@ -85,7 +87,6 @@ class VetoClassifier(nn.Module):
 
         # defaults make scalar standardisation a no-op until statistics are assigned
         self.register_buffer("scalar_mean", torch.zeros(scalar_dim))
-
         self.register_buffer("scalar_std", torch.ones(scalar_dim))
 
     def set_scalar_statistics(self, mean, std):
@@ -115,12 +116,15 @@ class VetoClassifier(nn.Module):
 
     # AI assistance in handling shapes and channels for VetoDataset
 class VetoDataset(Dataset):
+    """
+    A PyTorch Dataset class for loading and preprocessing data for the Veto classifier.
+    Each item in the dataset consists of local RGB data, DEM context, scalar features and a binary label"""
 
     def __init__(
         self,
         paths,
         rgb_size=96,
-        dem_size=300,
+        dem_size=224,
     ):
         self.paths = list(paths)
         self.rgb_size = rgb_size
