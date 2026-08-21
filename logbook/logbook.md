@@ -58,4 +58,13 @@ Aim:
 ## Direction Notes (20/8)
 
 - Paper draft finished and repo structured. Working on final revisions to the paper based on supervisor feedback.
-- Primarily aiming to cut words and refactor for conciseness as a priority, hoping for around 4000 words at the end. 
+- Primarily aiming to cut words and refactor for conciseness as a priority, hoping for around 4000 words at the end.
+
+# Meeting Notes (21/08)
+
+Meeting with Valentin. 
+
+- Discussed draft feedback
+- Discussed what parts of the paper will be changed post-IRP when we submit for publication.
+- Discussed possible incorporation of some of these initial changes into the final IRP report for completeness.
+- Overall, very happy with the work and looking forward to developing further in October.
