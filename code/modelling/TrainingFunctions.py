@@ -18,13 +18,7 @@ from modelling.Veto import VetoDataset
 import copy
 from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix
 
-MASKRCNN_INFO = {'MaskRCNN': {'model': MaskRCNN, 'loss': None, 'train_fn': rcnn_train, 'dataset': MaskRCNNDataset}}
-
-DATASET_ARGS = {
-    "MaskRCNN": {
-        "batch_size": 2,
-        "collate_fn": collate_fn,
-    }}
+MASKRCNN_INFO = {'model': MaskRCNN, 'loss': None, 'train_fn': rcnn_train, 'dataset': MaskRCNNDataset}
 
 REGION_GROUPS = {
     'Russia': ['Russia', 'Russia2', 'Russia3'],
@@ -46,31 +40,26 @@ def _region_paths(region_name, root):
 
 def train_fold(model_type, train_paths, val_paths, epochs, model_info, batch_size=8):
     """ 
-    Train one cross-validation fold, model/architecture flexible!
+    Train one cross-validation fold, MaskRCNN specific now that this is the only model being used.
+    previous versions used to be model agnostic.
+
+    Returns results and best_states
     """
 
     train_set = model_info['dataset'](train_paths, augment=True)
     val_set = model_info['dataset'](val_paths, augment=False)
 
-    loader_args = DATASET_ARGS.get(model_type, DATASET_ARGS["default"]).copy()
-
-    if batch_size is not None:
-        loader_args["batch_size"] = batch_size
-
-    # Remove collate_fn if None, otherwise DataLoader may complain in some cases
-    if loader_args.get("collate_fn") is None:
-        loader_args.pop("collate_fn")
-
-
     train_loader = DataLoader(train_set,
                             shuffle=True,
                             num_workers=0,
-                            **loader_args)
+                            batch_size=batch_size,
+                            collate_fn=collate_fn)
 
     val_loader = DataLoader(val_set,
                             shuffle=False,
                             num_workers=0,
-                            **loader_args)
+                            batch_size=batch_size,
+                            collate_fn=collate_fn)
     
     model = model_info['model']()
     criterion = model_info['loss']

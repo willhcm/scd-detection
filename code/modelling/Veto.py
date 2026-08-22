@@ -6,7 +6,7 @@ import numpy as np
 from torch.utils.data import Dataset
 from pathlib import Path
 import sys
-import cv2
+import cv2 # computer vision, used for resizing images and masks.
 
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
@@ -172,7 +172,7 @@ class VetoDataset(Dataset):
         rgb_local = np.moveaxis(rgb_local, -1, 0)
 
         # wider DEM-context branch
-
+        # handles different context sizes in training set.
         if dem_context.shape[1:] != (self.dem_size, self.dem_size):
             # Resize in channels-last form.
             dem_hwc = np.moveaxis(dem_context,0,-1, )
