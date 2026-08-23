@@ -15,7 +15,7 @@ import sys
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 
-from helpers.veto_helpers import build_dem_context, VETO_SCALAR_NAMES
+from code.helpers.VetoHelpers import build_dem_context, VETO_SCALAR_NAMES
 
 class VetoLoader:
 

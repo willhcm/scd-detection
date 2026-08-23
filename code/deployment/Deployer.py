@@ -25,7 +25,7 @@ from modelling.Veto import VetoClassifier
 import geopandas as gpd
 from rasterio.features import shapes, sieve
 from shapely.geometry import shape
-from helpers.veto_helpers import VETO_SCALAR_NAMES
+from code.helpers.VetoHelpers import VETO_SCALAR_NAMES
 
 # AI assistance with conversion of DataStack logic to a deployment system. 
 # dont need to export tiles as they will only be used once at inference
@@ -333,7 +333,7 @@ class Deployer:
     # which are too physically small to be reasonably resolvable given the native DEM. 
     def merge_predictions(self, cleaned, transform, crs, output_path):
         """
-        
+
         Merges the Veto-cleaned predictions into a single shapefile, sieving out predictions that are too small to be reasonably resolvable given the native DEM resolution.
         Exports the merged predictions as a shapefile to the specified output path.
 

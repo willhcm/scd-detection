@@ -9,6 +9,13 @@ from torch.utils.data import DataLoader, Dataset
 import random
 from torch.utils.data import WeightedRandomSampler
 
+
+
+## pre-submission notes:
+# this is a test dataset for the initial UNET hillshade model.
+# completely unused too.
+
+
 # these will be incorporated into the __init__ eventually, just not got round to it yet!
 _BANDS_TO_LOAD = ['HILLSHADE']
 
