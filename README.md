@@ -4,9 +4,7 @@ This repository contains the code for the deep learning strategy for scale-invar
 
 ## Repository Structure
 
-### Depreciated
 
-The depreciated directory contains many files which were used in development. 
 
 ```text
 code/
@@ -37,8 +35,32 @@ code/
     ├── field/
     ├── geostats/
     ├── plots/
+    │   ├── Table2.ipynb
+    │   ├── Fig2a.ipynb
+    │   ├── Fig2b.ipynb
+    │   └── Fig5b.ipynb
+    ├── validate.ipynb
     └── reproduce.ipynb
+    
 ```
+
+### Reproducibility
+
+the directory ```notebooks/``` contains code to reproduce:
+
+- ```reproduce.ipynb``` The training of the Mask R-CNN and the Veto classifier, and run inference. 
+- ```validate.ipynb``` Leave-One-Region-Out cross validation of the Mask R-CNN.
+- ```plots/``` Code to reproduce the plots displayed in the report. Data for these files can be found in ```datastore/```
+
+This codebase has no other functionality than to train and deploy the Mask R-CNN inference pipeline, so the reproducibility section is not large.
+
+### Datastore
+
+Contains the source data and model results needed to reproduce anything written in the reproducibility section above.
+
+### Depreciated
+
+The depreciated directory contains many files which were used in development. Similarly, many small functions which previously used have been moved out of the main code/ directory into the depreciated/ directory to ensure that the main directory is clear and concise. 
 
 ## Modelling Methods
 

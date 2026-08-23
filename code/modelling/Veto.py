@@ -11,7 +11,7 @@ import cv2 # computer vision, used for resizing images and masks.
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 
-from helpers.veto_helpers import VETO_SCALAR_NAMES
+from code.helpers.VetoHelpers import VETO_SCALAR_NAMES
 
 
 def replace_first_conv(

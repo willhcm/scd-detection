@@ -14,6 +14,8 @@ from scipy.spatial import KDTree
 # Gemini assistance with sns plotting function (specifically stat=density)
 # Gemini assistance with formatting]
 
+# used once to generate stats for SCD sizes, but the code subsequently broke and i have no need to fix it :>
+
 def load_metrics(filepath):
     """Loads object metrics from a .npz file."""
     data = np.load(filepath)

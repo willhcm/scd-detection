@@ -53,31 +53,6 @@ def collate_fn(batch):
     Mask R-CNN instance segmentation requires a custom collate function to properly handle the variable number of instances per image."""
     return tuple(zip(*batch))
 
-def maskrcnn_outputs_to_binary_masks(outputs, threshold=0.5, score_thresh=0.5):
-    """
-    Converts the raw outputs from a Mask R-CNN model into binary masks based on a specified threshold and score threshold."""
-    batch_masks = []
- 
-    for out in outputs:
-        # if the tile contains no predictions, skip
-        if len(out["scores"]) == 0:
-            batch_masks.append(None)
-            continue
-
-        keep = out["scores"] >= score_thresh
-
-        # add output to list
-        if keep.sum() == 0:
-            batch_masks.append(None)
-            continue
-
-        masks = out["masks"][keep, 0]  # [N, H, W]
-        binary = masks >= threshold
-
-        batch_masks.append(binary.cpu().numpy())
-
-    return batch_masks
-
 
 def object_f1_from_instance_masks(pred_masks, gt_masks):
     """
