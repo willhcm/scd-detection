@@ -7,7 +7,7 @@ import matplotlib.patches as patches
 from mask_rcnn_plots import plot_preds as plot_maskrcnn_preds
 from code.depreciated.SegNet import SegNet
 from MaskRCNN import MaskRCNN
-from depreciated.FPNCentreNet import FPNCentreNet, decode_multilevel_predictions
+from depreciated.scripts.models.FPNCentreNet import FPNCentreNet, decode_multilevel_predictions
 from matplotlib.patches import Circle
 
 LEVEL_STRIDES = {

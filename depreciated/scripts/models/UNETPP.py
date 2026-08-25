@@ -9,7 +9,7 @@ from datetime import datetime
 from scipy.ndimage import label, center_of_mass
 import random
 from torch.utils.data import TensorDataset, DataLoader, Dataset
-from depreciated.blocks import DoubleConv, ASPP
+from depreciated.scripts.misc.blocks import DoubleConv, ASPP
 from helpers import object_centroid_metrics
 
 

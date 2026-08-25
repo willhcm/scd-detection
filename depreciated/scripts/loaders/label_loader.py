@@ -11,6 +11,14 @@ import sys
 sys.path.append('../../helpers')
 from helpers import read_meta
 
+# pre-submission notes:
+# loads shapefile label path, rasterises. 
+# if output path already exists, it will load that instead.
+# completely unused now.
+
+
+#--------------------------------------------------------------------------
+
 # will add into dataloader as a class method in time, just simple for now. 
 
 def make_labels(SHAPE_PATH, OUTPUT_PATH, height, width, transform, profile):

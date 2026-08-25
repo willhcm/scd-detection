@@ -7,7 +7,7 @@ from scipy.ndimage import gaussian_filter
 from datetime import datetime
 import random
 from torch.utils.data import Dataset
-from depreciated.blocks import DoubleConv, ASPP, Down, Up
+from depreciated.scripts.misc.blocks import DoubleConv, ASPP, Down, Up
 from helpers import object_centroid_metrics, calculate_hillshade
 
 _BANDS_TO_LOAD = ['DEM', 'DEM_SLOPE', 'RR', 'LAPLACE']

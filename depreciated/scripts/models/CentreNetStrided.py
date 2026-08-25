@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 from scipy.ndimage import label, center_of_mass, maximum_filter, gaussian_filter, zoom
-from depreciated.blocks import DoubleConv, Down, Up, ASPP
+from depreciated.scripts.misc.blocks import DoubleConv, Down, Up, ASPP
 from helpers import decode_centernet_predictions
 
 _BANDS_TO_LOAD = ['DEM', 'DEM_SLOPE', 'RR', 'LAPLACE']
