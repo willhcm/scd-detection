@@ -60,7 +60,7 @@ Aim:
 - Paper draft finished and repo structured. Working on final revisions to the paper based on supervisor feedback.
 - Primarily aiming to cut words and refactor for conciseness as a priority, hoping for around 4000 words at the end.
 
-# Meeting Notes (21/08)
+## Meeting Notes (21/08)
 
 Meeting with Valentin. 
 
@@ -68,3 +68,10 @@ Meeting with Valentin.
 - Discussed what parts of the paper will be changed post-IRP when we submit for publication.
 - Discussed possible incorporation of some of these initial changes into the final IRP report for completeness.
 - Overall, very happy with the work and looking forward to developing further in October.
+
+## Progress Notes (25/08)
+
+- Incorporated details of Cornwall field trip into results and discussion.
+- Added clarity on background measurements (Table 2 in report)
+- Increased quality and coverage of documentation throughout repository and added report assets, raw data, etc.
+
