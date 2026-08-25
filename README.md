@@ -4,7 +4,6 @@ This repository contains the code for the deep learning strategy for scale-invar
 
 ## Main Code Structure
 
-
 ```text
 code/
 ├── deployment/
@@ -88,6 +87,9 @@ Network, ROI = Region or Interest, FiLM = Feature-Wise Linear Modulation, CNN = 
 
 AI was used throughout the IRP period for assistance with code generation, especially for the use of the rasterio package which I had not previously used. If an AI tool has had influence on the code, this is stated either above the relevant code or at the top of the python script where it's assistance is clearly explained. 
 
+## License
+
+This project is licensed under the MIT License. See `LICENSE` for details.
 
 
 
