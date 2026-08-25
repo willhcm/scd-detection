@@ -14,6 +14,8 @@ datastore/
 │   ├── CentroidsFinal.shp # And related files. Holds ESRI Point geometry for model predictions in the Field Region. Figure 5b.
 │   └── FaultsFinal.shp # And related files. Holds faults mapped from BGS 50,000:1 geological maps. Figure 5b.
 ├── assets/
+│   ├── Figures/
+│   │   └── Figures 1 to 5 seen in the report as .svg files.
 │   └── Model.png # image of model architecture for main repo readme
 ├── scd_sizes.pkl # Dictionary of SCD sizes in different regions (from GT labels). Used for Figure 2b.
 ├── SCDs.csv # Contains field soil gas hydrogen concentrations from SCDs in Somerset. Used for Table 2.

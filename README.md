@@ -46,6 +46,8 @@ code/
 
 ### Reproducibility
 
+---
+
 the directory ```notebooks/``` contains code to reproduce:
 
 - ```reproduce.ipynb``` The training of the Mask R-CNN and the Veto classifier, and run inference. 
@@ -56,6 +58,8 @@ This codebase has no other functionality than to train and deploy the Mask R-CNN
 
 ### Environments
 
+---
+
 Due to clashes with PyProj versions and Rasterio (specifically for casting geopandas dataframes to different Coordinates Reference Systems), two environments are used: 
 
 - `environment-model.yml` — model training and inference (e.g., ```Reproduce.ipynb``` and ```Validate.ipynb```)
@@ -65,13 +69,19 @@ environment.yml files were generated with assistance from ChatGPT.
 
 ### Datastore
 
+---
+
 Contains the source data and model results needed to reproduce anything written in the reproducibility section above. Also contains .svg files for all figures seen in the report.
 
 ### Depreciated
 
+---
+
 The depreciated directory contains many files which were used in development. Similarly, many small functions which previously used have been moved out of the main code/ directory into the depreciated/ directory to ensure that the main directory is clear and concise. 
 
 ## Modelling Methods
+
+---
 
 Predictions of candidate SCDs are generated using the following model architecture and inference strategy.
 
@@ -84,6 +94,8 @@ used to screen candidates. RPN = Regional Proposal Network, FPN = Feature Pyrami
 Network, ROI = Region or Interest, FiLM = Feature-Wise Linear Modulation, CNN = Convolutional Neural Network, FFN = Feed Forward Network*
 
 ## AI Statement
+
+---
 
 AI was used throughout the IRP period for assistance with code generation, especially for the use of the rasterio package which I had not previously used. If an AI tool has had influence on the code, this is stated either above the relevant code or at the top of the python script where it's assistance is clearly explained. 
 
