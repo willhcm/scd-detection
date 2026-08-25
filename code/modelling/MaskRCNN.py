@@ -24,6 +24,7 @@ _BANDS_TO_LOAD = ['DEM', 'DEM_SLOPE', 'RR', 'LAPLACE']
 
 # ChatGPT assistance with FiLM encodings for resolution
 # specifically with incorporation into pre-existing MaskRCNN wrapper and condition-setting for forward()
+# actual film module
 class ResolutionFiLM(nn.Module):
     """
     Generates per-channel gamma/beta from a scalar resolution value.
@@ -45,7 +46,7 @@ class ResolutionFiLM(nn.Module):
         gamma, beta = self.gen(cond).chunk(2, dim=1)
         return gamma, beta
 
-
+# encodes film resolutions into backbone features, so that the RPN and ROI heads can be conditioned on resolution.
 class FiLMBackbone(nn.Module):
     """
     Wraps torchvision's BackboneWithFPN so every FPN level gets modulated
@@ -417,7 +418,7 @@ def rcnn_train(model, _, train_loader, val_loader, epochs):
     current_stage = 1
     bad_epochs = 0
     optimizer = build_staged_optimizer(model, weight_decay=1e-4)
-    
+
     apply_training_stage(model, optimizer, current_stage)
 
     for epoch in range(EPOCHS):

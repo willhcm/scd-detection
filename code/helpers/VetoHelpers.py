@@ -62,23 +62,24 @@ def build_dem_context(
     if not valid.any():
         return None, None
 
+    # Fill NODATA values in DEM with the median of valid values to avoid NaNs in calculations (handles very small regions where no data exists at edge of DEM scene)
     fill_value = float(np.nanmedian(dem[valid]))
     dem = np.where(valid, dem, fill_value).astype(np.float32)
 
     candidate_mask, annulus = _make_annulus(candidate_mask)
 
-    candidate_valid = candidate_mask & valid
-    annulus_valid = annulus & valid
+    # Ensure that the candidate and annulus are within the valid DEM area
+    candidate_valid = candidate_mask & valid # where the candidate is valid in the DEM
+    annulus_valid = annulus & valid # where the annulus is valid in the DEM
 
     if not candidate_valid.any():
         candidate_valid = candidate_mask
 
+    # if no valid pixels in annulus, use all valid pixels outside candidate as annulus
     if not annulus_valid.any():
         annulus_valid = valid & ~candidate_mask
 
-    if not annulus_valid.any():
-        annulus_valid = valid
-
+    # get values from masks 
     candidate_values = dem[candidate_valid]
     annulus_values = dem[annulus_valid]
     context_values = dem[valid]

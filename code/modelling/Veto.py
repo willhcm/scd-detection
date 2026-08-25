@@ -11,25 +11,25 @@ import cv2 # computer vision, used for resizing images and masks.
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 
-from code.helpers.VetoHelpers import VETO_SCALAR_NAMES
-
+from helpers.VetoHelpers import VETO_SCALAR_NAMES
 
 def replace_first_conv(
     model,
     in_channels,
-    copy_pretrained=True,
-):
+    copy_pretrained=True):
+
     old_conv = model.conv1
 
+    # replace conv (new inputs compared to pretrained model!)
     new_conv = nn.Conv2d(
         in_channels,
         old_conv.out_channels,
         kernel_size=old_conv.kernel_size,
         stride=old_conv.stride,
         padding=old_conv.padding,
-        bias=False,
-    )
+        bias=False)
 
+    # use mean weights for extra channels
     if copy_pretrained:
         with torch.no_grad():
 

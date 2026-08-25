@@ -7,6 +7,7 @@ import torch
 # collate_fn. (didnt know what this was)
 # maskRCNN evaluation metrics (IoU, F1 etc and definition of a 'matched object')
 # training functionality (specifically fine-tuning and incremental unfreezing in rcnn_train.)
+
 STAGE_LRS = {
     1: {
         "rpn": 1e-3,
@@ -62,9 +63,11 @@ def object_f1_from_instance_masks(pred_masks, gt_masks):
     gt_masks:   [N_gt, H, W]
     """
 
+    # Handle cases where there are no ground truth or predicted masks
     n_gt = gt_masks.shape[0]
     n_pred = 0 if pred_masks is None else pred_masks.shape[0]
 
+    # If there are no ground truth and no predicted masks, return 0 for true positives, false positives, and false negatives.
     if n_gt == 0 and n_pred == 0:
         return 0, 0, 0
 
@@ -74,6 +77,7 @@ def object_f1_from_instance_masks(pred_masks, gt_masks):
     if n_pred == 0:
         return 0, 0, n_gt
 
+    # Create a union of all ground truth masks to identify unique ground truth objects
     gt_union = gt_masks.sum(axis=0) > 0
     gt_labels, n_gt_cc = label(gt_union)
 
@@ -82,6 +86,7 @@ def object_f1_from_instance_masks(pred_masks, gt_masks):
     tp = 0
     fp = 0
 
+    # Iterate through each predicted mask and determine if it matches a ground truth object
     for pm in pred_masks:
         cy, cx = center_of_mass(pm)
 
@@ -89,20 +94,27 @@ def object_f1_from_instance_masks(pred_masks, gt_masks):
             fp += 1
             continue
 
+        # cx and cy can be non integer ! handles!
         r = int(round(cy))
         c = int(round(cx))
 
+        # Clip the centroid coordinates to ensure they are within valid bounds 
         r = np.clip(r, 0, gt_union.shape[0] - 1)
         c = np.clip(c, 0, gt_union.shape[1] - 1)
 
+        # Get the label of the ground truth object at the centroid of the predicted mask
+        # gt_labels are the connected component labels of the ground truth union mask, so gt_id will be 0 if there is no ground truth object at that location.
         gt_id = gt_labels[r, c]
 
+        # If the predicted mask's centroid falls within a ground truth object that hasn't been matched yet, count it as a true positive.
         if gt_id > 0 and gt_id not in matched_gt:
             tp += 1
             matched_gt.add(gt_id)
+        # If the predicted mask's centroid does not fall within any ground truth object or falls within an already matched ground truth object, count it as a false positive.
         else:
             fp += 1
 
+    # The number of false negatives is the number of ground truth objects that were not matched by any predicted mask.
     fn = n_gt_cc - len(matched_gt)
 
     return tp, fp, fn
@@ -126,13 +138,9 @@ def evaluate_maskrcnn_metrics(
     with torch.no_grad():
         for images, targets in val_loader:
             images_device = [image.to(device) for image in images]
-            resolutions = torch.stack([
-                target["resolution"]
-                for target in targets
-            ]).to(device)
-            outputs = model(images_device, resolutions=resolutions)
 
-            
+            resolutions = torch.stack([target["resolution"] for target in targets]).to(device)
+            outputs = model(images_device, resolutions=resolutions)
 
             for image, output, target_dict in zip(images, outputs, targets):
 
@@ -151,18 +159,16 @@ def evaluate_maskrcnn_metrics(
                 scores = output["scores"].detach().cpu()
                 raw_pred_masks = output["masks"].detach().cpu()
 
+                # predictions only kept if they meet the score threshold
                 keep = scores >= score_thresh
 
-
-                pred_instance_masks = (
-                    raw_pred_masks[keep, 0] >= mask_thresh
-                )
+                # threshold masks
+                pred_instance_masks = (raw_pred_masks[keep, 0] >= mask_thresh)
 
                 # Object-level counts
                 tp, fp, fn = object_f1_from_instance_masks(
                     pred_instance_masks,
-                    gt_instance_masks,
-                )
+                    gt_instance_masks)
 
                 total_tp += tp
                 total_fp += fp
@@ -172,6 +178,7 @@ def evaluate_maskrcnn_metrics(
                 # Merge predicted instances
                 if pred_instance_masks.shape[0] > 0:
                     pred_mask = pred_instance_masks.any(dim=0)
+                # or return a zero mask if no predictions were made
                 else:
                     pred_mask = torch.zeros(
                         (height, width),
@@ -183,6 +190,7 @@ def evaluate_maskrcnn_metrics(
                 pfp += (pred_mask & ~target_mask).sum().item()
                 pfn += (~pred_mask & target_mask).sum().item()
 
+    # safe div for precision etc
     eps = 1e-8
 
     # Object-level metrics
@@ -196,6 +204,7 @@ def evaluate_maskrcnn_metrics(
     p_f1 = 2 * ptp / (2 * ptp + pfp + pfn + eps)
     pixel_iou = ptp / (ptp + pfp + pfn + eps)
 
+    # results for that validation epoch
     return (
         precision,
         recall,

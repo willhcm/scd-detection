@@ -15,7 +15,7 @@ import sys
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 
-from code.helpers.VetoHelpers import build_dem_context, VETO_SCALAR_NAMES
+from helpers.VetoHelpers import build_dem_context, VETO_SCALAR_NAMES
 
 class VetoLoader:
 
@@ -46,6 +46,7 @@ class VetoLoader:
         self.max_context_width_m = max_context_width_m
         self.context_tile_size = context_tile_size
 
+    # build tile from candidate object, including local RGB and DEM context
     def _make_tile(self, obj, tile_size=96, min_crop_pixels=64, object_fraction=0.5):
 
         # centroid 
@@ -170,7 +171,8 @@ class VetoLoader:
             "context_width_m": context_width_m,
             "mask_fraction": float(local_mask.mean()),
         }
-    
+
+    # show for labelling
     def _show_tile(self, tile):
 
         # stack not in seperate channels (last dim for rgb plotting)
@@ -207,6 +209,7 @@ class VetoLoader:
         plt.tight_layout()
         plt.show()
 
+    # for manual labelling of candidates, with export to npz files for training / validation of veto classifier
     def label(self, min_area=10):
 
         objs = self.predictions.objects(self.target_crs)
@@ -257,6 +260,7 @@ class VetoLoader:
 
             print(f"{tile['label_name']} | " f"{len(self.tiles)} candidates labelled")
 
+    # export tiles labelled in label()
     def export(self, output_directory):
 
         output_directory = Path(output_directory)

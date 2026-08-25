@@ -8,6 +8,7 @@ from rasterio.transform import from_bounds, array_bounds
 from shapely.geometry import box
 from scipy.ndimage import sobel, gaussian_filter, laplace
 from pyproj import Transformer
+from rasterio.features import rasterize
 
 OVERLAP_SIGMA_MULTIPLIER = 3
 
@@ -18,13 +19,14 @@ OVERLAP_SIGMA_MULTIPLIER = 3
 # 2. adapting datastack and build_tile to take more generalised requests (in terms of res), instead of being used at fixed-res
 # 3. editing objects ShapeLabels Class to match the two above changes.
 
+# ChatGPT assistance with gdf functionality.
 class ShapeLabels:
-    
     def __init__(self, path):
         self.gdf = gpd.read_file(path)
         self.gdf = self.gdf[self.gdf.geometry.notnull()].copy()
         self.gdf = self.gdf[~self.gdf.geometry.is_empty].copy()
 
+    # get all objects from labels geodataframe. return dict of properties per scd label.
     def objects(self, target_crs):
         """Return label geometries and metadata in target CRS"""
         gdf = self.gdf.to_crs(target_crs).copy()
@@ -53,6 +55,7 @@ class ShapeLabels:
             })
         return objs
 
+    # rasterise labels within a given tile bounds (model needs images for masks for training!)
     def rasterise(self, tile_bounds, tile_size, target_crs):
         # rasterises labels from .shp (vector shapefile from hand labelling in QGIS.)
         minx, miny, maxx, maxy = tile_bounds
@@ -73,7 +76,7 @@ class ShapeLabels:
             dtype=np.uint8,
             all_touched=False,
         )
-
+# ChatGPT assistance with this function too!
 # convertion to UTM from global DD
 def _utm_epsg(src_crs, bounds):
     transformer = Transformer.from_crs(src_crs, "EPSG:4326", always_xy=True)
@@ -131,6 +134,7 @@ class DataSource:
         )
         return out
 
+    # handles both rgb and dem. changed from prior DEM only functionality before to work for veto classifier too.
     @classmethod
     def from_tiff(cls, path, type="DEM"):
         with rio.open(path) as src:
@@ -138,6 +142,7 @@ class DataSource:
                 data = src.read(1).astype(np.float32)
             elif type == "RGB":
                 data = src.read([1, 2, 3]).astype(np.float32)
+            # class method
             return cls(
                 type=type,
                 data=data,
@@ -149,22 +154,21 @@ class DataSource:
                 transform=src.transform,
             )
 
-    # AI rewrite from taking onyl DEM to accepting RGB as needed for VetoDataset.py
+    # AI rewrite from taking only DEM to accepting RGB as needed for VetoDataset.py
     @classmethod
     def from_tiff_utm(cls, path, native_res, type="DEM"):
     
         with rio.open(path) as src:
-            utm_crs = CRS.from_epsg(_utm_epsg(src.crs, src.bounds)
-            )
+            utm_crs = CRS.from_epsg(_utm_epsg(src.crs, src.bounds))
 
+            # transform to UTM
             transform, width, height = calculate_default_transform(
                 src.crs,
                 utm_crs,
                 src.width,
                 src.height,
                 *src.bounds,
-                resolution=native_res,
-            )
+                resolution=native_res)
 
             if type == "DEM":
                 data = np.empty((height, width),dtype=np.float32)
@@ -181,6 +185,7 @@ class DataSource:
 
             elif type == "RGB":
                 if src.count < 3:
+                    # just to catch incorrect passing of type 'DEM'
                     raise ValueError(
                         f"RGB raster requires at least 3 bands, "
                         f"but {path} has {src.count}."
@@ -260,47 +265,64 @@ def _build_feature_registry(sigma_px, cell_size, tile_res):
 
 # ChatGPT assistance with grouping functionality, including the following 6 functions and UnionFind class.
 
+# used for clustering of SCDs to generate tiles !!
+# get bounds of a tile from its centre and resolution 
 def _centred_bounds(cx, cy, tile_size, res):
     half = (tile_size * res) / 2.0
     return (cx - half, cy - half, cx + half, cy + half)
 
+# check if one bounds is fully inside another
 def _bounds_inside(inner, outer):
     ix0, iy0, ix1, iy1 = inner
     ox0, oy0, ox1, oy1 = outer
     return ix0 >= ox0 and iy0 >= oy0 and ix1 <= ox1 and iy1 <= oy1
 
+# return bounds that cover different objects / bounds (for composite tiles)
 def _combined_bounds(objs):
     b = np.array([o["bounds"] for o in objs], dtype=float)
     return (b[:, 0].min(), b[:, 1].min(), b[:, 2].max(), b[:, 3].max())
 
+# get centroid of a group of objects, weighted by area of scd
 def _area_weighted_centroid(objs):
     areas = np.array([max(o["area"], 1e-6) for o in objs], dtype=float)
     xs = np.array([o["cx"] for o in objs], dtype=float)
     ys = np.array([o["cy"] for o in objs], dtype=float)
     return float((xs * areas).sum() / areas.sum()), float((ys * areas).sum() / areas.sum())
 
+# get diamater of a group of scd labels
 def _group_diameter(objs):
     minx, miny, maxx, maxy = _combined_bounds(objs)
     bbox_d = max(maxx - minx, maxy - miny)
     max_obj_d = max(o["diameter"] for o in objs)
     return float(max(bbox_d, max_obj_d))
 
-
+# unionfind class 
+# ChatGPT assistance with this class, used for grouping of SCDs to generate tiles.
 class UnionFind:
     def __init__(self, n):
+        # each object belongs to its own cluster initially, so parent is itself.
         self.parent = list(range(n))
 
+    # find root of cluster containing object x.
     def find(self, x):
+        # path compression: make each node on the path point directly to the root. dont care abt other intermediate nodes.
         while self.parent[x] != x:
+            # parent of x becomes parent of its parent.
             self.parent[x] = self.parent[self.parent[x]]
+            # x becomes its parent, moving up the tree.
             x = self.parent[x]
+        # returns the root of the cluster containing x.
         return x
 
+    # joins two clusters containing objects a and b.
     def union(self, a, b):
+        # find the roots of the clusters containing a and b
         ra, rb = self.find(a), self.find(b)
+        # join the clusters by making the root of one point to the root of the other. arbitary which one becomes the parent.
         if ra != rb:
             self.parent[rb] = ra
 
+    # turns the parent list into a list of groups, where each group is a list of object indices that belong to the same cluster.
     def groups(self):
         out = {}
         for i in range(len(self.parent)):
@@ -372,6 +394,7 @@ class ScaleNormalisedDataStack:
         self.layer_names.append("LABELS")
         self.layer_index = {name: i for i, name in enumerate(self.layer_names)}
 
+    # generates and exports tiles. 
     def tile_and_export(
         self,
         tile_size: int,
@@ -410,6 +433,7 @@ class ScaleNormalisedDataStack:
 
         # if cluser, nearby SCDs are put into one tile to avoid multiple tiles of the same area (data leakage risk)
         # important as at inference, objects wont always be 'alone'
+        # objects clustered using UnionFind.
         if cluster:
             groups = self._cluster_objects(
                 objs,
@@ -429,6 +453,7 @@ class ScaleNormalisedDataStack:
 
         MAX_ATTEMPTS = 10
 
+        # for group in cluster, make request around bounds and export tile if valid (several validity params)
         for group_id, group in enumerate(groups):
 
             success = False
@@ -440,7 +465,8 @@ class ScaleNormalisedDataStack:
 
                 if req is None:
 
-
+                    # make a new request for a tile that covers the group, with a resolution that is scale-normalised to the group size
+                    # and the target fraction of the tile that should be covered by the group.
                     req = self._make_scale_normalised_request(
                         group=group,
                         tile_size=tile_size,
@@ -455,6 +481,7 @@ class ScaleNormalisedDataStack:
                     if req is None:
                         continue
 
+                # generate tile data from DataSources for specified bounds and res
                 tile = self._build_tile(
                     req["bounds"],
                     tile_size,
@@ -462,14 +489,17 @@ class ScaleNormalisedDataStack:
                     skip_edge_tiles=skip_edge_tiles,
                 )
 
+                # if built tile has empty data, skip. 
                 if tile is None or self._is_mostly_empty(tile, empty_threshold):
                     req = None
                     if tile is not None:
                         del tile
                     continue
 
+                # get label
                 label = tile[self.layer_index["LABELS"]]
 
+                # if scd coverage is too low or too high, skip.
                 coverage = float(label.sum()) / label.size
 
                 if coverage <= 0 or coverage > 0.6:
@@ -477,6 +507,7 @@ class ScaleNormalisedDataStack:
                     del tile
                     continue
 
+                # handle edge artefacts. if too many edge artefacts, move tile away from edge and try again.
                 edge_frac = self._edge_label_fraction(label)
 
                 if edge_frac <= edge_tolerance:
@@ -516,6 +547,7 @@ class ScaleNormalisedDataStack:
         n_neg = max(1, int(exported_pos * negative))
         print(f"Sampling {n_neg} negative tiles")
 
+        # generate negatives as specified from negative_frac
         exported_neg = attempts = 0
         while exported_neg < n_neg and attempts < n_neg * 100:
             attempts += 1
@@ -544,10 +576,11 @@ class ScaleNormalisedDataStack:
 
         print(f"Done. {exported_pos} positive, {exported_neg} negative, skipped {skipped}.")
 
+    # ChatGPT assistance with grouping functionality and UnionFind.
     def _cluster_objects(self, objs, cluster_factor=0.75, cluster_distance_m=None):
         """
         Conservative graph clustering. Objects are joined only if their
-        centroids are close enough. No shapely union is used.
+        centroids are close enough.
 
         If cluster_distance_m is provided, it is used as the fixed maximum
         centroid distance for grouping. Otherwise, each pair uses:
@@ -558,22 +591,29 @@ class ScaleNormalisedDataStack:
         individual tiles; only close neighbours are grouped.
         """
         n = len(objs)
+        # custom UnionFind class to group objects based on centroid distance
         uf = UnionFind(n)
 
+        # taken outsidew of loop for optimisation 
+        if cluster_distance_m is not None:
+            thresh = float(cluster_distance_m)
+        else:
+            thresh = float(cluster_factor) * max(objs[i]["diameter"], objs[j]["diameter"])
+
+        # compare every pair of objects and join them if they are close enough based on the criteria above.
+        # probably a faster way to do this, but this isnt the bottleneck overall and the code is only run once.
         for i in range(n):
             for j in range(i + 1, n):
+                # compute distance between centroids of two objects
                 dx = objs[i]["cx"] - objs[j]["cx"]
                 dy = objs[i]["cy"] - objs[j]["cy"]
                 dist = np.sqrt(dx * dx + dy * dy)
 
-                if cluster_distance_m is not None:
-                    thresh = float(cluster_distance_m)
-                else:
-                    thresh = float(cluster_factor) * max(objs[i]["diameter"], objs[j]["diameter"])
-
+                # join if close enough
                 if dist <= thresh:
                     uf.union(i, j)
 
+        # return groups of objects based on the UnionFind structure, where each group is a list of objects that are nearby
         return [[objs[i] for i in inds] for inds in uf.groups()]
 
     def _make_scale_normalised_request(
@@ -585,8 +625,8 @@ class ScaleNormalisedDataStack:
         min_res,
         max_res,
         jitter_frac,
-        skip_edge_tiles,
-    ):
+        skip_edge_tiles):
+
         group_d = _group_diameter(group)
         target_frac = float(rng.uniform(*obj_frac_range))
 

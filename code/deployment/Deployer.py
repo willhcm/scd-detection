@@ -14,7 +14,7 @@ import rasterio
 from rasterio.warp import reproject
 import numpy as np
 import torch
-from loaders.ScaleNormalisedDataStack import DataSource, _bounds_inside, OVERLAP_SIGMA_MULTIPLIER
+from loaders.ScaleNormalisedDataStack import DataSource, OVERLAP_SIGMA_MULTIPLIER
 from rasterio.enums import Resampling
 from scipy.ndimage import sobel, gaussian_filter, laplace
 from ModelWrapper import ModelWrapper
@@ -25,7 +25,7 @@ from modelling.Veto import VetoClassifier
 import geopandas as gpd
 from rasterio.features import shapes, sieve
 from shapely.geometry import shape
-from code.helpers.VetoHelpers import VETO_SCALAR_NAMES
+from helpers.VetoHelpers import VETO_SCALAR_NAMES
 
 # AI assistance with conversion of DataStack logic to a deployment system. 
 # dont need to export tiles as they will only be used once at inference
