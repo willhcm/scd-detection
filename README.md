@@ -54,9 +54,18 @@ the directory ```notebooks/``` contains code to reproduce:
 
 This codebase has no other functionality than to train and deploy the Mask R-CNN inference pipeline, so the reproducibility section is not large.
 
+### Environments
+
+Due to clashes with PyProj versions and Rasterio (specifically for casting geopandas dataframes to different Coordinates Reference Systems), two environments are used: 
+
+- `environment-model.yml` — model training and inference (e.g., ```Reproduce.ipynb``` and ```Validate.ipynb```)
+- `environment-analysis.yml` — geospatial/statistical analysis (e.g., ```Fig5b.ipynb```)
+
+environment.yml files were generated with assistance from ChatGPT.
+
 ### Datastore
 
-Contains the source data and model results needed to reproduce anything written in the reproducibility section above.
+Contains the source data and model results needed to reproduce anything written in the reproducibility section above. Also contains .svg files for all figures seen in the report.
 
 ### Depreciated
 
