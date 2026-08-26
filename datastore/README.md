@@ -1,6 +1,8 @@
 # Datastore
 
-The files in this directory can be used to reproduce plots and results demonstrated in ../code/notebooks/
+The files in this directory can be used to reproduce plots and results demonstrated in ../code/notebooks/.
+
+```IRPFinal/``` contains the .tex file for the report. The images can already be found in ```assets/```, and haven't been included in the tex project folder.
 
 ## Structure 
 
