@@ -1,5 +1,7 @@
 # Google Colab Notebook
 
+Please note that scripts run on colab were all stored in one Google Drive folder during development, so the import's wont make sense based on the repo structure. The deliverable of this specific project was not the codebase.
+
 This directory contains four sub-directories:
 
 ## ```colab/data prep/``` 

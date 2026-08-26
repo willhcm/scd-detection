@@ -84,6 +84,7 @@ def build_dem_context(
     annulus_values = dem[annulus_valid]
     context_values = dem[valid]
 
+    # calculate stats from these values.
     annulus_mean = float(np.mean(annulus_values))
     annulus_median = float(np.median(annulus_values))
 

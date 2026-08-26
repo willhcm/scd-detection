@@ -9,7 +9,7 @@ from scipy.ndimage import uniform_filter, sobel
 from scipy.ndimage import grey_opening
 from skimage.morphology import disk
 import os
-from code.depreciated.label_loader import make_labels
+from depreciated.label_loader import make_labels
 os.environ["PROJ_DATA"] = "/opt/anaconda3/envs/IRP/share/proj"
 
 # redundant, keeping for reference for time being.

@@ -76,6 +76,7 @@ def train_fold(model_type, train_paths, val_paths, epochs, model_info, batch_siz
     return metrics, best_model, val_loader
 
 # written up from colab for reproducibility 
+# only a random test--train split is used for veto classifier. 
 def train_veto_classifier(model, epochs, paths):
     """
     Trains the Veto classifier model using the provided paths and number of epochs.

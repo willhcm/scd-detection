@@ -8,6 +8,7 @@ import torch
 # maskRCNN evaluation metrics (IoU, F1 etc and definition of a 'matched object')
 # training functionality (specifically fine-tuning and incremental unfreezing in rcnn_train.)
 
+## Displayed in Table 1 of the report.
 STAGE_LRS = {
     1: {
         "rpn": 1e-3,

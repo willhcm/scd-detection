@@ -9,7 +9,6 @@ PRED_ARGS = {
     "MaskRCNN": {"score_threshold": 0.60,
                   "mask_threshold": 0.55}}
 
-
 class ModelWrapper:
     """
     A wrapper class for the Mask R-CNN model used for prediction.
