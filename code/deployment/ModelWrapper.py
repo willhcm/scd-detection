@@ -5,20 +5,17 @@ sys.path.insert(0, str(CODE_DIR))
 from modelling.MaskRCNN import MaskRCNN
 import torch
 
-PRED_ARGS = {
-    "MaskRCNN": {"score_threshold": 0.60,
-                  "mask_threshold": 0.55}}
-
 class ModelWrapper:
     """
     A wrapper class for the Mask R-CNN model used for prediction.
     """
 
-    def __init__(self, model_dict):
+    def __init__(self, model_dict, score_threshold=0.60, mask_threshold=0.55):
 
         self.model = MaskRCNN()
         self.model.load_state_dict(model_dict)
-        self.pred_args = PRED_ARGS["MaskRCNN"].copy()
+        self.score_threshold = score_threshold
+        self.mask_threshold = mask_threshold
 
     # edited to return actual prob map not thresholded masks.
     def _pred_mask_rcnn(
@@ -39,8 +36,6 @@ class ModelWrapper:
 
         outputs = self.model(image_list, resolutions=resolutions)
 
-        score_threshold = self.pred_args["score_threshold"]
-        mask_threshold = self.pred_args["mask_threshold"]
 
         probability_maps = []
 
@@ -48,13 +43,13 @@ class ModelWrapper:
 
             scores = output["scores"].detach().cpu()
             raw_masks = (output["masks"].detach().cpu()[:, 0])
-            keep = scores >= score_threshold
+            keep = scores >= self.score_threshold
 
             if keep.any():
 
                 kept_masks = raw_masks[keep]
 
-                kept_masks = torch.where(kept_masks >= mask_threshold, kept_masks, torch.zeros_like(kept_masks))
+                kept_masks = torch.where(kept_masks >= self.mask_threshold, kept_masks, torch.zeros_like(kept_masks))
 
                 tile_probability = (kept_masks.max(dim=0).values)
 
