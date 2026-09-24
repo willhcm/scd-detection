@@ -92,11 +92,14 @@ class Deployer:
         veto_context_tile_size=224,
         veto_batch_size=16,
         veto_threshold=0.90,
+        score_threshold=0.60,
+        mask_threshold=0.55,
         context_scale=4.0,
         min_context_width_m=768.0,
         max_context_width_m=4000.0,
         native_res = 30):
-        
+
+        self.score_threshold = score_threshold
         self.dem_path = dem_path
         self.rgb_path = rgb_path
         self.device = device
@@ -133,9 +136,10 @@ class Deployer:
         self.max_context_width_m = max_context_width_m
 
         self.base_res = None
+        self.mask_threshold = mask_threshold
 
     def build_wrapper(self):
-        return ModelWrapper(self.model_dict)
+        return ModelWrapper(self.model_dict, self.score_threshold, self.mask_threshold)
 
     def predict(self, stride_frac = 0.5):
         """
@@ -260,7 +264,7 @@ class Deployer:
             rgb_path=self.rgb_path,
             dem_path=self.dem_path,
             batch_size=self.veto_batch_size,
-            detect_threshold=0.40,
+            detect_threshold=self.score_threshold,
             veto_threshold=self.veto_threshold,
             min_crop_pixels=64,
             object_fraction=0.5,
