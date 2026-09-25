@@ -96,4 +96,4 @@ class TileGenerator():
                      'positive': 0 if self.tile[self.layer_index["LABELS"]].sum() == 0 else 1,
                      'res': res}
         self.tiles.append(tile_dict)
-        print('Tile prepared and cached.')
+
