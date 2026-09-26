@@ -228,7 +228,7 @@ class MaskRCNNDataset(Dataset):
     The target dictionary contains bounding boxes, labels, masks, and other relevant information."""
 
     # remove path checking for time optimisation
-    def __init__(self, all_paths, augment=False, min_instance_area=20):
+    def __init__(self, all_paths, augment=True, min_instance_area=20):
 
         self.augment = augment
         self.paths = all_paths

@@ -543,6 +543,7 @@ class SceneTiler:
         jitter_frac: float = 0.10,
         edge_tolerance: float = 0.10,
         skip_edge_tiles: bool = True,
+        region: str = None,
     ):
         """
         Export one scale-normalised positive tile per labelled object, or per
@@ -652,6 +653,7 @@ class SceneTiler:
                         out_path,
                         name,
                         positive=True,
+                        region=region
                     )
 
                     exported_pos += 1
@@ -894,7 +896,9 @@ class SceneTiler:
             bounds=np.array(req["bounds"], dtype=np.float64),
         )
 
-    def _save_tile(self, tile_data, req, out_path, name, positive=True):
+
+
+    def _save_tile(self, tile_data, req, out_path, name, positive=True, region=None):
         
         # no longer need to worry about self.labelled, as this will not be used to produce deployment tiles!
         # that will be done using image pyramid.
@@ -908,7 +912,9 @@ class SceneTiler:
                             labels=labels,
                             scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)),
                             object_ids = np.array(req.get("object_ids", [])),
-                            positive=np.array(positive))
+                            positive=np.array(positive),
+                            region=region,
+                            bounds=np.array(req["bounds"], dtype=np.float32))
 
 
     # how much of the tile edges have label=1
