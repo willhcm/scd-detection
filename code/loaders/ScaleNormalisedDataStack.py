@@ -411,6 +411,7 @@ class ScaleNormalisedDataStack:
         jitter_frac: float = 0.10,
         edge_tolerance: float = 0.10,
         skip_edge_tiles: bool = True,
+        region: str = None,
     ):
         """
         Export one scale-normalised positive tile per labelled object, or per
@@ -520,6 +521,7 @@ class ScaleNormalisedDataStack:
                         out_path,
                         name,
                         positive=True,
+                        region=region
                     )
 
                     exported_pos += 1
@@ -752,7 +754,9 @@ class ScaleNormalisedDataStack:
         return np.stack([available[name] for name in self.layer_names], axis=0).astype(np.float32)
 
 
-    def _save_tile(self, tile_data, req, out_path, name, positive=True):
+
+
+    def _save_tile(self, tile_data, req, out_path, name, positive=True, region=None):
         
         # no longer need to worry about self.labelled, as this will not be used to produce deployment tiles!
         # that will be done using image pyramid.
@@ -766,7 +770,9 @@ class ScaleNormalisedDataStack:
                             labels=labels,
                             scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)),
                             object_ids = np.array(req.get("object_ids", [])),
-                            positive=np.array(positive))
+                            positive=np.array(positive),
+                            region=region,
+                            bounds=np.array(req["bounds"], dtype=np.float32))
 
 
     # how much of the tile edges have label=1
