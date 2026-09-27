@@ -140,16 +140,180 @@ class DatasetWrapper():
 
 class DatasetRefiner():
 
-    def __init__(self, dir, region):
+    def __init__(self, dir, region=None):
         self.dir = Path(dir)
         self.region = region
         self.tiles = self._get_region_tiles()
 
+    def _find_duplicates(self, tile_path):
+        # find all duplicate tiles based on overlap
+        with np.load(tile_path, allow_pickle=True) as tile:
+            minx, miny, maxx, maxy = tile["bounds"]
+
+        duplicates = []
+
+        for other_path in self.tiles:
+
+            if other_path == tile_path:
+                continue
+
+            if not other_path.exists():
+                continue
+
+            with np.load(other_path, allow_pickle=True) as other_tile:
+                other_minx, other_miny, other_maxx, other_maxy = other_tile["bounds"]
+
+            overlap_minx = max(minx, other_minx)
+            overlap_miny = max(miny, other_miny)
+            overlap_maxx = min(maxx, other_maxx)
+            overlap_maxy = min(maxy, other_maxy)
+
+            if overlap_minx < overlap_maxx and overlap_miny < overlap_maxy:
+
+                overlap_area = (
+                    (overlap_maxx - overlap_minx)
+                    * (overlap_maxy - overlap_miny)
+                )
+
+                tile_area = (maxx - minx) * (maxy - miny)
+
+                if overlap_area / tile_area > 0.5:
+                    duplicates.append(other_path)
+
+        return duplicates
+
+    def _resolve_duplicates(self, tile_path, duplicates=None):
+
+        if duplicates is None:
+            duplicates = self._find_duplicates(tile_path)
+
+        if not duplicates:
+            return
+
+        paths = [tile_path] + duplicates
+        n_tiles = len(paths)
+
+        plot_data = []
+
+        for path in paths:
+            with np.load(path, allow_pickle=True) as tile:
+                image = np.array(tile["image"][0])
+                res = tile["res"].item()
+
+            plot_data.append((image, res))
+
+        # if there are more than 5 tiles, plot them in one row
+        if n_tiles < 5:
+
+            fig, axs = plt.subplots(
+                1,
+                n_tiles,
+                figsize=(15, 10),
+                squeeze=False
+            )
+
+        else:
+
+            ncols = int(np.ceil(n_tiles / 2))
+
+            fig, axs = plt.subplots(
+                2,
+                ncols,
+                figsize=(15, 10),
+                squeeze=False
+            )
+
+        axs = axs.flatten()
+
+        for i, (image, res) in enumerate(plot_data):
+
+            axs[i].imshow(image, cmap='gray')
+
+            if i == 0:
+                axs[i].set_title(f"0: Original Tile, res={res:.2f}m")
+            else:
+                axs[i].set_title(f"{i}: Duplicate, res={res:.2f}m")
+
+        for i in range(n_tiles, len(axs)):
+            axs[i].axis("off")
+
+        plt.show()
+
+        choice = input(
+            f"Enter the number of the tile to keep (0-{n_tiles - 1}), "
+            "or 'd' to delete all: "
+        ).strip().lower()
+
+        if choice == 'd':
+
+            for path in paths:
+                if path.exists():
+                    path.unlink()
+
+            plt.close()
+            return
+
+        try:
+            choice = int(choice)
+
+            if choice < 0 or choice >= n_tiles:
+                print("Invalid input; duplicates not resolved.")
+                return
+
+            for i, path in enumerate(paths):
+
+                if i == choice:
+                    continue
+
+                if path.exists():
+                    path.unlink()
+
+            plt.close()
+
+        except ValueError:
+            print("Invalid input; duplicates not resolved.")
+            return
+
+    def _has_duplicates(self, tile_path):
+        return len(self._find_duplicates(tile_path)) > 0
+
+    def fix_duplicates(self):
+        # check for duplicates and resolve them
+        # refresh tiles after each deletion
+
+        while True:
+
+            self.tiles = self._get_region_tiles()
+            duplicate_found = False
+
+            for tile_path in self.tiles:
+
+                duplicates = self._find_duplicates(tile_path)
+
+                if duplicates:
+
+                    self._resolve_duplicates(
+                        tile_path,
+                        duplicates
+                    )
+
+                    duplicate_found = True
+                    break
+
+            if not duplicate_found:
+                break
+
     def refine(self):
-        # refine dataset by manually accepting or rejecting tiles based on visual inspection of the image and labels
-        for tile in self.tiles:
-            tile, path = tile
-            self._view_tile(tile)
+        # refine dataset by manually accepting or rejecting tiles based on visual inspection
+        self.tiles = self._get_region_tiles()
+
+        for path in self.tiles:
+
+            if not path.exists():
+                continue
+
+            with np.load(path, allow_pickle=True) as tile:
+                self._view_tile(tile)
 
             answer = input(
                 "r=RETAIN, x=REJECT, s=SKIP, q=QUIT: "
@@ -165,7 +329,7 @@ class DatasetRefiner():
                 continue
 
             elif answer == "x":
-                # delete the tile from the directory
+
                 if path.exists():
                     path.unlink()
 
@@ -177,21 +341,31 @@ class DatasetRefiner():
         # view a specific tile
         image = tile['image']
         labels = tile['labels']
+
         fig, axs = plt.subplots(1, 6, figsize=(15, 10))
+
         for i, band in enumerate(image):
             axs[i].imshow(band, cmap='gray')
             axs[i].set_title(f"Band {i}")
+
         axs[5].imshow(labels, cmap='gray')
         axs[5].set_title("Labels")
+
         plt.show()
 
     def _get_region_tiles(self):
         # return a list of tiles in the directory that match the region
         tiles = []
-        for path in self.dir.glob("*.npz"):
-            f = np.load(path, allow_pickle=True)
-            if f["region"].item() == self.region:
-                tiles.append([f, path])
-        return tiles
 
+        for path in self.dir.glob("*.npz"):
+
+            with np.load(path, allow_pickle=True) as f:
+
+                if self.region is None:
+                    tiles.append(path)
+
+                elif f["region"].item() == self.region:
+                    tiles.append(path)
+
+        return tiles
     

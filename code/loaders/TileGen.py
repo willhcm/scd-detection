@@ -8,6 +8,7 @@ from loaders.ScaleNormalisedDataStack import DataSource, ShapeLabels, _bounds_in
 import numpy as np
 from rasterio.warp import Resampling
 from pathlib import Path 
+import matplotlib.pyplot as plt
 
 class TileGenerator():
 
@@ -90,7 +91,8 @@ class TileGenerator():
                     res=np.array(tile["res"], dtype=np.float32),
                     layer_index = self.layer_names,
                     labels=labels,
-                    scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)))
+                    scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)),
+                    bounds=np.array(tile['bounds'], dtype=np.float32))
 
 
     def generate_tile(self, centre, res):
@@ -100,7 +102,18 @@ class TileGenerator():
 
         tile_dict = {'data': tile,
                      'name': self._tile_name(bounds),
+                     'bounds': bounds,
                      'positive': 0 if self.tile[self.layer_index["LABELS"]].sum() == 0 else 1,
                      'res': res}
         self.tiles.append(tile_dict)
+        self.plot_tile(tile_dict)
+
+    def plot_tile(self, tile):
+
+        fig, axs = plt.subplots(1, len(self.layer_names), figsize=(15, 5))
+        for i, name in enumerate(self.layer_names):
+            axs[i].imshow(tile['data'][i], cmap='gray')
+            axs[i].set_title(name)
+            axs[i].axis('off')
+        plt.show()
 
