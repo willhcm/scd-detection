@@ -366,7 +366,7 @@ def _edge_shift(label, tile_bounds, res, shift_px=32):
 # GenAI assistance with 'request' format. The previous datastack.py was purpose-built for fixed res exportation,
 # but that didnt fit the new SNIP approach I am attempting (and confidenw with), so i got assistance from ChatGPT on how to 
 # pivot to variable res, which required some architectural change as opposed to just changing functions which i have done before.
-class ScaleNormalisedDataStack:
+class SceneTiler:
     """ SNIP DataStack V1 
 
     No longer needs any unlabelled functionality. inference done using image pyramid.
@@ -384,15 +384,147 @@ class ScaleNormalisedDataStack:
         self.target_crs = dem_source.crs
         self.dem_bounds = dem_source.bounds
 
-        # Residual-relief smoothing scale is physical, not pixels, so it stays
-        # comparable across variable-resolution tiles.
-        # needs to depend on res
-        # manual is probably overkill, just automatic 10 * res. can change later if needed.
         self.rr_sigma_m = 12.0 * dem_source.res
 
         self.layer_names = features or self.DEFAULT_LAYERS.copy()
-        self.layer_names.append("LABELS")
+
+        if self.label_shp is None:
+            self.unlabelled = True
+        else:
+            self.layer_names.append("LABELS")
+
         self.layer_index = {name: i for i, name in enumerate(self.layer_names)}
+
+    def tile_unlabelled(
+        self,
+        tile_size: int,
+        out_path: str,
+        res: float = None,
+        stride_frac: float = 1.0,
+        empty_threshold: float = 0.2,
+        skip_edge_tiles: bool = True,
+    ):
+        """
+        Tile and export an unlabelled DEM scene.
+
+        Tiles are generated at a fixed spatial resolution and contain only
+        the requested image/features (no LABELS channel).
+
+        Parameters
+        ----------
+        tile_size : int
+            Tile width/height in pixels.
+
+        out_path : str
+            Directory to save .npz tiles.
+
+        res : float, optional
+            Output resolution in map units / pixel.
+            Defaults to the native DEM resolution.
+
+        stride_frac : float
+            Tile stride as a fraction of tile width.
+            1.0 = no overlap
+            0.5 = 50% overlap.
+
+        empty_threshold : float
+            Maximum permitted fraction of empty pixels.
+
+        skip_edge_tiles : bool
+            Skip tiles where sufficient real context is unavailable around
+            the tile for derived-feature generation.
+        """
+
+        if self.label_shp is not None:
+            raise ValueError(
+                "tile_unlabelled() should be used with SceneTiler(..., label_shp=None)"
+            )
+
+        Path(out_path).mkdir(parents=True, exist_ok=True)
+
+        if res is None:
+            res = float(self.dem_source.res)
+        else:
+            res = float(res)
+
+        tile_width_m = tile_size * res
+        stride_m = tile_width_m * stride_frac
+
+        minx, miny, maxx, maxy = self.dem_bounds
+
+        x_positions = np.arange(
+            minx,
+            maxx - tile_width_m + 1e-9,
+            stride_m,
+        )
+
+        y_positions = np.arange(
+            miny,
+            maxy - tile_width_m + 1e-9,
+            stride_m,
+        )
+
+        exported = 0
+        skipped = 0
+
+        print(
+            f"Tiling unlabelled scene at {res:.3f} m/px "
+            f"with {tile_size}x{tile_size} tiles"
+        )
+
+        print(
+            f"Grid: {len(x_positions)} x {len(y_positions)} "
+            f"= {len(x_positions) * len(y_positions)} candidate tiles"
+        )
+
+        for y0 in y_positions:
+            for x0 in x_positions:
+
+                bounds = (
+                    float(x0),
+                    float(y0),
+                    float(x0 + tile_width_m),
+                    float(y0 + tile_width_m),
+                )
+
+                req = {
+                    "bounds": bounds,
+                    "res": res,
+                    "tile_size": int(tile_size),
+                }
+
+                tile = self._build_tile(
+                    bounds,
+                    tile_size,
+                    res,
+                    skip_edge_tiles=skip_edge_tiles,
+                )
+
+                if tile is None:
+                    skipped += 1
+                    continue
+
+                if self._is_mostly_empty(tile, empty_threshold):
+                    skipped += 1
+                    del tile
+                    continue
+
+                name = self._tile_name(bounds, "unlabelled")
+
+                self._save_unlabelled_tile(
+                    tile,
+                    req,
+                    out_path,
+                    name,
+                )
+
+                exported += 1
+                del tile
+
+        print(
+            f"Done. Exported {exported} unlabelled tiles; "
+            f"skipped {skipped}."
+        )
 
     # generates and exports tiles. 
     def tile_and_export(
@@ -749,10 +881,20 @@ class ScaleNormalisedDataStack:
         ).astype(np.float32)
         available["DEM"] = dem_clean
 
-        available["LABELS"] = self.label_shp.rasterise(tile_bounds, tile_size, self.target_crs)
+        if not self.unlabelled:
+            available["LABELS"] = self.label_shp.rasterise(tile_bounds, tile_size, self.target_crs)
 
         return np.stack([available[name] for name in self.layer_names], axis=0).astype(np.float32)
 
+    def _save_unlabelled_tile(self, tile_data, req, out_path, name):
+
+        np.savez_compressed(
+            str(Path(out_path) / name),
+            image=tile_data.astype(np.float32),
+            layer_names=np.array(self.layer_names),
+            res=np.array(req["res"], dtype=np.float32),
+            bounds=np.array(req["bounds"], dtype=np.float64),
+        )
 
 
 

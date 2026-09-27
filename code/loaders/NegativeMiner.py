@@ -5,6 +5,7 @@ CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 from loaders.ScaleNormalisedDataStack import DataSource
 from loaders.TileGen import TileGenerator
+from dataclasses import dataclass
 
 @dataclass
 class ResBin:
@@ -17,8 +18,8 @@ class NegativeMiner:
     def __init__(self, dem: DataSource, resolutions: list[float]):
         self.dem = dem
         self.resolutions = resolutions
-        self.coverage = np.zeros(dem.shape, dtype=np.float32)
-        self.generator = TileGenerator(dem_path=dem.path, native_res=dem.resolution)
+        self.coverage = np.zeros(dem.data.shape, dtype=np.float32)
+        self.generator = TileGenerator(dem=dem)
         self.report_capacity()
 
     def _pixel_window(self, tile_bounds):
@@ -37,7 +38,7 @@ class NegativeMiner:
 
     def report_capacity(self):
 
-        px_res = self.dem.resolution
+        px_res = self.dem.res
         free_px = self.coverage.size
         free_area = free_px * px_res ** 2
 
@@ -48,7 +49,7 @@ class NegativeMiner:
         for res in sorted(self.resolutions):
             tile_area = (512 * res) ** 2
             tile_count = int((free_area / tile_area) * 0.7)
-            print(f"res {res:>5.2f}m  bins = {tile_count:.1f}")
+            print(f"res {res:>5.2f}m  tiles = {tile_count:.1f}")
 
             self.bins.append(ResBin(name=f"{res:.2f}m", res=res, count=tile_count))
 
@@ -67,7 +68,8 @@ class NegativeMiner:
 
     def _find_tile_positions(self):
         results = {}
-
+        count_ceiling = min([b.count for b in self.bins])
+        
         for b in sorted(self.bins, key=lambda b: -b.res):  # largest footprint first, least flexible
             tile_side = 512 * b.res
             placed = []
@@ -75,6 +77,9 @@ class NegativeMiner:
             for x0, y0 in self._grid_candidates(tile_side):
                 if len(placed) >= b.count:
                     break
+                if len(placed) >= count_ceiling:
+                    break
+
                 bounds = (x0, y0, x0 + tile_side, y0 + tile_side)
                 if self._is_tile_covered(bounds):
                     continue
@@ -91,13 +96,12 @@ class NegativeMiner:
         out_dir.mkdir(parents=True, exist_ok=True)
         tile_positions = self._find_tile_positions()
 
-        for res_name, bounds_list in tile_positions.items():
-            res_dir = out_dir / res_name
-            res_dir.mkdir(parents=True, exist_ok=True)
+        for res, bounds_list in tile_positions.items():
+            res_str = f'{res}m'
 
             for i, bounds in enumerate(bounds_list):
-                tile = self.generator._build_tile(bounds, 512, self.dem.resolution)
-                np.savez_compressed(res_dir / f"tile_{i:05d}.npz", data=tile)
+                tile = self.generator._build_tile(bounds, 512, self.dem.res)
+                np.savez_compressed(out_dir / f"res_{res_str}_tile_{i:05d}.npz", data=tile)
 
         self.report_statistics(tile_positions)
 

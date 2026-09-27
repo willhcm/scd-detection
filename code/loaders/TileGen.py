@@ -1,22 +1,28 @@
 # creates a tile from centre coordinates (DMS) and inputted rasters (DEM, labels: optional)
 
-from ScaleNormalisedDataStack import DataSource, ShapeLabels, _bounds_inside, _build_feature_registry, OVERLAP_SIGMA_MULTIPLIER, _centred_bounds
+import sys
+from pathlib import Path
+CODE_DIR = Path("../../../code").resolve()
+sys.path.insert(0, str(CODE_DIR))
+from loaders.ScaleNormalisedDataStack import DataSource, ShapeLabels, _bounds_inside, _build_feature_registry, OVERLAP_SIGMA_MULTIPLIER, _centred_bounds
 import numpy as np
 from rasterio.warp import Resampling
 from pathlib import Path 
 
 class TileGenerator():
 
-    def __init__(self, dem_path, native_res=30, label_path=None):
-
-        self.dem = DataSource.from_tiff_utm(dem_path, native_res=native_res)
+    def __init__(self, dem, label_path=None):
+        self.dem = dem 
         self.target_crs = self.dem.crs
         self.sigma_px = 12
+        self.layer_names = ["DEM", "DEM_SLOPE", "HILLSHADE", "RR", "LAPLACE"]
 
         if label_path is not None:
             self.labelled = True
             self.labels = ShapeLabels(label_path)
-
+        else:
+            self.labelled = False
+        
         self.tiles = []
 
     def _build_tile(self, tile_bounds, tile_size, target_res):
@@ -62,7 +68,7 @@ class TileGenerator():
         if self.labelled:
             available["LABELS"] = self.labels.rasterise(tile_bounds, tile_size, self.target_crs)
         else:
-            self.labelled = np.zeros((tile_size, tile_size))
+            available["LABELS"] = np.zeros((tile_size, tile_size))
 
         return np.stack([available[name] for name in self.layer_names], axis=0).astype(np.float32)
 
@@ -82,6 +88,7 @@ class TileGenerator():
                     image=image, 
                     layer_names=np.array(self.layer_names),
                     res=np.array(tile["res"], dtype=np.float32),
+                    layer_index = self.layer_names,
                     labels=labels,
                     scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)))
 
