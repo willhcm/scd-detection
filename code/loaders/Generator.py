@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 CODE_DIR = Path("../../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
-from loaders.ScaleNormalisedDataStack import DataSource, ShapeLabels, _bounds_inside, _build_feature_registry, OVERLAP_SIGMA_MULTIPLIER, _centred_bounds
+from loaders.Tiler import DataSource, ShapeLabels, _bounds_inside, _build_feature_registry, OVERLAP_SIGMA_MULTIPLIER, _centred_bounds
 import numpy as np
 from rasterio.warp import Resampling
 from pathlib import Path 
@@ -15,7 +15,8 @@ class TileGenerator():
         self.dem = dem 
         self.target_crs = self.dem.crs
         self.sigma_px = 12
-        self.layer_names = ["DEM", "DEM_SLOPE", "HILLSHADE", "RR", "LAPLACE"]
+        self.layer_names = ["DEM", "DEM_SLOPE", "HILLSHADE", "RR", "LAPLACE", 'LABELS']
+        self.layer_index = {name: i for i, name in enumerate(self.layer_names)}
 
         if label_path is not None:
             self.labelled = True
@@ -90,7 +91,8 @@ class TileGenerator():
                     res=np.array(tile["res"], dtype=np.float32),
                     layer_index = self.layer_names,
                     labels=labels,
-                    scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)))
+                    scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)),
+                    bounds = tile['bounds'])
 
 
     def generate_tile(self, centre, res):
@@ -100,6 +102,7 @@ class TileGenerator():
 
         tile_dict = {'data': tile,
                      'name': self._tile_name(bounds),
+                     'bounds': bounds,
                      'positive': 0 if self.tile[self.layer_index["LABELS"]].sum() == 0 else 1,
                      'res': res}
         self.tiles.append(tile_dict)
