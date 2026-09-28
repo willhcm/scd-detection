@@ -15,7 +15,7 @@ class TileGenerator():
         self.dem = dem 
         self.target_crs = self.dem.crs
         self.sigma_px = 12
-        self.layer_names = ["DEM", "DEM_SLOPE", "HILLSHADE", "RR", "LAPLACE", 'LABELS']
+        self.layer_names = ["DEM", "DEM_SLOPE", "HILLSHADE", "RR", "LAPLACE"]
         self.layer_index = {name: i for i, name in enumerate(self.layer_names)}
 
         if label_path is not None:
@@ -40,6 +40,10 @@ class TileGenerator():
             maxx + overlap_m,
             maxy + overlap_m,
         )
+
+        # handles tile being on edge of DEM (bad as zero padding ruins SCD context)
+        if _bounds_inside(padded_bounds, self.dem.bounds):
+            return None
 
         # large DEM to reduce edge artefacts of the tile
         dem_padded = self.dem.reproject_to_shape(

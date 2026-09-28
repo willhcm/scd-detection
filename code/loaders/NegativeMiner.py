@@ -17,13 +17,14 @@ class NegativeMiner:
 
     LAYER_NAMES = ["DEM", "DEM_SLOPE", "HILLSHADE", "RR", "LAPLACE", "LABELS"]
 
-    def __init__(self, dem: DataSource, resolutions: list[float]):
+    def __init__(self, dem: DataSource, resolutions: list[float], NODATA=0):
         self.dem = dem
         self.resolutions = resolutions
         self.coverage = np.zeros(dem.data.shape, dtype=np.float32)
         self.generator = TileGenerator(dem=dem)
         self.layer_index = {name: i for i, name in enumerate(self.LAYER_NAMES)}
         self.report_capacity()
+        self.NODATA = NODATA
 
     def _pixel_window(self, tile_bounds):
         minx, miny, maxx, maxy = tile_bounds
@@ -122,6 +123,12 @@ class NegativeMiner:
 
             for i, bounds in enumerate(bounds_list):
                 tile = self.generator._build_tile(bounds, 512, res)
+
+                # empty check 
+
+                invalid = np.isclose(tile[self.layer_index['DEM']], self.NODATA) | ~np.isfinite(tile[self.layer_index['DEM']])
+                if invalid.any():
+                    continue
                 name = self._tile_name(bounds)
                 self.export(tile, out_dir, bounds, name, res)
 
