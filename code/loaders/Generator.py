@@ -98,6 +98,7 @@ class TileGenerator():
                     scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)),
                     bounds = tile['bounds'])
 
+
     def generate_tile(self, centre, res):
         x, y = centre
         bounds = _centred_bounds(x, y, 512, res)

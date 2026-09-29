@@ -14,6 +14,7 @@ from deployment.Deployer import Deployer
 import numpy as np
 import rasterio as rio
 from rasterio.merge import merge
+import geopandas as gpd
 
 # main class for whole model. calls deployer internally (which itself calls ResPredictor (which itself uses MaskRCNN wrapper class) and PostProcessor classes)
 #              SCD Model
@@ -37,9 +38,10 @@ class SCDModel():
                 dem_path:Path, 
                 device:str,
                 resolutions:list, 
+                out_path:Path,
                 veto_model_state=None, 
                 rgb_path=None, 
-                hyperparams=None):
+                hyperparams=None,):
         
         self.MaskRCNN_model_state = MaskRCNN_model_state
         self.veto_model_state = veto_model_state
@@ -47,8 +49,9 @@ class SCDModel():
         self.rgb_path = rgb_path
         self.device = device
         self.resolutions = resolutions
+        self.out_path = out_path
 
-        self.dem_path = self._resolve_data_source(self, dem_path)
+        self.dem_path = self._resolve_data_source(dem_path)
         self.deployer = self._create_deployer(hyperparams)
 
     # PUBLIC METHOD
@@ -67,6 +70,7 @@ class SCDModel():
             "support": return_support,
             "centroids": return_centroids}
 
+        self.deployer.merge_predictions(results['predictions'], results['transform'], results['crs'], self.out_path)
         return tuple(results[key] for key, include in requested.items() if include)
 
     # Private
@@ -129,3 +133,4 @@ class SCDModel():
             src.close()
 
         return output_path
+
