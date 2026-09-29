@@ -22,7 +22,7 @@ def get_urls_from_list(request, request_name):
     print(f'list of urls saved to {out_dir}')
 
 def _get_tile_url(tile):
-    tile_name = re.search(tile, PATTERN)
+    tile_name = re.search(PATTERN, tile)
     prefix = tile_name[:1]
     numcode = tile_name[2:3]
     cardinal = tile_name[1:]
