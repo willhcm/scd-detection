@@ -79,13 +79,14 @@ class Deployer:
     def __init__(
         self,
         dem_path,
-        rgb_path,
         model_state_dict,
         veto_model_dict,
         device,
         resolutions,
+        rgb_path=None,
         tile_size=512,
-        veto=True,
+        rgb_veto=False,
+        NODATA=0,
 
         # Veto-classifier settings.
         veto_tile_size=96, 
@@ -97,8 +98,12 @@ class Deployer:
         context_scale=4.0,
         min_context_width_m=768.0,
         max_context_width_m=4000.0,
-        native_res = 30):
-
+        native_res = 30,
+        stride_frac=0.75):
+                
+        self.base_res = None
+        self.NODATA = NODATA
+        self.mask_threshold = mask_threshold
         self.score_threshold = score_threshold
         self.mask_threshold = mask_threshold
 
@@ -112,22 +117,35 @@ class Deployer:
         self.device = device
         self.resolutions = resolutions
         self.native_res = native_res
+        self.stride_frac = stride_frac
         # Mask R-CNN deployment tile size.
         self.tile_size = tile_size
 
-        self.veto_model = VetoClassifier(
-            scalar_dim=len(VETO_SCALAR_NAMES),
-            dropout=0.3,
-        )
+        self.model_dict = model_state_dict
+        self.model = self.build_wrapper()
+        del self.model_dict
 
-        self.veto_model.load_state_dict(
-            veto_model_dict
-        )
+        # if using spectral data
+        if self.rgb_veto:
 
-        self.veto_model.to(self.device)
-        self.veto_model.eval()
+            self.veto_model = VetoClassifier(
+                scalar_dim=len(VETO_SCALAR_NAMES),
+                dropout=0.3,
+            )
 
-        self.to_veto = veto
+            self.veto_model.load_state_dict(
+                veto_model_dict
+            )
+
+            self.veto_model.to(self.device)
+            self.veto_model.eval()
+
+        # if not using spectral data 
+        else:
+            self.veto_model = DEMVetoer()
+            self.veto_model.load_state_dict(veto_model_dict)
+            self.veto_model.to(self.device)
+            self.veto_model.eval()
 
         self.veto_tile_size = veto_tile_size
         self.veto_context_tile_size = veto_context_tile_size
@@ -137,12 +155,11 @@ class Deployer:
         self.context_scale = context_scale
         self.min_context_width_m = min_context_width_m
         self.max_context_width_m = max_context_width_m
-        self.base_res = None
 
     def build_wrapper(self):
         return ModelWrapper(self.model_dict, self.score_threshold, self.mask_threshold)
 
-    def predict(self, stride_frac = 0.5):
+    def predict(self):
         """
         Predicts the probability maps for each resolution in self.resolutions using the Mask R-CNN model.
         """
@@ -157,7 +174,7 @@ class Deployer:
                 self.model,
                 self.device,
                 self.tile_size,
-                stride_frac=stride_frac)
+                stride_frac=self.stride_frac)
 
             prob_map, transform, crs = predictor.predict()
 
@@ -278,7 +295,7 @@ class Deployer:
 
         return (stitched, rejected, veto_probability_map, out_transform, out_crs)
 
-    def sweep(self, stride_frac=0.75):
+    def sweep(self):
 
         # Docstring generation aided by Github Copilot Free.
         """
@@ -320,7 +337,7 @@ class Deployer:
                 Coverage count for each pixel in the merged probability map.
         """
 
-        predictions = self.predict(stride_frac)
+        predictions = self.predict()
 
         (merged, transform, crs, support, coverage) = self.merge_predictions_pyramid(predictions)
 
@@ -409,7 +426,7 @@ class Deployer:
 # self contained res predictor to decrease amount of calculations needed to be made repetitively!
 class ResPredictor():
 
-    def __init__(self, res, dem_path, model, device, tile_size=512, stride_frac = 0.5, batch_size=16, ):
+    def __init__(self, res, dem_path, model, device, tile_size=512, stride_frac = 0.5, batch_size=16):
         
         self.device = device
         self.dem_path = dem_path
