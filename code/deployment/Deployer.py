@@ -20,7 +20,7 @@ from scipy.ndimage import sobel, gaussian_filter, laplace
 from deployment.ModelWrapper import ModelWrapper
 from modelling.helpers import calculate_hillshade
 from tqdm.auto import tqdm
-from PostProcesser import PostProcessor
+from deployment.PostProcesser import PostProcessor
 from modelling.Veto import VetoClassifier
 import geopandas as gpd
 from rasterio.features import shapes, sieve
