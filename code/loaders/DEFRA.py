@@ -1,5 +1,6 @@
 import re
 from pathlib import Path
+import geopandas as gpd
 
 class DEFRA():
 
@@ -9,7 +10,7 @@ class DEFRA():
 
         self.root = 'https://environment.data.gov.uk/tiles/collections/survey/lidar_composite_dtm/2022/1/'
 
-    def get_urls(self, request, request_name):
+    def get_urls_from_list(self, request, request_name):
 
         out_dir = Path(f'../../urls/{request_name}_URLs.txt')
 
@@ -33,5 +34,21 @@ class DEFRA():
 
         return URL
 
+    def get_urls_from_bounds(self, bounds, request_name):
+
+        out_dir = Path(f'../../urls/{request_name}_URLs.txt')
+
+        index = gpd.read_file('../../datastore/index.gpkg')
+        requested_bounds = gpd.read_file(bounds)
+
+        index = index.to_cris(requested_bounds.crs)
+
+        matches = gpd.sjoin(requested_bounds, index, predicate='intersects')
+
+        with open(out_dir, 'w') as out:
+            for tile in matches:
+                name = tile['TILE_NAME']
+                url = self._get_tile_url(name)
+                out.write(f'{url}\n')
 
 
