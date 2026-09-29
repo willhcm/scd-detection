@@ -84,12 +84,13 @@ class DEM_Based_Veto_Dataset(Dataset):
     A PyTorch Dataset class for loading and preprocessing data for the Veto classifier.
     Each item in the dataset consists of local RGB data, DEM context, scalar features and a binary label"""
 
-    def __init__(self, paths, rgb_size=96,dem_size=224):
+    def __init__(self, paths, dem_size=224):
         self.paths = list(paths)
         self.dem_size = dem_size
 
     def __len__(self):
         return len(self.paths)
+    
     def __getitem__(self, idx):
 
         path = self.paths[idx]

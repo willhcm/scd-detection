@@ -17,7 +17,7 @@ import torch
 from loaders.Tiler import DataSource, OVERLAP_SIGMA_MULTIPLIER
 from rasterio.enums import Resampling
 from scipy.ndimage import sobel, gaussian_filter, laplace
-from ModelWrapper import ModelWrapper
+from deployment.ModelWrapper import ModelWrapper
 from modelling.helpers import calculate_hillshade
 from tqdm.auto import tqdm
 from PostProcesser import PostProcessor
@@ -89,7 +89,7 @@ class Deployer:
         tile_size=512,
         rgb_veto=False,
         NODATA=0,
-
+        
         # Veto-classifier settings.
         veto_tile_size=96, 
         veto_context_tile_size=224,
