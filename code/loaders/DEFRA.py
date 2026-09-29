@@ -7,7 +7,7 @@ ROOT = 'https://environment.data.gov.uk/tiles/collections/survey/lidar_composite
 
 def get_urls_from_list(request, request_name):
 
-    out_dir = Path(f'urls/')
+    out_dir = Path.cwd() / "urls"
     out_dir.mkdir(exist_ok=True)
 
     with open(request) as f:
@@ -37,7 +37,7 @@ def _get_tile_url(tile):
 
 def get_urls_from_bounds(bounds, request_name):
 
-    out_dir = Path(f'urls/')
+    out_dir = Path.cwd() / "urls"
     out_dir.mkdir(exist_ok=True)
 
     index = gpd.read_file('../../../datastore/index.gpkg')
