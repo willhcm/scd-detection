@@ -1,6 +1,7 @@
 import re
 from pathlib import Path
 import geopandas as gpd
+import argparse
 
 PATTERN = r"[A-Z]{2}\d{2}[a-z]{2}"
 ROOT = 'https://environment.data.gov.uk/tiles/collections/survey/lidar_composite_dtm/2022/1/'
@@ -55,3 +56,20 @@ def get_urls_from_bounds(bounds, request_name):
             out.write(f'{url}\n')
 
     print(f'list of urls saved to {out_path}')
+
+def main(request, request_name):
+    if Path(request).suffix in ['.txt', '.csv']:
+        get_urls_from_list(request, request_name)
+    else:
+        get_urls_from_bounds(request, request_name)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("--request", required=True)
+    parser.add_argument("--request_name", required=True)
+
+    args = parser.parse_args()
+
+    main(args.request, args.request_name)
