@@ -3,8 +3,8 @@ from pathlib import Path
 import sys
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
-from loaders.ScaleNormalisedDataStack import DataSource
-from loaders.TileGen import TileGenerator
+from loaders.Tiler import DataSource
+from loaders.Generator import TileGenerator
 from dataclasses import dataclass
 
 @dataclass
@@ -15,12 +15,16 @@ class ResBin:
 
 class NegativeMiner:
 
-    def __init__(self, dem: DataSource, resolutions: list[float]):
+    LAYER_NAMES = ["DEM", "DEM_SLOPE", "HILLSHADE", "RR", "LAPLACE", "LABELS"]
+
+    def __init__(self, dem: DataSource, resolutions: list[float], NODATA=0):
         self.dem = dem
         self.resolutions = resolutions
         self.coverage = np.zeros(dem.data.shape, dtype=np.float32)
         self.generator = TileGenerator(dem=dem)
+        self.layer_index = {name: i for i, name in enumerate(self.LAYER_NAMES)}
         self.report_capacity()
+        self.NODATA = NODATA
 
     def _pixel_window(self, tile_bounds):
         minx, miny, maxx, maxy = tile_bounds
@@ -66,7 +70,7 @@ class NegativeMiner:
         np.random.shuffle(coords)
         return coords
 
-    def _find_tile_positions(self):
+    def _find_tile_positions(self, counts=None):
         results = {}
         count_ceiling = min([b.count for b in self.bins])
         
@@ -77,7 +81,7 @@ class NegativeMiner:
             for x0, y0 in self._grid_candidates(tile_side):
                 if len(placed) >= b.count:
                     break
-                if len(placed) >= count_ceiling:
+                if len(placed) >= count_ceiling * 2:
                     break
 
                 bounds = (x0, y0, x0 + tile_side, y0 + tile_side)
@@ -88,20 +92,45 @@ class NegativeMiner:
 
             if len(placed) < b.count:
                 print(f"{b.name}: placed {len(placed)}/{b.count}, candidates exhausted")
-            results[b.name] = placed
+            results[b.res] = placed
 
         return results
 
-    def generate_tiles(self, out_dir: Path):
+    @staticmethod
+    def _tile_name(tile_bounds, prefix="tile"):
+        minx, miny, maxx, maxy = tile_bounds
+        return f"{prefix}_{int(minx)}_{int(miny)}_{int(maxx)}_{int(maxy)}"
+
+    def export(self, tile, out_path, bounds, name, res):
+
+        labels = tile[self.layer_index["LABELS"]].astype(np.uint8)
+        image = tile[:self.layer_index["LABELS"]].astype(np.float32)
+
+        np.savez_compressed(str(Path(out_path) / name),
+                image=image, 
+                layer_names=np.array(self.LAYER_NAMES),
+                res=np.array(res, dtype=np.float32),
+                labels=labels,
+                scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)),
+                bounds=bounds)
+
+
+    def generate_tiles(self, out_dir: Path, counts=None):
         out_dir.mkdir(parents=True, exist_ok=True)
-        tile_positions = self._find_tile_positions()
+        tile_positions = self._find_tile_positions(counts)
 
         for res, bounds_list in tile_positions.items():
-            res_str = f'{res}m'
 
             for i, bounds in enumerate(bounds_list):
-                tile = self.generator._build_tile(bounds, 512, self.dem.res)
-                np.savez_compressed(out_dir / f"res_{res_str}_tile_{i:05d}.npz", data=tile)
+                tile = self.generator._build_tile(bounds, 512, res)
+
+                # empty check 
+
+                invalid = np.isclose(tile[self.layer_index['DEM']], self.NODATA) | ~np.isfinite(tile[self.layer_index['DEM']])
+                if invalid.any():
+                    continue
+                name = self._tile_name(bounds)
+                self.export(tile, out_dir, bounds, name, res)
 
         self.report_statistics(tile_positions)
 
