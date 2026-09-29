@@ -8,7 +8,6 @@ from loaders.Tiler import DataSource, ShapeLabels, _bounds_inside, _build_featur
 import numpy as np
 from rasterio.warp import Resampling
 from pathlib import Path 
-import matplotlib.pyplot as plt
 
 class TileGenerator():
 
@@ -16,7 +15,7 @@ class TileGenerator():
         self.dem = dem 
         self.target_crs = self.dem.crs
         self.sigma_px = 12
-        self.layer_names = ["DEM", "DEM_SLOPE", "HILLSHADE", "RR", "LAPLACE"]
+        self.layer_names = ["DEM", "DEM_SLOPE", "HILLSHADE", "RR", "LAPLACE", 'LABELS']
         self.layer_index = {name: i for i, name in enumerate(self.layer_names)}
 
         if label_path is not None:
@@ -97,12 +96,7 @@ class TileGenerator():
                     layer_index = self.layer_names,
                     labels=labels,
                     scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)),
-<<<<<<< HEAD:code/loaders/TileGen.py
-                    bounds=np.array(tile['bounds'], dtype=np.float32))
-=======
                     bounds = tile['bounds'])
->>>>>>> 920669c39f9a6ecbf950e3eb9aa2b3982620684b:code/loaders/Generator.py
-
 
     def generate_tile(self, centre, res):
         x, y = centre
@@ -115,14 +109,4 @@ class TileGenerator():
                      'positive': 0 if self.tile[self.layer_index["LABELS"]].sum() == 0 else 1,
                      'res': res}
         self.tiles.append(tile_dict)
-        self.plot_tile(tile_dict)
-
-    def plot_tile(self, tile):
-
-        fig, axs = plt.subplots(1, len(self.layer_names), figsize=(15, 5))
-        for i, name in enumerate(self.layer_names):
-            axs[i].imshow(tile['data'][i], cmap='gray')
-            axs[i].set_title(name)
-            axs[i].axis('off')
-        plt.show()
 
