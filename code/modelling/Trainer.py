@@ -5,9 +5,17 @@ import sys
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 
-from modelling.MaskRCNN import MaskRCNN, MaskRCNNDataset, collate_fn
+from modelling.MaskRCNN import MaskRCNN
 from loaders.dataset import DatasetWrapper
-from helpers.MaskRCNNFunctions import build_staged_optimizer, apply_training_stage
+from helpers.MaskRCNNFunctions import evaluate_maskrcnn_metrics, build_staged_optimizer, apply_training_stage, collate_fn
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+import numpy as np
+from modelling.Veto import VetoDataset
+import copy
+from tqdm import tqdm
 
 class Trainer():
 
@@ -16,8 +24,8 @@ class Trainer():
         self.dset = DatasetWrapper(root)
         self.device = device
 
-    def _get_loaders(self, folded_out_region):
-        train_set, val_set = dset.generate_dataset(folded_out_region)
+    def _get_loaders(self, folded_out_region, batch_size):
+        train_set, val_set = self.dset.generate_dataset(folded_out_region)
 
         train_loader = DataLoader(train_set,
                             shuffle=True,
@@ -31,8 +39,8 @@ class Trainer():
                         batch_size=batch_size,
                         collate_fn=collate_fn)
     
-    def train_fold(self, folded_out_region):
-        train_loader, val_loader = _get_loaders(folded_out_region)
+    def train_fold(self, folded_out_region, epochs=50, batch_size=8):
+        train_loader, val_loader = self._get_loaders(folded_out_region)
         model = MaskRCNN()
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -53,7 +61,7 @@ class Trainer():
 
         apply_training_stage(model, optimizer, current_stage)
 
-        for epoch in range(EPOCHS):
+        for epoch in range(epochs):
                 
             if epoch == 25:
                 current_stage = 2
@@ -71,7 +79,7 @@ class Trainer():
             model.train()
             train_loss = 0.0
 
-            pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{EPOCHS}")
+            pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}")
 
             for images, targets in pbar:
                 images = [img.to(device) for img in images]
@@ -154,8 +162,13 @@ class Trainer():
     def LORO_CV(self, regions):
         results = {}
         for region in regions: # where region is the region being folded out.
-            train_loader, val_loader = _get_loaders(region)
-            results[region] = train_fold(region)
+            train_loader, val_loader = self._get_loaders(region)
+            results[region] = self.train_fold(region)
 
         return results
 
+    def train_rgb_veto(self):
+        ...
+
+    def train_dem_veto(self):
+        ...

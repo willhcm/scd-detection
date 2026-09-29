@@ -14,18 +14,20 @@ import rasterio
 from rasterio.warp import reproject
 import numpy as np
 import torch
-from loaders.ScaleNormalisedDataStack import DataSource, OVERLAP_SIGMA_MULTIPLIER
+from loaders.Tiler import DataSource, OVERLAP_SIGMA_MULTIPLIER
 from rasterio.enums import Resampling
 from scipy.ndimage import sobel, gaussian_filter, laplace
-from ModelWrapper import ModelWrapper
+from deployment.ModelWrapper import ModelWrapper
 from modelling.helpers import calculate_hillshade
 from tqdm.auto import tqdm
-from PostProcesser import PostProcessor
+from deployment.PostProcesser import PostProcessor
 from modelling.Veto import VetoClassifier
 import geopandas as gpd
 from rasterio.features import shapes, sieve
 from shapely.geometry import shape
 from helpers.VetoHelpers import VETO_SCALAR_NAMES
+from modelling.DEMVeto import DEM_Based_Vetoer
+from scipy.ndimage import binary_dilation
 
 # AI assistance with conversion of DataStack logic to a deployment system. 
 # dont need to export tiles as they will only be used once at inference
@@ -79,14 +81,15 @@ class Deployer:
     def __init__(
         self,
         dem_path,
-        rgb_path,
         model_state_dict,
         veto_model_dict,
         device,
         resolutions,
+        rgb_path=None,
         tile_size=512,
-        veto=True,
-
+        rgb_veto=False,
+        NODATA=0,
+        
         # Veto-classifier settings.
         veto_tile_size=96, 
         veto_context_tile_size=224,
@@ -97,8 +100,12 @@ class Deployer:
         context_scale=4.0,
         min_context_width_m=768.0,
         max_context_width_m=4000.0,
-        native_res = 30):
-
+        native_res = 30,
+        stride_frac=0.75):
+                
+        self.base_res = None
+        self.NODATA = NODATA
+        self.mask_threshold = mask_threshold
         self.score_threshold = score_threshold
         self.mask_threshold = mask_threshold
 
@@ -112,22 +119,35 @@ class Deployer:
         self.device = device
         self.resolutions = resolutions
         self.native_res = native_res
+        self.stride_frac = stride_frac
         # Mask R-CNN deployment tile size.
         self.tile_size = tile_size
 
-        self.veto_model = VetoClassifier(
-            scalar_dim=len(VETO_SCALAR_NAMES),
-            dropout=0.3,
-        )
+        self.model_dict = model_state_dict
+        self.model = self.build_wrapper()
+        del self.model_dict
 
-        self.veto_model.load_state_dict(
-            veto_model_dict
-        )
+        # if using spectral data
+        if self.rgb_veto:
 
-        self.veto_model.to(self.device)
-        self.veto_model.eval()
+            self.veto_model = VetoClassifier(
+                scalar_dim=len(VETO_SCALAR_NAMES),
+                dropout=0.3,
+            )
 
-        self.to_veto = veto
+            self.veto_model.load_state_dict(
+                veto_model_dict
+            )
+
+            self.veto_model.to(self.device)
+            self.veto_model.eval()
+
+        # if not using spectral data 
+        else:
+            self.veto_model = DEM_Based_Vetoer()
+            self.veto_model.load_state_dict(veto_model_dict)
+            self.veto_model.to(self.device)
+            self.veto_model.eval()
 
         self.veto_tile_size = veto_tile_size
         self.veto_context_tile_size = veto_context_tile_size
@@ -137,12 +157,11 @@ class Deployer:
         self.context_scale = context_scale
         self.min_context_width_m = min_context_width_m
         self.max_context_width_m = max_context_width_m
-        self.base_res = None
 
     def build_wrapper(self):
         return ModelWrapper(self.model_dict, self.score_threshold, self.mask_threshold)
 
-    def predict(self, stride_frac = 0.5):
+    def predict(self):
         """
         Predicts the probability maps for each resolution in self.resolutions using the Mask R-CNN model.
         """
@@ -157,7 +176,8 @@ class Deployer:
                 self.model,
                 self.device,
                 self.tile_size,
-                stride_frac=stride_frac)
+                stride_frac=self.stride_frac,
+                NODATA=self.NODATA)
 
             prob_map, transform, crs = predictor.predict()
 
@@ -278,7 +298,7 @@ class Deployer:
 
         return (stitched, rejected, veto_probability_map, out_transform, out_crs)
 
-    def sweep(self, stride_frac=0.75):
+    def sweep(self):
 
         # Docstring generation aided by Github Copilot Free.
         """
@@ -320,7 +340,7 @@ class Deployer:
                 Coverage count for each pixel in the merged probability map.
         """
 
-        predictions = self.predict(stride_frac)
+        predictions = self.predict()
 
         (merged, transform, crs, support, coverage) = self.merge_predictions_pyramid(predictions)
 
@@ -409,7 +429,7 @@ class Deployer:
 # self contained res predictor to decrease amount of calculations needed to be made repetitively!
 class ResPredictor():
 
-    def __init__(self, res, dem_path, model, device, tile_size=512, stride_frac = 0.5, batch_size=16, ):
+    def __init__(self, res, dem_path, model, device, tile_size=512, stride_frac = 0.75, batch_size=16, NODATA=-3.4028234663852886e38):
         
         self.device = device
         self.dem_path = dem_path
@@ -418,6 +438,7 @@ class ResPredictor():
         self.tile_size = tile_size
         self.stride_frac = stride_frac
         self.batch_size = batch_size
+        self.NODATA = NODATA
 
         self.sigma_px = 12
 
@@ -476,6 +497,13 @@ class ResPredictor():
             dem_source.crs, strip_bounds, strip_width_px, self.padded_size, resampling=Resampling.cubic
         ).astype(np.float32)
 
+        invalid = np.isclose(dem_padded, self.NODATA) | ~np.isfinite(dem_padded)
+
+        invalid = binary_dilation(
+            invalid,
+            iterations=int(np.ceil(3 * self.sigma_px))
+        )
+
         sx = sobel(dem_padded, axis=0)
         sy = sobel(dem_padded, axis=1)
         slope = np.sqrt(sx ** 2 + sy ** 2)
@@ -494,8 +522,9 @@ class ResPredictor():
         slope = slope[s:e, :]
         lap = lap[s:e, :]
         hillshade = hillshade[s:e, :]
+        invalid = invalid[s:e, :]
 
-        strip = {'DEM': dem, 'RR': rr, 'DEM_SLOPE': slope, 'LAPLACE': lap, 'HILLSHADE': hillshade, 'RES': res_value}
+        strip = {'DEM': dem, 'RR': rr, 'DEM_SLOPE': slope, 'LAPLACE': lap, 'HILLSHADE': hillshade, 'RES': res_value, 'INVALID': invalid}
         return strip, minx
 
     # get next x tile from y-horizontal strip
@@ -503,12 +532,14 @@ class ResPredictor():
         col0 = int(round((x0 - strip_minx) / resolution))
         col1 = col0 + self.tile_size
 
-        dem_tile = strip['DEM'][:, col0:col1]
-        empty = (dem_tile == -9999) | np.isnan(dem_tile)
-        if empty.any():
+        invalid_tile = strip['INVALID'][:, col0:col1]
+
+        if invalid_tile.any():
             return None
 
-        return np.stack([strip[name][:, col0:col1] for name in TILE_ORDER], axis=0)
+        return np.stack(
+            [strip[name][:, col0:col1] for name in TILE_ORDER],
+            axis=0)
     
     # changed for batching approach for optimisation - takes long time to predict 1000kms^2
     def predict(self):
