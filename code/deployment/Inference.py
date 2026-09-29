@@ -6,12 +6,14 @@
 # imports
 import os
 import pathlib
-import glob
 from pathlib import Path
 import sys
 CODE_DIR = Path("../../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 from deployment.Deployer import Deployer
+import numpy as np
+import rasterio as rio
+from rasterio.merge import merge
 
 # main class for whole model. calls deployer internally (which itself calls ResPredictor (which itself uses MaskRCNN wrapper class) and PostProcessor classes)
 #              SCD Model
@@ -44,7 +46,7 @@ class SCDModel():
         self.rgb_veto = rgb_veto
         self.rgb_path = rgb_path
         self.device = device
-        self.resolutions=resolutions
+        self.resolutions = resolutions
 
         self.dem_path = self._resolve_data_source(self, dem_path)
         self.deployer = self._create_deployer(hyperparams)
@@ -85,6 +87,8 @@ class SCDModel():
 
     def _resolve_data_source(self, dem_path):
         if os.path.isfile(dem_path):
+            with rio.open(dem_path) as src:
+                self.NODATA = src.nodata
             return dem_path
         elif os.path.isdir(dem_path):
             return self._build_dem(dem_path)
@@ -92,6 +96,35 @@ class SCDModel():
             raise TypeError('Please input a valid file or directory as a PosixPath')
 
     def _build_dem(self, dem_dir):
-        paths = glob.glob(dem_dir)
+        if not isinstance(dem_dir, pathlib.PosixPath):
+            dem_dir = Path(dem_dir)
+
+        paths = dem_dir.glob('*.tif')
         
-        # merge DEMs in same way 
+        # merge DEMs in same way as QGIS
+
+        srcs = [rio.open(path) for path in paths]
+
+        mosaic, transform = merge(
+            srcs,
+            method="first"
+        )
+
+        self.NODATA = srcs[0].nodata
+
+        profile = srcs[0].profile.copy()
+        profile.update(
+            height=mosaic.shape[1],
+            width=mosaic.shape[2],
+            transform=transform,
+            nodata=0)
+
+        output_path = Path(dem_dir) / "merged.tif"
+
+        with rio.open(output_path, "w", **profile) as dst:
+            dst.write(mosaic)
+
+        for src in srcs:
+            src.close()
+
+        return output_path

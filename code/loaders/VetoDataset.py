@@ -4,7 +4,7 @@ from pathlib import Path
 from rasterio.enums import Resampling
 from rasterio.features import rasterize
 from rasterio.transform import from_bounds
-from ScaleNormalisedDataStack import ShapeLabels, DataSource
+from loaders.Tiler import ShapeLabels, DataSource
 from IPython.display import clear_output
 import numpy as np
 import ipywidgets as widgets

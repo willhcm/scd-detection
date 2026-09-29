@@ -15,7 +15,7 @@ import cv2 # computer vision, used for resizing images and masks.
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 
-from VetoHelpers import VETO_SCALAR_NAMES
+from helpers.VetoHelpers import VETO_SCALAR_NAMES
 
 class DEM_Based_Vetoer(nn.Module):
     """
