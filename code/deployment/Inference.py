@@ -80,6 +80,7 @@ class SCDModel():
             "resolutions": self.resolutions,
             "rgb_path": self.rgb_path,
             "rgb_veto": self.rgb_veto,
+            "NODATA": self.NODATA,
             **hyperparams
         }
 
