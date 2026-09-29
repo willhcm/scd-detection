@@ -1,7 +1,7 @@
 import numpy as np
 from pathlib import Path
 import sys
-CODE_DIR = Path("../../../code").resolve()
+CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 from loaders.Tiler import DataSource
 from loaders.Generator import TileGenerator

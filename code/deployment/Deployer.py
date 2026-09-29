@@ -105,6 +105,13 @@ class Deployer:
         self.NODATA = NODATA
         self.mask_threshold = mask_threshold
         self.score_threshold = score_threshold
+        self.mask_threshold = mask_threshold
+
+        self.model_dict = model_state_dict
+        self.model = self.build_wrapper()
+        del self.model_dict
+
+
         self.dem_path = dem_path
         self.rgb_path = rgb_path
         self.device = device
@@ -148,9 +155,6 @@ class Deployer:
         self.context_scale = context_scale
         self.min_context_width_m = min_context_width_m
         self.max_context_width_m = max_context_width_m
-        
-
-
 
     def build_wrapper(self):
         return ModelWrapper(self.model_dict, self.score_threshold, self.mask_threshold)
@@ -170,9 +174,7 @@ class Deployer:
                 self.model,
                 self.device,
                 self.tile_size,
-                stride_frac=self.stride_frac,
-                rr_sigma_m = 12 * self.native_res
-            )
+                stride_frac=self.stride_frac)
 
             prob_map, transform, crs = predictor.predict()
 
@@ -374,17 +376,9 @@ class Deployer:
         """
 
         # native res should determine smallest resolvable objects.
-        # for 30m, smallest objects should be say 3x3 or 4 px * 4 px. this translates to 90*90, and around 10000m2
-        if self.native_res == 30:
-            min_m2 = 8100        
-        if self.native_res == 1:
-            min_m2 = 36 # 6m x 6m , structure has to be 6 pixels by 6 pixels to be reasonably predicted.
-
-        # 100 = 10m * 10m. (minimum SCD size reasonable wanted)
-        scd_min_size = 100 / (self.base_res ** 2)
-        min_m2_in_px = min_m2 / (self.base_res ** 2)
-
-        min_pixels = int(np.floor(max(10, min_m2_in_px, scd_min_size)))
+        min_m2 = (self.native_res ** 2) * 10 # resolution constrain, an area.
+        min_scd_size = 20 ** 2 # minimum SCD size reasonable wanted. 20m x 20m = 400m^2, an area.
+        min_pixels = int(np.ceil(max(min_m2, min_scd_size) / (self.base_res ** 2)))
 
         binary = (
             np.isfinite(cleaned)
@@ -432,7 +426,7 @@ class Deployer:
 # self contained res predictor to decrease amount of calculations needed to be made repetitively!
 class ResPredictor():
 
-    def __init__(self, res, dem_path, model, device, tile_size=512, stride_frac = 0.5, batch_size=16, rr_sigma_m=None):
+    def __init__(self, res, dem_path, model, device, tile_size=512, stride_frac = 0.5, batch_size=16):
         
         self.device = device
         self.dem_path = dem_path
@@ -442,17 +436,7 @@ class ResPredictor():
         self.stride_frac = stride_frac
         self.batch_size = batch_size
 
-        
-        # now handing rr properly (resolution dependent)
-        if rr_sigma_m is None:
-            rr_sigma_m = 12.0 * res
-
-        self.sigma_m = float(rr_sigma_m)
-
-        self.sigma_px = max(
-            1.0,
-            self.sigma_m / res,
-        )
+        self.sigma_px = 12
 
         self.overlap_px = max(
             4,
@@ -520,12 +504,13 @@ class ResPredictor():
 
         # cut to size!
         s, e = self.overlap_px, self.overlap_px + self.tile_size
+        hillshade = calculate_hillshade(dem_padded)
+
         dem = dem_padded[s:e, :]
         rr = rr[s:e, :]
         slope = slope[s:e, :]
         lap = lap[s:e, :]
-
-        hillshade = calculate_hillshade(dem)
+        hillshade = hillshade[s:e, :]
 
         strip = {'DEM': dem, 'RR': rr, 'DEM_SLOPE': slope, 'LAPLACE': lap, 'HILLSHADE': hillshade, 'RES': res_value}
         return strip, minx
@@ -536,8 +521,8 @@ class ResPredictor():
         col1 = col0 + self.tile_size
 
         dem_tile = strip['DEM'][:, col0:col1]
-        empty = (dem_tile == 0) | np.isnan(dem_tile)
-        if empty.sum() / empty.size > 0.1:
+        empty = (dem_tile == -9999) | np.isnan(dem_tile)
+        if empty.any():
             return None
 
         return np.stack([strip[name][:, col0:col1] for name in TILE_ORDER], axis=0)
