@@ -97,11 +97,7 @@ class TileGenerator():
                     layer_index = self.layer_names,
                     labels=labels,
                     scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)),
-<<<<<<< HEAD:code/loaders/TileGen.py
-                    bounds=np.array(tile['bounds'], dtype=np.float32))
-=======
                     bounds = tile['bounds'])
->>>>>>> 920669c39f9a6ecbf950e3eb9aa2b3982620684b:code/loaders/Generator.py
 
 
     def generate_tile(self, centre, res):
