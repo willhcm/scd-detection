@@ -2,53 +2,50 @@ import re
 from pathlib import Path
 import geopandas as gpd
 
-class DEFRA():
+PATTERN = r"[A-Z]{2}\d{2}[a-z]{2}"
+ROOT = 'https://environment.data.gov.uk/tiles/collections/survey/lidar_composite_dtm/2022/1/'
 
-    PATTERN = r"[A-Z]{2}\d{2}[a-z]{2}"
+def get_urls_from_list(request, request_name):
 
-    def __init__(self):
+    out_dir = Path(f'../../urls/{request_name}_URLs.txt')
 
-        self.root = 'https://environment.data.gov.uk/tiles/collections/survey/lidar_composite_dtm/2022/1/'
+    with open(request) as f:
+        lines = f.readlines()
 
-    def get_urls_from_list(self, request, request_name):
+    with open(out_dir, 'w') as out:
+        for line in lines:
+            url = _get_tile_url(line)
+            out.write(f'{url}\n')
 
-        out_dir = Path(f'../../urls/{request_name}_URLs.txt')
+    print(f'list of urls saved to {out_dir}')
 
-        with open(request) as f:
-            lines = f.readlines()
+def _get_tile_url(tile):
+    tile_name = re.search(tile, PATTERN)
+    prefix = tile_name[:1]
+    numcode = tile_name[2:3]
+    cardinal = tile_name[1:]
+    ns, we = cardinal[0], cardinal[1]
+    ns_encoded = 0 if ns.lower() == 's' else 5
+    we_encoded = 0 if we.lower() == 'w' else 5
+    URL = f'{ROOT}{prefix}{numcode[0]}{we_encoded}{numcode[1]}{ns_encoded}'
 
-        with open(out_dir, 'w') as out:
-            for line in lines:
-                url = self._get_tile_url(line)
-                out.write(f'{url}\n')
+    return URL
 
-    def _get_tile_url(self, tile):
-        tile_name = re.search(tile, self.PATTERN)
-        prefix = tile_name[:1]
-        numcode = tile_name[2:3]
-        cardinal = tile_name[1:]
-        ns, we = cardinal[0], cardinal[1]
-        ns_encoded = 0 if ns.lower() == 's' else 5
-        we_encoded = 0 if we.lower() == 'w' else 5
-        URL = f'{self.root}{prefix}{numcode[0]}{we_encoded}{numcode[1]}{ns_encoded}'
+def get_urls_from_bounds(bounds, request_name):
 
-        return URL
+    out_dir = Path(f'../../urls/{request_name}_URLs.txt')
 
-    def get_urls_from_bounds(self, bounds, request_name):
+    index = gpd.read_file('../../datastore/index.gpkg')
+    requested_bounds = gpd.read_file(bounds)
 
-        out_dir = Path(f'../../urls/{request_name}_URLs.txt')
+    index = index.to_cris(requested_bounds.crs)
 
-        index = gpd.read_file('../../datastore/index.gpkg')
-        requested_bounds = gpd.read_file(bounds)
+    matches = gpd.sjoin(requested_bounds, index, predicate='intersects')
 
-        index = index.to_cris(requested_bounds.crs)
+    with open(out_dir, 'w') as out:
+        for tile in matches:
+            name = tile['TILE_NAME']
+            url = _get_tile_url(name)
+            out.write(f'{url}\n')
 
-        matches = gpd.sjoin(requested_bounds, index, predicate='intersects')
-
-        with open(out_dir, 'w') as out:
-            for tile in matches:
-                name = tile['TILE_NAME']
-                url = self._get_tile_url(name)
-                out.write(f'{url}\n')
-
-
+    print(f'list of urls saved to {out_dir}')
