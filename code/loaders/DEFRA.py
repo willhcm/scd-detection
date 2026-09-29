@@ -7,7 +7,7 @@ ROOT = 'https://environment.data.gov.uk/tiles/collections/survey/lidar_composite
 
 def get_urls_from_list(request, request_name):
 
-    out_dir = Path(f'/urls/')
+    out_dir = Path(f'../../../urls/')
     out_dir.mkdir(exist_ok=True)
 
     with open(request) as f:
@@ -19,13 +19,15 @@ def get_urls_from_list(request, request_name):
             url = _get_tile_url(line)
             out.write(f'{url}\n')
 
-    print(f'list of urls saved to {out_dir}')
+    print(f'list of urls saved to {out_path}')
 
 def _get_tile_url(tile):
-    tile_name = re.search(PATTERN, tile)
-    prefix = tile_name[:1]
-    numcode = tile_name[2:3]
-    cardinal = tile_name[1:]
+    match = re.search(PATTERN, tile)
+    tile_name = match[0]
+    
+    prefix = tile_name[:2]
+    numcode = tile_name[2:4]
+    cardinal = tile_name[-2:]
     ns, we = cardinal[0], cardinal[1]
     ns_encoded = 0 if ns.lower() == 's' else 5
     we_encoded = 0 if we.lower() == 'w' else 5
@@ -35,13 +37,13 @@ def _get_tile_url(tile):
 
 def get_urls_from_bounds(bounds, request_name):
 
-    out_dir = Path(f'/urls/')
+    out_dir = Path(f'../../../urls/')
     out_dir.mkdir(exist_ok=True)
 
-    index = gpd.read_file('../../datastore/index.gpkg')
+    index = gpd.read_file('../../../datastore/index.gpkg')
     requested_bounds = gpd.read_file(bounds)
 
-    index = index.to_cris(requested_bounds.crs)
+    index = index.to_crs(requested_bounds.crs)
 
     matches = gpd.sjoin(requested_bounds, index, predicate='intersects')
 
