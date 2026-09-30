@@ -60,8 +60,10 @@ def get_urls_from_bounds(bounds, request_name):
 def main(request, request_name):
     if Path(request).suffix in ['.txt', '.csv']:
         get_urls_from_list(request, request_name)
-    else:
+    elif Path(request).suffix in ['.geojson', '.gpkg']:
         get_urls_from_bounds(request, request_name)
+    else:
+        raise ValueError(f"Unsupported file type: {Path(request).suffix}. Please provide a .txt, .csv, .geojson, or .gpkg file.")
 
 
 if __name__ == "__main__":
