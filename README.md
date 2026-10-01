@@ -20,6 +20,20 @@ Navigate into the scd-detection repository directory:
 
 ```cd documents/scd-detection``` (equivalent command to navigate through your files)
 
+Check conda is installed:
+
+```conda --version```
+
+If not, try and install Miniconda through this [link](https://www.anaconda.com/docs/getting-started/installation)
+
+(Let me know if it doesn't work, it can be annoying).
+
+Once done, navigate to the scd-detection directory:
+
+```cd documents/scd-detection``` (equivalent command to navigate through your files)
+
+and run:
+
 ```conda env create -n scd_env -f ./envs/enviroment.yml```
 
 After this has been done the first time, simply activate the environment each time you log-on. 
