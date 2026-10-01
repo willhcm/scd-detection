@@ -1,92 +1,101 @@
-# Automatic SCD Detection for Natural Hydrogen Exploration using a Scale-Normalised Mask R-CNN with an Image-Pyramid
+# Setting up the model and HPC!
 
-This repository contains the code for the deep learning strategy for scale-invariant cross-geography SCD detection, as outlined in the paper (in deliverables/). Code for reproducibility and accessing source data (and datasets collated in this study) can be found in code/reproduce.ipynb. 
+All commands are to be run on the command line.
 
-## Main Code Structure
+## Cloning the GitHub repository.
 
-```text
-code/
-├── deployment/
-│   ├── Deployer.py
-│   ├── ModelWrapper.py
-│   ├── PostProcesser.py
-│   └── README.md
-├── depreciated/
-├── helpers/
-│   ├── geostats.py
-│   ├── MaskRCNNFunctions.py
-│   ├── raster_helpers.py
-│   ├── veto_helpers.py
-│   └── README.md
-├── loaders/
-│   ├── ScaleNormalisedDataStack.py
-│   ├── VetoDataset.py
-│   └── README.md
-├── modelling/
-│   ├── helpers.py
-│   ├── MaskRCNN.py
-│   ├── TrainingFunctions.py
-│   ├── Veto.py
-│   └── README.md
-└── notebooks/
-    ├── colab/
-    ├── field/
-    ├── geostats/
-    ├── plots/
-    │   ├── Table2.ipynb
-    │   ├── Fig2a.ipynb
-    │   ├── Fig2b.ipynb
-    │   └── Fig5b.ipynb
-    ├── validate.ipynb
-    └── reproduce.ipynb
-    
-```
+Navigate to your desired destination directory, e.g.:
 
-### Reproducibility
+``` cd documents/MSci ```
 
-the directory ```notebooks/``` contains code to reproduce:
+```git clone tbw```
 
-- ```reproduce.ipynb``` The training of the Mask R-CNN and the Veto classifier, and run inference. 
-- ```validate.ipynb``` Leave-One-Region-Out cross validation of the Mask R-CNN.
-- ```plots/``` Code to reproduce the plots displayed in the report. Data for these files can be found in ```datastore/```
+## Python Environment and Model Downloads
 
-This codebase has no other functionality than to train and deploy the Mask R-CNN inference pipeline, so the reproducibility section is not large.
+### Python Environment
 
-## Other Repository Directories
+First, create the python environment. NOTE: THIS ONLY NEEDS TO BE DONE ONCE PER MACHINE.
 
-### Environments
+Navigate into the scd-detection repository directory:
 
-Due to clashes with PyProj versions and Rasterio (specifically for casting geopandas dataframes to different Coordinates Reference Systems), two environments are used: 
+```cd documents/scd-detection``` (equivalent command to navigate through your files)
 
-- `environment-model.yml` — model training and inference (e.g., ```Reproduce.ipynb``` and ```Validate.ipynb```)
-- `environment-analysis.yml` — geospatial/statistical analysis (e.g., ```Fig5b.ipynb```)
+Check conda is installed:
 
-environment.yml files were generated with assistance from ChatGPT.
+```conda --version```
 
-### Datastore
+If not, try and install Miniconda through this [link](https://www.anaconda.com/docs/getting-started/installation)
 
-Contains the source data and model results needed to reproduce anything written in the reproducibility section above. Also contains .svg files for all figures seen in the report.
+(Let me know if it doesn't work, it can be annoying).
 
-### Depreciated
+Once done, navigate to the scd-detection directory:
 
-The depreciated directory contains many files which were used in development. Similarly, many small functions which previously used have been moved out of the main code/ directory into the depreciated/ directory to ensure that the main directory is clear and concise. 
+```cd documents/scd-detection``` (equivalent command to navigate through your files)
 
-## Modelling Methods
+and run:
 
-Predictions of candidate SCDs are generated using the following model architecture and inference strategy.
+```conda env create -n scd_env -f ./envs/enviroment.yml```
 
-![ModelFigure](datastore/assets/Model.png)
-*Schematic of deep learning methodology for scale-invariant SCD detection: (a)
-adapted Mask R-CNN architecture for SCD detection, (b) inference strategy using a Scale-
-Normalised Image Pyramid (SNIP) to maximise the receptive field of the inference mech-
-anism, (c) DEM and DEM-derivative input channels, (d) architecture of the veto classifier
-used to screen candidates. RPN = Regional Proposal Network, FPN = Feature Pyramid
-Network, ROI = Region of Interest, FiLM = Feature-Wise Linear Modulation, CNN = Convolutional Neural Network, FFN = Feed Forward Network
+After this has been done the first time, simply activate the environment each time you log-on. 
 
-## AI Statement
+```conda activate scd_env```
 
-AI was used throughout the IRP period for assistance with code generation, especially for the use of the rasterio package which I had not previously used. If an AI tool has had influence on the code, this is stated either above the relevant code or at the top of the python script where it's assistance is clearly explained. 
+### Model Download. NOTE: ONLY NEEDS TO BE DONE ONCE!
 
-## License
+Download the two models (MaskRCNN, DEMVeto) from this [link](https://drive.google.com/drive/folders/1SP--9SlvA7zn0S0yoilJTJe9A-x-umr_?usp=sharing):
 
-This project is licensed under the MIT License. See `LICENSE` for details.
+Copy them to the virtual machine:
+
+```cp ...```
+
+---
+
+# Running the Model!
+
+## Local Machine
+
+### Run urls.py to generate a new .txt files of valid download URLs. Need to input a manually collated .txt list of tile names, or .gpkg file from ArcGIS/QGIS which outlines the region wanted:
+
+```python3 scripts/urls.py --request NEW_LIST_OF_DEFRA_TILE_NAMES.txt --request_name 'CUSTOMISE_THIS_REQUEST_NAME'```
+
+or 
+
+```python3 scripts/urls.py --request WANTED_REGION.gpkg --request_name 'CUSTOMISE_THIS_REQUEST_NAME'```
+
+### Second, download the files using curl. The files will be stored in a directory called tiles/
+
+```xargs -n 1 curl -L -J -O --output-dir ./tiles < ./urls/test_urls.txt```
+
+### Third, unzip all the files (inplace), keeping only the .tif files (the actual data):
+
+```cd tiles```
+```for f in *.zip; do unzip -j -o "$f" '*.tif' -d . && rm "$f"; done```
+```cd ..```
+
+### Next, move these files from your local machine to the virtual HPC
+
+First, delete previous files stored in the directory (don't want to overload the memory on the HPC)
+
+```cmd tbw```
+
+Then, copy the DEM files from your local machine to the HPC.
+
+```cmd tbw```
+
+## Virtual Machine
+
+First, we need to create (only once) and activate (each log-in) the python environment (see top of page).
+
+### To run the prediction model, inputting the appropriate inputs. Default command is below. MAKE SURE TO CHANGE NAME OF THE RUN OR IT WILL OVERWRITE THE PREVIOUS RESULTS FILE!!
+
+```python3 scripts/predict.py --dem_path './tiles' --model_state_path './models/MaskRCNN.pt' --veto_model_state_path './model/Veto.pt' --resolutions [1, 3, 5] --rgb_veto False --device 'cuda' --run_name='RUN_NAME'```
+
+This will output the results into ./results/RUN_NAME/predictions.shp
+
+an example of a good run_name would be: 'SW_Cornwall_1000km2_Zone1'. (could be a good idea to systematically split up England into small subregions in a named grid type thing so its clear through the file names.)
+
+
+
+
+
+
