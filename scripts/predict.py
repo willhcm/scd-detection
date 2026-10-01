@@ -1,4 +1,5 @@
 import argparse
+import os
 from pathlib import Path
 import sys
 
@@ -19,9 +20,21 @@ DEPLOYER_PARAMS = {
     "stride_frac": 0.75,
 }
 
-def main(dem_path, model_state_path, veto_model_state_path, rgb_path, output_path, device, resolutions, rgb_veto):
+def main(dem_path, model_state_path, veto_model_state_path, rgb_path, device, resolutions, rgb_veto, run_name):
     # Convert string to boolean
     rgb_veto = rgb_veto.lower() == 'true'
+    return_all = return_all.lower() == 'true'
+
+    out_path = Path.cwd() / "results" / run_name
+    if out_path.exists():
+        raise FileExistsError(f"Output directory {out_path} already exists. Please choose a different run name to avoid overwriting existing results.")
+    out_path.mkdir()
+
+    dem_path = Path(dem_path)
+    model_state_path = Path(model_state_path)
+    veto_model_state_path = Path(veto_model_state_path) if veto_model_state_path else None
+    rgb_path = Path(rgb_path) if rgb_path else None
+    output_path = Path(output_path)
 
     # Create an instance of the SCDModel
     scd_model = SCDModel(
@@ -42,18 +55,22 @@ def main(dem_path, model_state_path, veto_model_state_path, rgb_path, output_pat
         return_support=True,
         return_centroids=True
     )
-
+    if return_all:
+        return predictions, transform, crs, coverage, support, centroids
+    
     return
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Deploy SCD model on DEM data.")
     parser.add_argument("--dem_path", type=str, required=True, help="Path to the DEM file.")
+    parser.add_argument("--run_name", type=str, required=True, help="Name of the run.")
     parser.add_argument("--model_state_path", type=str, required=True, help="Path to the Mask R-CNN model state dictionary.")
     parser.add_argument("--veto_model_state_path", type=str, required=False, help="Path to the veto model state dictionary.")
     parser.add_argument("--rgb_path", type=str, required=False, help="Path to the RGB file for vetoing.")
-    parser.add_argument("--output_path", type=str, required=True, help="Path to save the output predictions.")
     parser.add_argument("--device", type=str, default="cuda", help="Device to run the model on (e.g., 'cuda' or 'cpu').")
-    parser.add_argument("--resolutions", type=float, nargs='+', default=[1.0], help="List of resolutions to process.")
+    parser.add_argument("--resolutions", type=list, nargs='+', default=[1.0], help="List of resolutions to process.")
     parser.add_argument("--rgb_veto", type=str, required=False, help="Boolean flag to indicate whether to use RGB vetoing (True/False).")
+    parser.add_argument("--return_all", type=str, required=True, help="Flag to indicate whether to return coverage, support, and centroids.")
     args = parser.parse_args()
-    main(args.dem_path, args.model_state_path, args.veto_model_state_path, args.rgb_path, args.output_path, args.device, args.resolutions, args.rgb_veto)
+    main(args.dem_path, args.model_state_path, args.veto_model_state_path, args.rgb_path, args.device, args.resolutions, args.rgb_veto, args.run_name, return_all=args.return_all)
