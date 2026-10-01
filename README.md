@@ -6,7 +6,7 @@ All commands are to be run on the command line.
 
 Navigate to your desired destination directory, e.g.:
 
-``` cd documents/MSci ```
+```cd documents/MSci ```
 
 ```git clone tbw```
 
@@ -85,17 +85,20 @@ Then, copy the DEM files from your local machine to the HPC.
 We need to clone the repository, create and activate an environment, like in the first few steps above:
 
 ```git clone ```
+
 ```cd scd-detection```
+
 ```conda env create -n scd_env -f ./envs/enviroment.yml```
+
 ```conda activate scd_env```
 
 To run the prediction model, inputting the appropriate inputs. Default command is below. MAKE SURE TO CHANGE NAME OF THE RUN OR IT WILL OVERWRITE THE PREVIOUS RESULTS FILE!!
 
-```python3 scripts/predict.py --dem_path './tiles' --model_state_path './models/MaskRCNN.pt' --veto_model_state_path './model/Veto.pt' --resolutions [1, 3, 5] --rgb_veto False --device 'cuda' --run_name='RUN_NAME'```
+```python3 scripts/predict.py --dem_path tiles --model_state_path models/MaskRCNN.pt --veto_model_state_path models/DEMVeto.pt --resolutions 1 3 5 --rgb_veto False --device cpu --run_name test```
 
 This will output the results into ./results/RUN_NAME/predictions.shp
 
-an example of a good run_name would be: 'SW_Cornwall_1000km2_Zone1'. (could be a good idea to systematically split up England into small subregions in a named grid type thing so its clear through the file names.)
+an example of a good run_name would be: 'SW_Cornwall_Zone1'. (could be a good idea to systematically split up England into small subregions in a named grid type thing so its clear through the file names.)
 
 
 

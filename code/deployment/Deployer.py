@@ -10,17 +10,16 @@ import sys
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 
-import rasterio
 from rasterio.warp import reproject
 import numpy as np
 import torch
-from loaders.Tiler import DataSource, OVERLAP_SIGMA_MULTIPLIER
+from loaders.Tiler import OVERLAP_SIGMA_MULTIPLIER
 from rasterio.enums import Resampling
 from scipy.ndimage import sobel, gaussian_filter, laplace
 from deployment.ModelWrapper import ModelWrapper
 from modelling.helpers import calculate_hillshade
 from tqdm.auto import tqdm
-from deployment.PostProcesser import PostProcessor
+from deployment.PostProcesser import PostProcessor, WindowedDataSource
 from modelling.Veto import VetoClassifier
 import geopandas as gpd
 from rasterio.features import shapes, sieve
@@ -122,6 +121,7 @@ class Deployer:
         self.stride_frac = stride_frac
         # Mask R-CNN deployment tile size.
         self.tile_size = tile_size
+        self.rgb_veto = rgb_veto
 
         self.model_dict = model_state_dict
         self.model = self.build_wrapper()
@@ -307,7 +307,7 @@ class Deployer:
         Returns
         -------
 
-        If self.to_veto is False:
+        If self.rgb_veto is False:
             predictions: dict
                 Dictionary of predictions at each resolution.
             merged: np.ndarray
@@ -321,7 +321,7 @@ class Deployer:
             coverage: np.ndarray
                 Coverage count for each pixel in the merged probability map.
 
-        If self.to_veto is True:
+        If self.rgb_veto is True:
             predictions: dict
                 Dictionary of predictions at each resolution.
             cleaned: np.ndarray
@@ -344,7 +344,7 @@ class Deployer:
 
         (merged, transform, crs, support, coverage) = self.merge_predictions_pyramid(predictions)
 
-        if not self.to_veto:
+        if not self.rgb_veto:
             return (predictions, merged, transform, crs, support, coverage)
 
         (cleaned, rejected, veto_probability_map, out_transform, out_crs) = self.veto(merged, transform, crs)
@@ -548,7 +548,7 @@ class ResPredictor():
         res_value = np.log(resolution) / np.log(15.0)
 
         # msame logic as before
-        dem_source = DataSource.from_tiff_utm(self.dem_path, native_res=resolution)
+        dem_source = WindowedDataSource.from_tiff_utm(self.dem_path, native_res=resolution)
         h, w = dem_source.height, dem_source.width
         transform = dem_source.transform
 

@@ -17,6 +17,7 @@ from rasterio.merge import merge
 import geopandas as gpd
 
 # main class for whole model. calls deployer internally (which itself calls ResPredictor (which itself uses MaskRCNN wrapper class) and PostProcessor classes)
+#
 #              SCD Model
 #                   |
 #                   v
@@ -26,9 +27,12 @@ import geopandas as gpd
 #            |               |
 #            v               v
 #        ResPredictor   PostProcessor
-#            |                
-#            v               
-#       MaskRCNN Wrapper
+#            |               |
+#            v               v
+#     MaskRCNN Wrapper   Veto Model
+#           | 
+#           v 
+#      MaskRCNN Model
 
 class SCDModel():
 
@@ -60,6 +64,8 @@ class SCDModel():
                 return_support=False,
                 return_centroids=False):
 
+        print('Running SCD model prediction...')
+
         results = self.deployer.sweep()
 
         requested = {
@@ -71,6 +77,7 @@ class SCDModel():
             "centroids": return_centroids}
 
         self.deployer.merge_predictions(results['predictions'], results['transform'], results['crs'], self.out_path)
+
         return tuple(results[key] for key, include in requested.items() if include)
 
     # Private
@@ -104,6 +111,8 @@ class SCDModel():
         if not isinstance(dem_dir, pathlib.PosixPath):
             dem_dir = Path(dem_dir)
 
+        print('Building DEM from directory of tiles...')
+
         paths = dem_dir.glob('*.tif')
         
         # merge DEMs in same way as QGIS
@@ -115,14 +124,16 @@ class SCDModel():
             method="first"
         )
 
-        self.NODATA = srcs[0].nodata
+        # Replace NoData
+        mosaic[mosaic == srcs[0].nodata] = -9999
+        self.NODATA = -9999
 
         profile = srcs[0].profile.copy()
         profile.update(
             height=mosaic.shape[1],
             width=mosaic.shape[2],
             transform=transform,
-            nodata=0)
+            nodata=self.NODATA)
 
         output_path = Path(dem_dir) / "merged.tif"
 
