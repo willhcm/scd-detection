@@ -13,8 +13,7 @@ sys.path.insert(0, str(CODE_DIR))
 from deployment.Deployer import Deployer
 import numpy as np
 import rasterio as rio
-from rasterio.merge import merge
-import geopandas as gpd
+import subprocess
 
 # main class for whole model. calls deployer internally (which itself calls ResPredictor (which itself uses MaskRCNN wrapper class) and PostProcessor classes)
 #
@@ -111,37 +110,27 @@ class SCDModel():
         if not isinstance(dem_dir, pathlib.PosixPath):
             dem_dir = Path(dem_dir)
 
-        print('Building DEM from directory of tiles...')
+        paths = list(dem_dir.glob("*.tif"))
+        if 'merged.tif' in [p.name for p in paths]:
+            raise FileExistsError(f"merged.tif already exists in {dem_dir}. Please remove it or choose a different directory.")
 
-        paths = dem_dir.glob('*.tif')
-        
-        # merge DEMs in same way as QGIS
+        print(f"Building DEM from directory: {dem_dir}")
 
-        srcs = [rio.open(path) for path in paths]
+        with rio.open(paths[0]) as src:
+            self.NODATA = src.nodata
 
-        mosaic, transform = merge(
-            srcs,
-            method="first"
-        )
-
-        # Replace NoData
-        mosaic[mosaic == srcs[0].nodata] = -9999
-        self.NODATA = -9999
-
-        profile = srcs[0].profile.copy()
-        profile.update(
-            height=mosaic.shape[1],
-            width=mosaic.shape[2],
-            transform=transform,
-            nodata=self.NODATA)
+        subprocess.run([
+            "gdalwarp",
+            "-srcnodata", str(self.NODATA),
+            "-dstnodata", "-9999",
+            "-co", "COMPRESS=LZW",
+            "-co", "TILED=YES",
+            "-of", "GTiff",
+            *[str(p) for p in paths],
+            str(dem_dir / "merged.tif")
+        ], check=True)
 
         output_path = Path(dem_dir) / "merged.tif"
-
-        with rio.open(output_path, "w", **profile) as dst:
-            dst.write(mosaic)
-
-        for src in srcs:
-            src.close()
 
         return output_path
 
