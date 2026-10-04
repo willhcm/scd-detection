@@ -344,13 +344,32 @@ class Deployer:
 
         (merged, transform, crs, support, coverage) = self.merge_predictions_pyramid(predictions)
 
+        
         if not self.rgb_veto:
-            return (predictions, merged, transform, crs, support, coverage)
+            out = {
+                "predictions": predictions,
+                "merged": merged,
+                "transform": transform,
+                "crs": crs,
+                "support": support,
+                "coverage": coverage
+            }
+            return out
 
         (cleaned, rejected, veto_probability_map, out_transform, out_crs) = self.veto(merged, transform, crs)
 
-        return (predictions, cleaned, rejected, veto_probability_map, out_transform,
-            out_crs, support, coverage)
+        out = {
+            "predictions": predictions,
+            "cleaned": cleaned,
+            "rejected": rejected,
+            "veto_probability_map": veto_probability_map,
+            "transform": out_transform,
+            "crs": out_crs,
+            "support": support,
+            "coverage": coverage
+        }
+
+        return out
 
     # merges all veto-cleaned predictions and then sieves remaining predictions
     # which are too physically small to be reasonably resolvable given the native DEM. 
