@@ -3,3 +3,5 @@ tiles/
 urls/
 request.txt
 models/
+.vscode/
+.DS_Store

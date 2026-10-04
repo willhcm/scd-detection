@@ -13,10 +13,10 @@ sys.path.insert(0, str(CODE_DIR))
 from deployment.Deployer import Deployer
 import numpy as np
 import rasterio as rio
-from rasterio.merge import merge
-import geopandas as gpd
+import subprocess
 
 # main class for whole model. calls deployer internally (which itself calls ResPredictor (which itself uses MaskRCNN wrapper class) and PostProcessor classes)
+#
 #              SCD Model
 #                   |
 #                   v
@@ -26,9 +26,12 @@ import geopandas as gpd
 #            |               |
 #            v               v
 #        ResPredictor   PostProcessor
-#            |                
-#            v               
-#       MaskRCNN Wrapper
+#            |               |
+#            v               v
+#     MaskRCNN Wrapper   Veto Model
+#           | 
+#           v 
+#      MaskRCNN Model
 
 class SCDModel():
 
@@ -60,6 +63,8 @@ class SCDModel():
                 return_support=False,
                 return_centroids=False):
 
+        print('Running SCD model prediction...')
+
         results = self.deployer.sweep()
 
         requested = {
@@ -71,6 +76,7 @@ class SCDModel():
             "centroids": return_centroids}
 
         self.deployer.merge_predictions(results['predictions'], results['transform'], results['crs'], self.out_path)
+
         return tuple(results[key] for key, include in requested.items() if include)
 
     # Private
@@ -104,33 +110,27 @@ class SCDModel():
         if not isinstance(dem_dir, pathlib.PosixPath):
             dem_dir = Path(dem_dir)
 
-        paths = dem_dir.glob('*.tif')
-        
-        # merge DEMs in same way as QGIS
+        paths = list(dem_dir.glob("*.tif"))
+        if 'merged.tif' in [p.name for p in paths]:
+            raise FileExistsError(f"merged.tif already exists in {dem_dir}. Please remove it or choose a different directory.")
 
-        srcs = [rio.open(path) for path in paths]
+        print(f"Building DEM from directory: {dem_dir}")
 
-        mosaic, transform = merge(
-            srcs,
-            method="first"
-        )
+        with rio.open(paths[0]) as src:
+            self.NODATA = src.nodata
 
-        self.NODATA = srcs[0].nodata
-
-        profile = srcs[0].profile.copy()
-        profile.update(
-            height=mosaic.shape[1],
-            width=mosaic.shape[2],
-            transform=transform,
-            nodata=0)
+        subprocess.run([
+            "gdalwarp",
+            "-srcnodata", str(self.NODATA),
+            "-dstnodata", "-9999",
+            "-co", "COMPRESS=LZW",
+            "-co", "TILED=YES",
+            "-of", "GTiff",
+            *[str(p) for p in paths],
+            str(dem_dir / "merged.tif")
+        ], check=True)
 
         output_path = Path(dem_dir) / "merged.tif"
-
-        with rio.open(output_path, "w", **profile) as dst:
-            dst.write(mosaic)
-
-        for src in srcs:
-            src.close()
 
         return output_path
 

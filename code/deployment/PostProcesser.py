@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from rasterio.enums import Resampling
 from rasterio.transform import from_bounds
-from helpers.VetoHelpers import build_dem_context
+from helpers.VetoHelpers import build_dem_context, normalise_scalar_features, normalise_dem_context
 import rasterio as rio
 from rasterio.warp import reproject
 
@@ -98,16 +98,17 @@ class PostProcessor:
         context_tile_size,
         device,
         model,
-        rgb_path,
         dem_path,
         batch_size=32,
+        rgb_path=None,
         detect_threshold=0.40,
         veto_threshold=0.90,
         min_crop_pixels=64,
         object_fraction=0.5,
         context_scale=4.0,
         min_context_width_m=768.0,
-        max_context_width_m=4000.0):
+        max_context_width_m=4000.0,
+        rgb=False):
 
         self.tile_size = tile_size
         self.context_tile_size = context_tile_size
@@ -120,9 +121,12 @@ class PostProcessor:
         # data origins
         self.rgb_path = rgb_path
         self.dem_path = dem_path
+        self.rgb = rgb
 
         # data source objects
-        self.rgb_source = WindowedDataSource.from_tiff_utm(rgb_path,native_res=3, type="RGB")
+        if self.rgb:
+            self.rgb_source = WindowedDataSource.from_tiff_utm(rgb_path,native_res=3, type="RGB")
+
         self.dem_source = WindowedDataSource.from_tiff(dem_path,type="DEM")
 
         # hyperparameters
@@ -228,53 +232,57 @@ class PostProcessor:
 
         diameter_m = (obj.equivalent_diameter_area * prediction_pixel_res)
 
-        # match planet rgb res
-        rgb_pixel_res = self.rgb_source.res
+        if self.rgb:
 
-        # get tile crop width (rgb)
-        min_crop_width_m = (self.min_crop_pixels * rgb_pixel_res)
+            # match planet rgb res
+            rgb_pixel_res = self.rgb_source.res
 
-        object_crop_width_m = (diameter_m / self.object_fraction)
+            # get tile crop width (rgb)
+            min_crop_width_m = (self.min_crop_pixels * rgb_pixel_res)
 
-        local_crop_width_m = max( min_crop_width_m, object_crop_width_m)
+            object_crop_width_m = (diameter_m / self.object_fraction)
 
-        local_half_width = local_crop_width_m / 2.0
+            local_crop_width_m = max( min_crop_width_m, object_crop_width_m)
 
-        local_bounds = (
-            cx - local_half_width,
-            cy - local_half_width,
-            cx + local_half_width,
-            cy + local_half_width,
-        )
+            local_half_width = local_crop_width_m / 2.0
 
-        rgb = self.rgb_source.reproject_to_shape(
-            target_crs=crs,
-            tile_bounds=local_bounds,
-            out_width=self.tile_size,
-            out_height=self.tile_size,
-            resampling=Resampling.bilinear,
-        )
+            local_bounds = (
+                cx - local_half_width,
+                cy - local_half_width,
+                cx + local_half_width,
+                cy + local_half_width,
+            )
 
-        # handle objects outside of rgb scene
-        # these are just accepted later on!
-        if rgb is None:
-            return None
+            rgb = self.rgb_source.reproject_to_shape(
+                target_crs=crs,
+                tile_bounds=local_bounds,
+                out_width=self.tile_size,
+                out_height=self.tile_size,
+                resampling=Resampling.bilinear,
+            )
 
-        rgb = np.asarray(rgb)
+            # handle objects outside of rgb scene
+            # these are just accepted later on!
+            if rgb is None:
+                return None
 
-        if not np.isfinite(rgb).any():
-            return None
+            rgb = np.asarray(rgb)
 
-        if np.all(rgb == 0):
-            return None
-        
-        
-        # get mask to overlay over rgb.
-        local_mask = self._object_mask_for_bounds(
-            obj=obj,
-            source_transform=transform,
-            bounds=local_bounds,
-            output_size=self.tile_size)
+            if not np.isfinite(rgb).any():
+                return None
+
+            if np.all(rgb == 0):
+                return None
+            
+            
+            # get mask to overlay over rgb.
+            local_mask = self._object_mask_for_bounds(
+                obj=obj,
+                source_transform=transform,
+                bounds=local_bounds,
+                output_size=self.tile_size)
+
+            rgb_local = self._prepare_rgb(rgb, local_mask)
 
         # wider DEM context around the same candidate centre.
         # clip provides a minimum and maximum scene size to avoid tiny/massive context extents
@@ -333,13 +341,11 @@ class PostProcessor:
 
         scalar_features = np.asarray(scalar_features, dtype=np.float32).reshape(-1)
 
-        rgb_local = self._prepare_rgb(
-            rgb,
-            local_mask,
-        )
+        dem_context = normalise_dem_context(dem_context)
+        scalar_features = normalise_scalar_features(scalar_features)
 
         return {
-            "rgb_local": rgb_local,
+            "rgb_local": rgb_local if self.rgb else None,
             "dem_context": np.ascontiguousarray(
                 dem_context,
                 dtype=np.float32,
@@ -472,7 +478,8 @@ class PostProcessor:
                 continue
 
             # if can build, add to batch lists
-            batch_rgb.append(tile["rgb_local"])
+            if self.rgb:
+                batch_rgb.append(tile["rgb_local"])
             batch_dem.append(tile["dem_context"])
             batch_scalars.append(tile["scalar_features"])
             batch_objs.append(obj)
