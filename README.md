@@ -39,14 +39,12 @@ After this has been done the first time, simply activate the environment each ti
 
 ## Model Download. (Only needs to be done once)
 
-Download the two models (MaskRCNN, DEMVeto) from this [link](https://drive.google.com/drive/folders/1SP--9SlvA7zn0S0yoilJTJe9A-x-umr_?usp=sharing):
+Download the two models (MaskRCNN, DEMVeto) to your local machine from this [link](https://drive.google.com/drive/folders/1SP--9SlvA7zn0S0yoilJTJe9A-x-umr_?usp=sharing):
 
-Copy them to the virtual machine:
+Copy them to the HPC virtual machine using:
 
 ```cp ...```
 
----
----
 
 # Running the Model!
 
@@ -67,16 +65,16 @@ Second, download the files using curl. The files will be stored in a directory c
 Third, unzip all the files (inplace), keeping only the .tif files (the actual data):
 
 ```cd tiles```
+
 ```for f in *.zip; do unzip -j -o "$f" '*.tif' -d . && rm "$f"; done```
+
 ```cd ..```
 
-Next, move these files from your local machine to the virtual HPC
-
-First, delete previous files stored in the directory (don't want to overload the memory on the HPC)
+Next, move these files from your local machine to the virtual HPC, by first delete previous files stored in the directory (don't want to overload the memory on the HPC):
 
 ```cmd tbw```
 
-Then, copy the DEM files from your local machine to the HPC.
+Then, copy the DEM files from your local machine to the HPC:
 
 ```cmd tbw```
 

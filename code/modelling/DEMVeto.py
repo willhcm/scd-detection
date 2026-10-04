@@ -5,7 +5,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision.models import resnet18, ResNet18_Weights
+from torchvision.models import mobilenet_v3_small, MobileNet_V3_Small_Weights
 import numpy as np
 from torch.utils.data import Dataset
 from pathlib import Path
@@ -15,7 +15,7 @@ import cv2 # computer vision, used for resizing images and masks.
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 
-from helpers.VetoHelpers import VETO_SCALAR_NAMES
+from helpers.VetoHelpers import VETO_SCALAR_NAMES, normalise_scalar_features, normalise_dem_context
 
 class DEM_Based_Vetoer(nn.Module):
     """
@@ -26,10 +26,10 @@ class DEM_Based_Vetoer(nn.Module):
         super().__init__()
 
         # Relative DEM + slope + candidate mask. 3 channels, no replace conv needed
-        self.dem_encoder = resnet18(weights=None)
+        self.dem_encoder = mobilenet_v3_small(weights=MobileNet_V3_Small_Weights.IMAGENET1K_V1)
 
-        dem_feature_dim = (self.dem_encoder.fc.in_features)
-        self.dem_encoder.fc = nn.Identity()
+        dem_feature_dim = self.dem_encoder.classifier[0].in_features
+        self.dem_encoder.classifier = nn.Identity()  # Remove the original classifier
 
         self.scalar_encoder = nn.Sequential(
             nn.Linear(scalar_dim, 32),
@@ -38,11 +38,17 @@ class DEM_Based_Vetoer(nn.Module):
             nn.Linear(32, 32),
             nn.ReLU(inplace=True),
         )
+        self.dem_squeezer = nn.Sequential(
+            nn.Linear(dem_feature_dim, 256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout),
+            nn.Linear(256, 32),
+            nn.ReLU(inplace=True),
+        )  
 
         # shared after fusing
         self.classifier = nn.Sequential(
-            nn.Linear(dem_feature_dim + 32,
-                      256),
+            nn.Linear(64, 256),
             nn.ReLU(inplace=True),
             nn.Dropout(dropout),
             nn.Linear(256, 64),
@@ -70,6 +76,7 @@ class DEM_Based_Vetoer(nn.Module):
         # prep scalars, and get encodings
         scalar_features = (scalar_features - self.scalar_mean) / self.scalar_std.clamp_min(1e-6)
         scalar_features = self.scalar_encoder(scalar_features)
+        dem_features = self.dem_squeezer(dem_features)
 
         # concat encodings
         fused = torch.cat([dem_features, scalar_features,], dim=1)
@@ -107,21 +114,9 @@ class DEM_Based_Veto_Dataset(Dataset):
 
         mask = (mask > 0.5).astype(np.float32)
 
-        # DEM-context 
-        # handles different context sizes in training set.
-        if dem_context.shape[1:] != (self.dem_size, self.dem_size):
-            # Resize in channels-last form.
-            dem_hwc = np.moveaxis(dem_context, 0, -1)
-
-            dem_hwc = cv2.resize(dem_hwc, (self.dem_size, self.dem_size), interpolation=cv2.INTER_LINEAR)
-
-            # Restore the candidate-mask channel using
-            # nearest-neighbour interpolation.
-            context_mask = cv2.resize(dem_context[2], (self.dem_size, self.dem_size), interpolation=cv2.INTER_NEAREST)
-
-            dem_hwc[..., 2] = (context_mask > 0.5).astype(np.float32)
-
-            dem_context = np.moveaxis(dem_hwc, -1, 0)
+        # Normalise the scalar features and DEM context
+        scalar_features = normalise_scalar_features(scalar_features)
+        dem_context = normalise_dem_context(dem_context)
 
         scalar_features = np.asarray(scalar_features, dtype=np.float32).reshape(-1)
 
