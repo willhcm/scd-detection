@@ -67,15 +67,16 @@ class SCDModel():
 
         results = self.deployer.sweep()
 
+        out_path = self.out_path / "predictions.shp"
+
         requested = {
             "predictions": True,
             "transform": True,
             "crs": True,
             "coverage": return_coverage,
-            "support": return_support,
-            "centroids": return_centroids}
+            "support": return_support}
 
-        self.deployer.merge_predictions(results['predictions'], results['transform'], results['crs'], self.out_path)
+        self.deployer.merge_predictions(results['predictions'], results['transform'], results['crs'], out_path)
 
         return tuple(results[key] for key, include in requested.items() if include)
 
@@ -130,7 +131,7 @@ class SCDModel():
             str(dem_dir / "merged.tif")
         ], check=True)
 
-        output_path = Path(dem_dir) / "merged.tif"
+        output_path = dem_dir / "merged.tif"
 
         return output_path
 

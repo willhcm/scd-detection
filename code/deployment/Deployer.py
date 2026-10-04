@@ -88,12 +88,10 @@ class Deployer:
         tile_size=512,
         rgb_veto=False,
         NODATA=0,
-        
-        # Veto-classifier settings.
         veto_tile_size=96, 
         veto_context_tile_size=224,
         veto_batch_size=16,
-        veto_threshold=0.90,
+        veto_threshold=0.60,
         score_threshold=0.60,
         mask_threshold=0.55,
         context_scale=4.0,
@@ -101,7 +99,7 @@ class Deployer:
         max_context_width_m=4000.0,
         native_res = 30,
         stride_frac=0.75):
-                
+
         self.base_res = None
         self.NODATA = NODATA
         self.mask_threshold = mask_threshold
@@ -111,7 +109,6 @@ class Deployer:
         self.model_dict = model_state_dict
         self.model = self.build_wrapper()
         del self.model_dict
-
 
         self.dem_path = dem_path
         self.rgb_path = rgb_path
@@ -241,6 +238,7 @@ class Deployer:
                 )
 
             # is it not currently NaN?
+            
             valid = np.isfinite(current)
 
             # pixels have been covered, so add 1
@@ -271,12 +269,11 @@ class Deployer:
  
         return merged, base["transform"], base["crs"]
     
-    def veto(self,merged, transform, crs):
+    def veto(self, merged, transform, crs):
         """
         Applies the Veto classifier to the merged predictions to filter out false positives."""
 
         postproc = PostProcessor(
-            tile_size=self.veto_tile_size,
             context_tile_size=self.veto_context_tile_size,
             device=self.device,
             model=self.veto_model,
@@ -289,7 +286,8 @@ class Deployer:
             object_fraction=0.5,
             context_scale=self.context_scale,
             min_context_width_m=self.min_context_width_m,
-            max_context_width_m=self.max_context_width_m)
+            max_context_width_m=self.max_context_width_m,
+            rgb=self.rgb_veto)
 
             
         (stitched, rejected, veto_probability_map, out_transform, out_crs) = postproc.predict(merged,
@@ -344,23 +342,11 @@ class Deployer:
 
         (merged, transform, crs, support, coverage) = self.merge_predictions_pyramid(predictions)
 
-        
-        if not self.rgb_veto:
-            out = {
-                "predictions": predictions,
-                "merged": merged,
-                "transform": transform,
-                "crs": crs,
-                "support": support,
-                "coverage": coverage
-            }
-            return out
-
-        (cleaned, rejected, veto_probability_map, out_transform, out_crs) = self.veto(merged, transform, crs)
+        accepted, rejected, veto_probability_map, out_transform, out_crs = self.veto(merged, transform, crs)
 
         out = {
-            "predictions": predictions,
-            "cleaned": cleaned,
+            "raw": predictions,
+            "predictions": accepted,
             "rejected": rejected,
             "veto_probability_map": veto_probability_map,
             "transform": out_transform,
