@@ -94,13 +94,13 @@ class PostProcessor:
 
     def __init__(
         self,
-        tile_size,
         context_tile_size,
         device,
         model,
         dem_path,
         batch_size=32,
         rgb_path=None,
+        rgb_tile_size=94,
         detect_threshold=0.40,
         veto_threshold=0.90,
         min_crop_pixels=64,
@@ -110,7 +110,7 @@ class PostProcessor:
         max_context_width_m=4000.0,
         rgb=False):
 
-        self.tile_size = tile_size
+        self.tile_size = rgb_tile_size if rgb else None
         self.context_tile_size = context_tile_size
 
         # veto model setup
@@ -125,9 +125,12 @@ class PostProcessor:
 
         # data source objects
         if self.rgb:
-            self.rgb_source = WindowedDataSource.from_tiff_utm(rgb_path,native_res=3, type="RGB")
+            self.rgb_source = WindowedDataSource.from_tiff_utm(rgb_path, native_res=3, type="RGB")
+            self.rgb_res = self.rgb_source.res
+        else:
+            self.rgb_res = 3 # planet labs backup
 
-        self.dem_source = WindowedDataSource.from_tiff(dem_path,type="DEM")
+        self.dem_source = WindowedDataSource.from_tiff(dem_path, type="DEM")
 
         # hyperparameters
         self.batch_size = batch_size
@@ -230,19 +233,15 @@ class PostProcessor:
         # Candidate diameter from the deployment raster.
         prediction_pixel_res = abs(float(transform.a))
 
+        # object size
         diameter_m = (obj.equivalent_diameter_area * prediction_pixel_res)
+        object_crop_width_m = (diameter_m / self.object_fraction)
+        min_crop_width_m = (self.min_crop_pixels * self.rgb_res)
+        local_crop_width_m = max(min_crop_width_m, object_crop_width_m)
 
         if self.rgb:
 
-            # match planet rgb res
-            rgb_pixel_res = self.rgb_source.res
-
             # get tile crop width (rgb)
-            min_crop_width_m = (self.min_crop_pixels * rgb_pixel_res)
-
-            object_crop_width_m = (diameter_m / self.object_fraction)
-
-            local_crop_width_m = max( min_crop_width_m, object_crop_width_m)
 
             local_half_width = local_crop_width_m / 2.0
 
@@ -286,7 +285,7 @@ class PostProcessor:
 
         # wider DEM context around the same candidate centre.
         # clip provides a minimum and maximum scene size to avoid tiny/massive context extents
-        context_width_m = np.clip( self.context_scale * local_crop_width_m, self.min_context_width_m, self.max_context_width_m)
+        context_width_m = np.clip(self.context_scale * local_crop_width_m, self.min_context_width_m, self.max_context_width_m)
 
         context_half_width = context_width_m / 2.0
 
@@ -355,7 +354,7 @@ class PostProcessor:
                 dtype=np.float32,
             ),
             "obj": obj,
-            "local_bounds": local_bounds,
+            "local_bounds": local_bounds if self.rgb else None,
             "context_bounds": context_bounds,
             "local_crop_width_m": local_crop_width_m,
             "context_width_m": context_width_m,
@@ -402,7 +401,8 @@ class PostProcessor:
         skipped = 0
         predicted = 0
 
-        batch_rgb = []
+        if self.rgb:
+            batch_rgb = []
         batch_dem = []
         batch_scalars = []
         batch_objs = []
@@ -423,13 +423,17 @@ class PostProcessor:
                 return
 
             # make torch tensor from batch and send to device
-            rgb_tensor = torch.from_numpy(np.stack(batch_rgb, axis=0)).to(self.device,dtype=torch.float32)
+            if self.rgb:
+                rgb_tensor = torch.from_numpy(np.stack(batch_rgb, axis=0)).to(self.device,dtype=torch.float32)
             dem_tensor = torch.from_numpy(np.stack(batch_dem, axis=0)).to(self.device, dtype=torch.float32)
             scalar_tensor = torch.from_numpy(np.stack(batch_scalars, axis=0)).to(self.device, dtype=torch.float32)
 
             # predict
             with torch.inference_mode():
-                logits = self.model(rgb_tensor, dem_tensor, scalar_tensor).view(-1)
+                if self.rgb:
+                    logits = self.model(rgb_tensor, dem_tensor, scalar_tensor).view(-1)
+                else:
+                    logits = self.model(dem_tensor, scalar_tensor).view(-1)
 
                 # sigmoid for probs
                 probabilities = torch.sigmoid(logits).cpu().numpy()
@@ -451,7 +455,8 @@ class PostProcessor:
                 predicted += 1
 
             # empty batch lists
-            batch_rgb.clear()
+            if self.rgb:
+                batch_rgb.clear()
             batch_dem.clear()
             batch_scalars.clear()
             batch_objs.clear()

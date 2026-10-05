@@ -10,7 +10,7 @@ class ModelWrapper:
     A wrapper class for the Mask R-CNN model used for prediction.
     """
 
-    def __init__(self, model_dict, score_threshold=0.60, mask_threshold=0.55):
+    def __init__(self, model_dict, score_threshold=0.75, mask_threshold=0.50):
 
         self.model = MaskRCNN()
         self.model.load_state_dict(model_dict)

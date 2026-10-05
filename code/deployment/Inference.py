@@ -67,15 +67,21 @@ class SCDModel():
 
         results = self.deployer.sweep()
 
+        out_path = self.out_path / "predictions.shp"
+
         requested = {
             "predictions": True,
             "transform": True,
             "crs": True,
             "coverage": return_coverage,
-            "support": return_support,
-            "centroids": return_centroids}
+            "support": return_support}
 
-        self.deployer.merge_predictions(results['predictions'], results['transform'], results['crs'], self.out_path)
+        self.deployer.merge_predictions(results['predictions'], results['transform'], results['crs'], out_path)
+
+        # write bounds of DEM to a text file for reference
+        with open(self.out_path / "covered_bounds.txt", "a") as f:
+            f.write(f"Bounds of DEM: {self.DEM_bounds}\n")
+            f.write(f"CRS of DEM: {self.DEM_crs}\n")
 
         return tuple(results[key] for key, include in requested.items() if include)
 
@@ -100,6 +106,8 @@ class SCDModel():
         if os.path.isfile(dem_path):
             with rio.open(dem_path) as src:
                 self.NODATA = src.nodata
+                self.DEM_bounds = src.bounds
+                self.DEM_crs = src.crs
             return dem_path
         elif os.path.isdir(dem_path):
             return self._build_dem(dem_path)
@@ -130,7 +138,11 @@ class SCDModel():
             str(dem_dir / "merged.tif")
         ], check=True)
 
-        output_path = Path(dem_dir) / "merged.tif"
+        with rio.open(dem_dir / "merged.tif") as src:
+            self.DEM_bounds = src.bounds
+            self.DEM_crs = src.crs
+        output_path = dem_dir / "merged.tif"
+
 
         return output_path
 

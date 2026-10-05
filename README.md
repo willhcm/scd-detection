@@ -31,7 +31,7 @@ Once done, navigate to the scd-detection directory:
 
 and run:
 
-```conda env create -n scd_env -f ./envs/enviroment.yml```
+```conda env create -n scd_env -f enviroment.yml```
 
 After this has been done the first time, simply activate the environment each time you log-on:
 
@@ -43,8 +43,7 @@ Download the two models (MaskRCNN, DEMVeto) to your local machine from this [lin
 
 Copy them to the HPC virtual machine using:
 
-```cp ...```
-
+```scp -r downloads/models USER@borg-login.ese.ic.ac.uk:/scratch_root/USER/scd-detection```
 
 # Running the Model!
 
@@ -54,7 +53,7 @@ Run urls.py to generate a new .txt files of valid download URLs. Need to input a
 
 ```python3 scripts/urls.py --request NEW_LIST_OF_DEFRA_TILE_NAMES.txt --request_name 'CUSTOMISE_THIS_REQUEST_NAME'```
 
-or 
+or [s-]
 
 ```python3 scripts/urls.py --request WANTED_REGION.gpkg --request_name 'CUSTOMISE_THIS_REQUEST_NAME'```
 
