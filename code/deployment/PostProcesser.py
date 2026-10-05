@@ -130,8 +130,7 @@ class PostProcessor:
         else:
             self.rgb_res = 3 # planet labs backup
 
-        print(dem_path)
-        self.dem_source = WindowedDataSource.from_tiff_utm(dem_path, native_res=1, type="DEM")
+        self.dem_source = WindowedDataSource.from_tiff(dem_path, type="DEM")
 
         # hyperparameters
         self.batch_size = batch_size
