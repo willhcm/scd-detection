@@ -129,6 +129,7 @@ class NegativeMiner:
                 invalid = np.isclose(tile[self.layer_index['DEM']], self.NODATA) | ~np.isfinite(tile[self.layer_index['DEM']])
                 if invalid.any():
                     continue
+                
                 name = self._tile_name(bounds)
                 self.export(tile, out_dir, bounds, name, res)
 
