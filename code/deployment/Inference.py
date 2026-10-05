@@ -44,7 +44,8 @@ class SCDModel():
                 out_path:Path,
                 veto_model_state=None, 
                 rgb_path=None, 
-                hyperparams=None,):
+                hyperparams=None,
+                run_name=None):
         
         self.MaskRCNN_model_state = MaskRCNN_model_state
         self.veto_model_state = veto_model_state
@@ -53,6 +54,7 @@ class SCDModel():
         self.device = device
         self.resolutions = resolutions
         self.out_path = out_path
+        self.run_name = run_name
 
         self.dem_path = self._resolve_data_source(dem_path)
         self.deployer = self._create_deployer(hyperparams)
@@ -80,6 +82,7 @@ class SCDModel():
 
         # write bounds of DEM to a text file for reference
         with open(self.out_path / "covered_bounds.txt", "a") as f:
+            f.write(f"Run: {self.run_name}\n")
             f.write(f"Bounds of DEM: {self.DEM_bounds}\n")
             f.write(f"CRS of DEM: {self.DEM_crs}\n")
 
