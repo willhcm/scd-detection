@@ -54,7 +54,8 @@ def main(dem_path, model_state_path, veto_model_state_path, rgb_path, device, re
         resolutions=resolutions,
         out_path=out_path,
         rgb_path=rgb_path,
-        hyperparams=DEPLOYER_PARAMS
+        hyperparams=DEPLOYER_PARAMS,
+        run_name=run_name
     )
 
     # Run prediction
