@@ -137,6 +137,7 @@ class SCDModel():
             "-co", "COMPRESS=LZW",
             "-co", "TILED=YES",
             "-of", "GTiff",
+            "-co", "BIGTIFF=YES",
             *[str(p) for p in paths],
             str(dem_dir / "merged.tif")
         ], check=True)
