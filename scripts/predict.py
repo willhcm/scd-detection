@@ -37,11 +37,11 @@ def main(dem_path, model_state_path, veto_model_state_path, rgb_path, device, re
     if not dem_path.exists():
         raise FileNotFoundError(f"DEM path not found: {dem_path}")
     
-    model_state_path = Path(model_state_path)
-    model_state = torch.load(model_state_path, map_location=device)
+    model_path = REPO_ROOT / model_state_path
+    model_state = torch.load(model_path, map_location=device)
 
-    veto_model_state_path = Path(veto_model_state_path) if veto_model_state_path else None
-    veto_state = torch.load(veto_model_state_path, map_location=device) if veto_model_state_path else None
+    veto_model_path = REPO_ROOT / veto_model_state_path if veto_model_state_path else None
+    veto_state = torch.load(veto_model_path, map_location=device) if veto_model_state_path else None
     rgb_path = Path(rgb_path) if rgb_path else None
 
     # Create an instance of the SCDModel
