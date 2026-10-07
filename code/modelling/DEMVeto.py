@@ -15,7 +15,7 @@ import cv2 # computer vision, used for resizing images and masks.
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 
-from helpers.VetoHelpers import VETO_SCALAR_NAMES, normalise_scalar_features, normalise_dem_context
+from VetoHelpers import VETO_SCALAR_NAMES, normalise_dem_context
 
 class DEM_Based_Vetoer(nn.Module):
     """
@@ -115,8 +115,7 @@ class DEM_Based_Veto_Dataset(Dataset):
         mask = (mask > 0.5).astype(np.float32)
 
         # Normalise the scalar features and DEM context
-        #scalar_features = normalise_scalar_features(scalar_features)
-        #dem_context = normalise_dem_context(dem_context)
+        dem_context = normalise_dem_context(dem_context)
 
         scalar_features = np.asarray(scalar_features, dtype=np.float32).reshape(-1)
 

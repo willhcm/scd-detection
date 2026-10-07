@@ -131,24 +131,11 @@ def build_dem_context(
 
     return dem_context, scalar_features
 
-def normalise_scalar_features(features):
-
-    # first three robust scaled
-    robust_features = features[:3]
-
-    # 4th to 6th log scaled, then robust scaled
-    log_features = features[3:]
-
-
-    robust_features = (robust_features - np.median(robust_features)) / (np.percentile(robust_features, 75) - np.percentile(robust_features, 25) + 1e-6)
-    log_features = np.log1p(log_features)
-    log_features = (log_features - np.median(log_features)) / (np.percentile(log_features, 75) - np.percentile(log_features, 25) + 1e-6)
-
-
-    return robust_features.tolist() + log_features.tolist() 
-
 def normalise_dem_context(dem_context):
-    dem_context = np.asarray(dem_context, dtype=np.float32)
-    mean = np.mean(dem_context)
-    std = np.std(dem_context)
-    return (dem_context - mean) / (std + 1e-6)  # Add a small value to avoid division by zero
+    # dem context is a 3-channel array: [relative_dem_scaled, slope_scaled, candidate_mask]
+    # We will normalise the first two channels (relative_dem_scaled and slope_scaled) to have zero mean and unit variance, while leaving the candidate_mask channel unchanged.
+
+    mean = np.mean(dem_context[:2], axis=(1, 2), keepdims=True)
+    std = np.std(dem_context[:2], axis=(1, 2), keepdims=True)
+    dem_context[:2] = (dem_context[:2] - mean) / (std + 1e-6)
+    return dem_context

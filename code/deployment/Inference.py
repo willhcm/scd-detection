@@ -46,7 +46,7 @@ class SCDModel():
                 rgb_path=None, 
                 hyperparams=None,
                 run_name=None,
-                veto=True):
+                to_veto=True):
         
         self.MaskRCNN_model_state = MaskRCNN_model_state
         self.veto_model_state = veto_model_state
@@ -56,7 +56,7 @@ class SCDModel():
         self.resolutions = resolutions
         self.out_path = out_path
         self.run_name = run_name
-        self.veto = veto
+        self.to_veto = to_veto
 
         self.dem_path = self._resolve_data_source(dem_path)
         self.deployer = self._create_deployer(hyperparams)
@@ -101,7 +101,7 @@ class SCDModel():
             "resolutions": self.resolutions,
             "rgb_path": self.rgb_path,
             "rgb_veto": self.rgb_veto,
-            "veto": self.veto,
+            "to_veto": self.to_veto,
             "NODATA": self.NODATA,
             **hyperparams
         }
