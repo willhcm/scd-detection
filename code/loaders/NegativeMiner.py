@@ -113,7 +113,8 @@ class NegativeMiner:
                 labels=labels,
                 scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)),
                 bounds=bounds, 
-                region=self.region)
+                region=self.region,
+                positive=False)
 
 
     def generate_tiles(self, out_dir: Path, counts=None):
