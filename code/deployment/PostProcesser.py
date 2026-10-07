@@ -8,6 +8,7 @@ from rasterio.transform import from_bounds
 from helpers.VetoHelpers import build_dem_context, normalise_scalar_features, normalise_dem_context
 import rasterio as rio
 from rasterio.warp import reproject
+from rasterio.transform import from_origin
 
 # windowed data source to limit RAM usage during deployment with huge rasters
 class WindowedDataSource:
@@ -19,20 +20,16 @@ class WindowedDataSource:
         self.path = path
         self.type = type
 
-        # only read metadata here
         with rio.open(path) as src:
             self.crs = src.crs
             self.bounds = src.bounds
-            self.width = src.width
-            self.height = src.height
-            self.transform = src.transform
             self.count = src.count
+            self.res = float(nominal_res) if nominal_res else float(abs(src.res[0]))
 
-            # set res
-            if nominal_res is None:
-                self.res = float(abs(src.res[0]))
-            else:
-                self.res = float(nominal_res)
+            left, bottom, right, top = src.bounds
+            self.width = int(round((right - left) / self.res))
+            self.height = int(round((top - bottom) / self.res))
+            self.transform = from_origin(left, top, self.res, self.res)
 
     @classmethod
     def from_tiff(cls, path, type="DEM"):
