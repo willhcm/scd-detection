@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from rasterio.enums import Resampling
 from rasterio.transform import from_bounds
-from helpers.VetoHelpers import build_dem_context, normalise_scalar_features, normalise_dem_context
+from helpers.VetoHelpers import build_dem_context, normalise_dem_context
 import rasterio as rio
 from rasterio.warp import reproject
 
