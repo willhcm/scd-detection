@@ -93,9 +93,9 @@ class Deployer:
         veto_tile_size=96, 
         veto_context_tile_size=224,
         veto_batch_size=16,
-        veto_threshold=0.40,
-        score_threshold=0.70,
-        mask_threshold=0.50,
+        veto_threshold=0.6, # tune
+        score_threshold=0.65, # tune
+        mask_threshold=0.50, # tune
         context_scale=4.0,
         min_context_width_m=768.0,
         max_context_width_m=4000.0,
