@@ -70,7 +70,6 @@ def main(dem_path, model_state_path, veto_model_state_path, rgb_path, device, re
     
     return
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Deploy SCD model on DEM data.")
     parser.add_argument("--dem_path", type=Path, default=REPO_ROOT / "tiles")

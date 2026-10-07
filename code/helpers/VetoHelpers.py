@@ -137,21 +137,15 @@ def normalise_scalar_features(features):
     robust_features = features[:3]
 
     # 4th to 6th log scaled, then robust scaled
-    log_features = features[3:6]
+    log_features = features[3:]
 
-    # 7 robust scaled
-    standard_features = features[6:]
-
-    # 8 minmax
-    minmax_features = features[7]
 
     robust_features = (robust_features - np.median(robust_features)) / (np.percentile(robust_features, 75) - np.percentile(robust_features, 25) + 1e-6)
     log_features = np.log1p(log_features)
     log_features = (log_features - np.median(log_features)) / (np.percentile(log_features, 75) - np.percentile(log_features, 25) + 1e-6)
-    standard_features = (standard_features - np.mean(standard_features)) / (np.std(standard_features) + 1e-6)
-    minmax_features = (minmax_features - np.min(minmax_features)) / (np.max(minmax_features) - np.min(minmax_features) + 1e-6)
 
-    return robust_features.tolist() + log_features.tolist() + standard_features.tolist() + [minmax_features]
+
+    return robust_features.tolist() + log_features.tolist() 
 
 def normalise_dem_context(dem_context):
     dem_context = np.asarray(dem_context, dtype=np.float32)
