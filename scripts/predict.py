@@ -56,7 +56,7 @@ def main(dem_path, model_state_path, veto_model_state_path, rgb_path, device, re
         rgb_path=rgb_path,
         hyperparams=DEPLOYER_PARAMS,
         run_name=run_name,
-        veto=not no_veto
+        to_veto=not no_veto
     )
 
     # Run prediction
