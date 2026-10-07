@@ -123,7 +123,7 @@ class Deployer:
         # Mask R-CNN deployment tile size.
         self.tile_size = tile_size
         self.rgb_veto = rgb_veto
-        self.to_veto = veto
+        self.to_veto = to_veto
 
         # if using spectral data
         if self.rgb_veto:
