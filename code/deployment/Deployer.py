@@ -11,6 +11,7 @@ CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 
 from rasterio.warp import reproject
+import os
 import numpy as np
 import torch
 from loaders.Tiler import OVERLAP_SIGMA_MULTIPLIER
@@ -27,6 +28,7 @@ from shapely.geometry import shape
 from helpers.VetoHelpers import VETO_SCALAR_NAMES
 from modelling.DEMVeto import DEM_Based_Vetoer
 from scipy.ndimage import binary_dilation
+from affine import Affine
 
 # AI assistance with conversion of DataStack logic to a deployment system. 
 # dont need to export tiles as they will only be used once at inference
@@ -120,9 +122,6 @@ class Deployer:
         self.tile_size = tile_size
         self.rgb_veto = rgb_veto
 
-        self.model_dict = model_state_dict
-        self.model = self.build_wrapper()
-        del self.model_dict
 
         # if using spectral data
         if self.rgb_veto:
@@ -185,89 +184,73 @@ class Deployer:
     }
 
         return preds   
-    
-    def merge_predictions_pyramid(self,
-        preds,
-        support_threshold=0.65,
-        min_support=2,
-        single_scale_keep=0.90,
-        return_support=True):
-        """
-        Merges the predictions from multiple resolutions into a single probability map.
-        """
+
+
+    def merge_predictions_pyramid(
+            self,
+            preds,
+            support_threshold=0.65,
+            min_support=2,
+            single_scale_keep=0.90,
+            band=1024):
 
         base_res = min(preds)
         self.base_res = base_res
-
         base = preds[base_res]
-        base_prob = np.asarray(base["prob"], dtype=np.float32)
-        output_shape = base_prob.shape
+        transform, crs = base["transform"], base["crs"]
+        h, w = base["prob"].shape
 
-        # init empty arrays (nan for probs as 0 has a meaning)
-        max_probability = np.full(output_shape, np.nan, dtype=np.float32)
-        support_count = np.zeros(output_shape, dtype=np.uint16)
-        coverage_count = np.zeros(output_shape, dtype=np.uint16)
+        scratch_dir = Path("/scratch_root/wm722/scd-detection/work") / 'merge' 
+        merged = np.lib.format.open_memmap(
+            scratch_dir / "merged.npy", mode="w+", dtype=np.float32, shape=(h, w))
+        support = np.lib.format.open_memmap(
+            scratch_dir / "support.npy", mode="w+", dtype=np.uint8, shape=(h, w))
+        coverage = np.lib.format.open_memmap(
+            scratch_dir / "coverage.npy", mode="w+", dtype=np.uint8, shape=(h, w))
 
-        # for each pixel at each resolution, add its value to arrays
-        for res, prediction in preds.items():
+        for r0 in range(0, h, band):
+            r1 = min(r0 + band, h)
+            shape = (r1 - r0, w)
+            band_transform = transform * Affine.translation(0, r0)
 
-            if res == base_res:
-                current = base_prob
+            best = np.full(shape, np.nan, dtype=np.float32)
+            sup = np.zeros(shape, dtype=np.uint8)
+            cov = np.zeros(shape, dtype=np.uint8)
 
-            else:
-                current = np.full(
-                    output_shape,
-                    np.nan,
-                    dtype=np.float32,
-                )
+            for res, pred in preds.items():
+                if res == base_res:
+                    cur = np.array(pred["prob"][r0:r1], dtype=np.float32)
+                else:
+                    cur = np.full(shape, np.nan, dtype=np.float32)
+                    reproject(
+                        source=pred["prob"],
+                        destination=cur,
+                        src_transform=pred["transform"],
+                        src_crs=pred["crs"],
+                        src_nodata=np.nan,
+                        dst_transform=band_transform,
+                        dst_crs=crs,
+                        dst_nodata=np.nan,
+                        resampling=Resampling.nearest,
+                        init_dest_nodata=True)
 
-                reproject(
-                    source=np.asarray(
-                        prediction["prob"],
-                        dtype=np.float32,
-                    ),
-                    destination=current,
-                    src_transform=prediction["transform"],
-                    src_crs=prediction["crs"],
-                    src_nodata=np.nan,
-                    dst_transform=base["transform"],
-                    dst_crs=base["crs"],
-                    dst_nodata=np.nan,
-                    resampling=Resampling.nearest,
-                    init_dest_nodata=True,
-                )
+                ok = np.isfinite(cur)
+                cov += ok
+                sup += ok & (cur >= support_threshold)
+                best = np.fmax(best, cur)
 
-            # is it not currently NaN?
-            
-            valid = np.isfinite(current)
+            weak = (cov > 0) & (sup < min_support) & (best < single_scale_keep)
+            best[weak] = 0.0
+            best[cov == 0] = np.nan
 
-            # pixels have been covered, so add 1
-            coverage_count[valid] += 1
+            merged[r0:r1] = best
+            support[r0:r1] = sup
+            coverage[r0:r1] = cov
 
-            # if pixel is valid and prob > support threshold, add 1 to support count
-            support_count[valid & (current >= support_threshold)] += 1
+        for m in (merged, support, coverage):
+            m.flush()
 
-            # was the pixel previously NaN (not predicted before?)
-            # if so, add to probability map (doesnt overwrite previous probs)
-            previously_empty = valid & ~np.isfinite(max_probability)
-            max_probability[previously_empty] = current[previously_empty]
-
-            # does the pixel have a previous probability value?
-            # if so, take the max(previous, current)
-            overlap = valid & np.isfinite(max_probability)
-            max_probability[overlap] = np.maximum(max_probability[overlap], current[overlap])
-
-        merged = max_probability.copy()
-
-        # Remove unsupported predictions unless one resolution is extremely sure.
-        insufficient_support = ((coverage_count > 0) & (support_count < min_support) & (max_probability < single_scale_keep))
-        merged[insufficient_support] = 0.0
-        merged[coverage_count == 0] = np.nan
-
-        if return_support:
-            return merged, base["transform"], base["crs"], support_count, coverage_count
- 
-        return merged, base["transform"], base["crs"]
+        return merged, transform, crs, support, coverage
     
     def veto(self, merged, transform, crs):
         """
@@ -557,9 +540,12 @@ class ResPredictor():
         h, w = dem_source.height, dem_source.width
         transform = dem_source.transform
 
-        # instantiate ooutputs
-        prob_map = np.zeros((h, w), dtype=np.float32)
-        weight_map = np.zeros((h, w), dtype=np.float32)
+        # saved on file to reduce memory failure
+        scratch = Path("/scratch_root/wm722/scd-detection/work") / 'predict' / f"{resolution:g}m"
+        scratch.mkdir(parents=True, exist_ok=True)
+        tag = f"{resolution:g}m"
+        prob_map = np.lib.format.open_memmap(scratch / f"prob_{tag}.npy", mode="w+", dtype=np.float32, shape=(h, w))
+        weight_map = np.lib.format.open_memmap(scratch / f"weight_{tag}.npy", mode="w+", dtype=np.float32, shape=(h, w))
 
         # calculate streides and tile size in meetres
         stride_px = max(1, int(round(self.tile_size * self.stride_frac)))
@@ -606,7 +592,6 @@ class ResPredictor():
         
         # corresponding list which stores the pixel-based locations for each tile.
         batch_locs = [] 
-
 
         # Claude assistance with this function. optimising and batching by-hand was something i hadnt done before!
         def flush_batch():
@@ -667,9 +652,14 @@ class ResPredictor():
 
         progress.close()
 
-        valid = weight_map > 0
-        prob_map[valid] /= weight_map[valid]
-        prob_map[~valid] = np.nan
+        # h is DEM height, r is rows, step is number of rows to split it up into.
+        for r in range(0, h, 256):
+            p, wt = prob_map[r:r + 1024], weight_map[r:r + 1024]
+            ok = wt > 0
+            p[ok] /= wt[ok]
+            p[~ok] = np.nan
+        prob_map.flush()
+        del weight_map
 
         print(f"Completed {resolution:g} m inference: {predicted_tiles}/{total_tiles} tiles predicted, {skipped_tiles} skipped.")
 
