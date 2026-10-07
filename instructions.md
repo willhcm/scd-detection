@@ -28,35 +28,41 @@ After this has been done the first time, simply activate the environment each ti
 
 ## Model Download. (Only needs to be done once)
 
-Download the two models (MaskRCNN, DEMVeto) to your local machine from this [link](https://drive.google.com/drive/folders/1SP--9SlvA7zn0S0yoilJTJe9A-x-umr_?usp=sharing).
-
-
+Download the two models (MaskRCNN, DEMVeto) to your local machine from this [link](https://drive.google.com/drive/folders/1SP--9SlvA7zn0S0yoilJTJe9A-x-umr_?usp=sharing). Keep these on your laptop for now, until the HPC set-up stage.
 
 # Setting up the HPC and running the model
 
-We need to clone the repository, create and activate an environment, like in the first few steps above (only need to be done once):
+On the HPC, we need to clone the repository, create and activate an environment, just like in the first few steps above (only need to be done once):
 
-```git clone ```
+```ssh IMPERIAL_SHORTCODE@borg-login.ese.ic.ac.uk``` (connects to the HPC)
 
-```cd scd-detection```
+```cd /scratch_root/IMPERIAL_SHORTCODE/``` (Navigate to your file store on the cluster)
 
-```conda env create -n scd_env -f enviroment.yml```
+```git clone https://github.com/willhcm/scd-detection.git``` (clone the underlying code for the prediction system)
 
-```conda activate scd_env```
+```cd scd-detection``` (Navigate into the codebase)
 
-Copy the models from your local machine to the HPC virtual machine:
+```conda env create -n scd_env -f enviroment.yml``` (Create the environment)
+
+```conda activate scd_env``` (Activate the environment)
+
+Now, we need to move the models over to the HPC, so exit (by typing ```exit``` in the terminal/command line when connected to the HPC). Once you are 'back on' the laptop, move the models over:
 
 ```scp -r downloads/models IMPERIAL_SHORTCODE@borg-login.ese.ic.ac.uk:/scratch_root/IMPERIAL_SHORTCODE/scd-detection```
 
-Run the below command to generate a new .txt files of valid download URLs. Need to input a manually collated .txt list of tile names (from DEFRA website). Create this .txt file on your local machine as a line-by-line list of tiles you want the model to merge and predict over. Move the file over to the HPC by doing the following command on your LOCAL machine:
+
+ Create a .txt file on your local machine as a line-by-line list of tiles you want the model to merge and predict over (from DEFRA website is the best way). Move the file over to the HPC by doing the following command on your laptop:
 
 ```scp -r path/to/example_request.txt IMPERIAL_SHORTCODE@borg-login.ese.ic.ac.uk:/scratch_root/IMPERIAL_SHORTCODE/scd-detection``` 
 
-Then, in the HPC, generate the urls by doing:
+Now, connect back on to the HPC to generate URLs, download from URLs and run the model.
+
+
+Then, in the HPC, generate the urls by doing the below command. Customise the example_request and example_request_name inputs to a suitable name to describe the region they represent, for example.
 
 ```python3 scripts/urls.py --request example_request.txt --request_name example_request_name```
 
-Second, download the files using curl. The files will be stored in a directory called tiles/
+Second, download the files using curl. The files will be stored in a directory on the HPC called tiles/
 
 ```xargs -n 1 curl -L -J -O --output-dir ./tiles < ./urls/example_request_name_urls.txt```
 

@@ -200,7 +200,8 @@ class Deployer:
         transform, crs = base["transform"], base["crs"]
         h, w = base["prob"].shape
 
-        scratch_dir = Path("/scratch_root/wm722/scd-detection/work") / 'merge' 
+        scratch_dir = Path("/scratch_root/wm722/scd-detection/") / 'merge' 
+        scratch_dir.mkdir(parents=True, exist_ok=True)
         merged = np.lib.format.open_memmap(
             scratch_dir / "merged.npy", mode="w+", dtype=np.float32, shape=(h, w))
         support = np.lib.format.open_memmap(
