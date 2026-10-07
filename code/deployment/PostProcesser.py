@@ -224,8 +224,8 @@ class PostProcessor:
         self,
         obj,
         transform,
-        crs,
-    ):
+        crs):
+
         row_c, col_c = obj.centroid
         
         cx, cy = transform * (col_c, row_c)
@@ -340,8 +340,7 @@ class PostProcessor:
 
         scalar_features = np.asarray(scalar_features, dtype=np.float32).reshape(-1)
 
-        #dem_context = normalise_dem_context(dem_context)
-        #scalar_features = normalise_scalar_features(scalar_features)
+        dem_context = normalise_dem_context(dem_context)
 
         return {
             "rgb_local": rgb_local if self.rgb else None,

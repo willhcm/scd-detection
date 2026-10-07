@@ -97,10 +97,12 @@ class Deployer:
         score_threshold=0.65, # tune
         mask_threshold=0.50, # tune
         context_scale=4.0,
-        min_context_width_m=768.0,
+        min_context_width_m=500.0,
         max_context_width_m=4000.0,
         native_res = 30,
-        stride_frac=0.75):
+        stride_frac=0.75,
+       to_veto=True,
+    ):
 
         self.base_res = None
         self.NODATA = NODATA
@@ -121,6 +123,7 @@ class Deployer:
         # Mask R-CNN deployment tile size.
         self.tile_size = tile_size
         self.rgb_veto = rgb_veto
+        self.to_veto = veto
 
         # if using spectral data
         if self.rgb_veto:
@@ -325,7 +328,7 @@ class Deployer:
 
         (merged, transform, crs, support, coverage) = self.merge_predictions_pyramid(predictions)
 
-        if self.veto:
+        if self.to_veto:
             accepted, rejected, veto_probability_map, out_transform, out_crs = self.veto(merged, transform, crs)
 
             out = {

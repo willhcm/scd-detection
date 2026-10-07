@@ -1,10 +1,11 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
+from deployment.PostProcesser import WindowedDataSource
 from rasterio.enums import Resampling
 from rasterio.features import rasterize
 from rasterio.transform import from_bounds
-from loaders.Tiler import ShapeLabels, DataSource
+from ScaleNormalisedDataStack import ShapeLabels, DataSource
 from IPython.display import clear_output
 import numpy as np
 import ipywidgets as widgets
@@ -15,30 +16,38 @@ import sys
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 
-from helpers.VetoHelpers import build_dem_context, VETO_SCALAR_NAMES
+from VetoHelpers import build_dem_context, VETO_SCALAR_NAMES
 
 class VetoLoader:
 
     def __init__(
         self,
         shp_path,
-        rgb_path,
         dem_path,
+        rgb_flag = False,
+        rgb_path = None,
+        target_crs = None,
         context_scale=4.0,
-        min_context_width_m=768.0,
+        min_context_width_m=500.0,
         max_context_width_m=4000.0,
         context_tile_size=224):
 
         self.predictions = ShapeLabels(shp_path)
-        self.spectral = DataSource.from_tiff(
-            rgb_path,
-            type="RGB")
-        
+
+        self.rgb_flag = rgb_flag
+        if self.rgb:
+            self.spectral = DataSource.from_tiff(
+                            rgb_path,
+                            type="RGB")
+            self.rgb_res = self.rgb_source.res
+        else:
+            self.rgb_res = 3 # planet labs backup
+
         self.dem_source = DataSource.from_tiff(
             dem_path,
             type="DEM")
 
-        self.target_crs = self.spectral.crs
+        self.target_crs = target_crs
         self.tiles = []
 
         self.context_scale = context_scale
@@ -53,46 +62,44 @@ class VetoLoader:
         cx = obj["cx"]
         cy = obj["cy"]
 
-        # RGB crop width
-        min_crop_width_m = min_crop_pixels * self.spectral.res
-
-        object_crop_width_m = obj["diameter"]/ object_fraction
-
-        local_crop_width_m = max(min_crop_width_m,object_crop_width_m)
-
+        # object size
+        diameter_m = (obj.equivalent_diameter_area * self.dem_source.res)
+        object_crop_width_m = (diameter_m / object_fraction)
+        min_crop_width_m = (min_crop_pixels * self.rgb_res)
+        local_crop_width_m = max(min_crop_width_m, object_crop_width_m)
         local_half_width = local_crop_width_m / 2.0
 
-        local_bounds = (
-            cx - local_half_width,
-            cy - local_half_width,
-            cx + local_half_width,
-            cy + local_half_width,
-        )
+        if self.rgb_flag:
+            local_bounds = (
+                cx - local_half_width,
+                cy - local_half_width,
+                cx + local_half_width,
+                cy + local_half_width,
+            )
 
-        rgb = self.spectral.reproject_to_shape(
-            target_crs=self.target_crs,
-            tile_bounds=local_bounds,
-            out_width=tile_size,
-            out_height=tile_size,
-            resampling=Resampling.bilinear,
-        )
+            rgb = self.spectral.reproject_to_shape(
+                target_crs=self.target_crs,
+                tile_bounds=local_bounds,
+                out_width=tile_size,
+                out_height=tile_size,
+                resampling=Resampling.bilinear,
+            )
 
-        if not np.isfinite(rgb).any() or np.all(rgb == 0):
-            return None
+            if not np.isfinite(rgb).any() or np.all(rgb == 0):
+                return None
 
+            local_transform = from_bounds(
+                *local_bounds,
+                tile_size,
+                tile_size,
+            )
 
-        local_transform = from_bounds(
-            *local_bounds,
-            tile_size,
-            tile_size,
-        )
-
-        local_mask = rasterize(
-            [(obj["geom"], 1)],
-            out_shape=(tile_size, tile_size),
-            transform=local_transform,
-            fill=0,
-            dtype=np.uint8,
+            local_mask = rasterize(
+                [(obj["geom"], 1)],
+                out_shape=(tile_size, tile_size),
+                transform=local_transform,
+                fill=0,
+                dtype=np.uint8,
         )
 
         # DEM crop width
