@@ -17,7 +17,7 @@ class NegativeMiner:
 
     LAYER_NAMES = ["DEM", "DEM_SLOPE", "HILLSHADE", "RR", "LAPLACE", "LABELS"]
 
-    def __init__(self, dem: DataSource, resolutions: list[float], NODATA=0):
+    def __init__(self, dem: DataSource, resolutions: list[float], NODATA=0, region=None):
         self.dem = dem
         self.resolutions = resolutions
         self.coverage = np.zeros(dem.data.shape, dtype=np.float32)
@@ -25,6 +25,7 @@ class NegativeMiner:
         self.layer_index = {name: i for i, name in enumerate(self.LAYER_NAMES)}
         self.report_capacity()
         self.NODATA = NODATA
+        self.region = region
 
     def _pixel_window(self, tile_bounds):
         minx, miny, maxx, maxy = tile_bounds
@@ -74,14 +75,13 @@ class NegativeMiner:
         results = {}
         count_ceiling = min([b.count for b in self.bins])
         
-        for b in sorted(self.bins, key=lambda b: -b.res):  # largest footprint first, least flexible
+        for b in sorted(self.bins, key=lambda b: b.res):  # largest footprint first, least flexible
             tile_side = 512 * b.res
             placed = []
+            count = counts[b.res] if counts and b.res in counts else b.count
 
             for x0, y0 in self._grid_candidates(tile_side):
-                if len(placed) >= b.count:
-                    break
-                if len(placed) >= count_ceiling * 2:
+                if len(placed) >= count:
                     break
 
                 bounds = (x0, y0, x0 + tile_side, y0 + tile_side)
@@ -97,22 +97,23 @@ class NegativeMiner:
         return results
 
     @staticmethod
-    def _tile_name(tile_bounds, prefix="tile"):
+    def _tile_name(tile_bounds):
         minx, miny, maxx, maxy = tile_bounds
-        return f"{prefix}_{int(minx)}_{int(miny)}_{int(maxx)}_{int(maxy)}"
+        return f"{int(minx)}_{int(miny)}_{int(maxx)}_{int(maxy)}"
 
     def export(self, tile, out_path, bounds, name, res):
 
         labels = tile[self.layer_index["LABELS"]].astype(np.uint8)
         image = tile[:self.layer_index["LABELS"]].astype(np.float32)
 
-        np.savez_compressed(str(Path(out_path) / name),
+        np.savez_compressed(str(Path(out_path) / f'{self.region}_negative_{name}'),
                 image=image, 
                 layer_names=np.array(self.LAYER_NAMES),
                 res=np.array(res, dtype=np.float32),
                 labels=labels,
                 scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)),
-                bounds=bounds)
+                bounds=bounds, 
+                region=self.region)
 
 
     def generate_tiles(self, out_dir: Path, counts=None):
@@ -124,13 +125,16 @@ class NegativeMiner:
             for i, bounds in enumerate(bounds_list):
                 tile = self.generator._build_tile(bounds, 512, res)
 
+                if tile is None:
+                    continue
                 # empty check 
 
-                invalid = np.isclose(tile[self.layer_index['DEM']], self.NODATA) | ~np.isfinite(tile[self.layer_index['DEM']])
+                invalid = np.isclose(tile[self.layer_index['DEM']], 0) | ~np.isfinite(tile[self.layer_index['DEM']])
                 if invalid.any():
                     continue
                 
                 name = self._tile_name(bounds)
+                print(f"exporting {name} at {res:.2f}m")
                 self.export(tile, out_dir, bounds, name, res)
 
         self.report_statistics(tile_positions)

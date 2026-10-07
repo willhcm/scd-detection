@@ -102,7 +102,7 @@ class PostProcessor:
         rgb_path=None,
         rgb_tile_size=94,
         detect_threshold=0.40,
-        veto_threshold=0.90,
+        veto_threshold=0.60,
         min_crop_pixels=64,
         object_fraction=0.5,
         context_scale=4.0,
@@ -340,8 +340,8 @@ class PostProcessor:
 
         scalar_features = np.asarray(scalar_features, dtype=np.float32).reshape(-1)
 
-        dem_context = normalise_dem_context(dem_context)
-        scalar_features = normalise_scalar_features(scalar_features)
+        #dem_context = normalise_dem_context(dem_context)
+        #scalar_features = normalise_scalar_features(scalar_features)
 
         return {
             "rgb_local": rgb_local if self.rgb else None,
