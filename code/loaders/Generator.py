@@ -42,7 +42,7 @@ class TileGenerator():
         )
 
         # handles tile being on edge of DEM (bad as zero padding ruins SCD context)
-        if _bounds_inside(padded_bounds, self.dem.bounds):
+        if not _bounds_inside(padded_bounds, self.dem.bounds):
             return None
 
         # large DEM to reduce edge artefacts of the tile
