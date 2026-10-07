@@ -105,8 +105,8 @@ class PostProcessor:
         veto_threshold=0.60,
         min_crop_pixels=64,
         object_fraction=0.5,
-        context_scale=4.0,
-        min_context_width_m=768.0,
+        context_scale=5.0,
+        min_context_width_m=750.0,
         max_context_width_m=4000.0,
         rgb=False):
 

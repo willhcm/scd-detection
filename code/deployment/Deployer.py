@@ -122,7 +122,6 @@ class Deployer:
         self.tile_size = tile_size
         self.rgb_veto = rgb_veto
 
-
         # if using spectral data
         if self.rgb_veto:
 
@@ -326,18 +325,29 @@ class Deployer:
 
         (merged, transform, crs, support, coverage) = self.merge_predictions_pyramid(predictions)
 
-        accepted, rejected, veto_probability_map, out_transform, out_crs = self.veto(merged, transform, crs)
+        if self.veto:
+            accepted, rejected, veto_probability_map, out_transform, out_crs = self.veto(merged, transform, crs)
 
-        out = {
-            "raw": predictions,
-            "predictions": accepted,
-            "rejected": rejected,
-            "veto_probability_map": veto_probability_map,
-            "transform": out_transform,
-            "crs": out_crs,
-            "support": support,
-            "coverage": coverage
-        }
+            out = {
+                "raw": predictions,
+                "predictions": accepted,
+                "rejected": rejected,
+                "veto_probability_map": veto_probability_map,
+                "transform": out_transform,
+                "crs": out_crs,
+                "support": support,
+                "coverage": coverage
+            }
+
+        else:
+            out = {
+                "raw": predictions,
+                "predictions": merged,
+                "transform": transform,
+                "crs": crs,
+                "support": support,
+                "coverage": coverage
+            }
 
         return out
 

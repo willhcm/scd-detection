@@ -85,7 +85,7 @@ class DEM_Based_Vetoer(nn.Module):
         return self.classifier(fused).squeeze(1)    
 
 
-    # AI assistance in handling shapes and channels for VetoDataset
+# AI assistance in handling shapes and channels for VetoDataset
 class DEM_Based_Veto_Dataset(Dataset):
     """
     A PyTorch Dataset class for loading and preprocessing data for the Veto classifier.
