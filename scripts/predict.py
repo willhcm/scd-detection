@@ -19,6 +19,7 @@ DEPLOYER_PARAMS = {
     "context_scale": 5.0,
     "min_context_width_m": 750.0,
     "max_context_width_m": 4000.0,
+    "native_res": 1.0,
     "stride_frac": 0.75,
 }
 
@@ -82,7 +83,6 @@ if __name__ == "__main__":
     parser.add_argument("--rgb_veto", type=str, default='false', help="Use RGB vetoing (true/false).")  
     parser.add_argument("--return_all", type=str, required=False, default='false', help="Flag to indicate whether to return coverage, support, and centroids.")
     parser.add_argument("--no_veto", action="store_true", help="dont veto")
-    parser.add_argument("--native_res", type=float, required=False, help="native res of dem")
 
     hp = parser.add_argument_group("deployer hyperparameters")
     for name, default in DEPLOYER_PARAMS.items():
