@@ -104,6 +104,7 @@ class SCDModel():
             "rgb_path": self.rgb_path,
             "rgb_veto": self.rgb_veto,
             "to_veto": self.to_veto,
+            "native_res": self.native_res,
             "NODATA": self.NODATA,
             **hyperparams
         }
