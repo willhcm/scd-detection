@@ -23,7 +23,7 @@ DEPLOYER_PARAMS = {
     "stride_frac": 0.75,
 }
 
-def main(dem_path, model_state_path, veto_model_state_path, rgb_path, device, resolutions, rgb_veto, run_name, return_all='false', no_veto=True):
+def main(dem_path, model_state_path, veto_model_state_path, rgb_path, device, resolutions, rgb_veto, run_name, return_all='false', no_veto=True, hyperparams=None):
     # Convert string to boolean
     rgb_veto = rgb_veto.lower() == 'true'
     return_all = return_all.lower() == 'true'
@@ -54,7 +54,7 @@ def main(dem_path, model_state_path, veto_model_state_path, rgb_path, device, re
         resolutions=resolutions,
         out_path=out_path,
         rgb_path=rgb_path,
-        hyperparams=DEPLOYER_PARAMS,
+        hyperparams={**DEPLOYER_PARAMS, **(hyperparams or {})},
         run_name=run_name,
         to_veto=not no_veto
     )
@@ -79,8 +79,19 @@ if __name__ == "__main__":
     parser.add_argument("--rgb_path", type=str, required=False, help="Path to the RGB file for vetoing.")
     parser.add_argument("--device", type=str, default="cuda", help="Device to run the model on (e.g., 'cuda' or 'cpu').")
     parser.add_argument("--resolutions", type=float, nargs='+', default=[1.0], help="List of resolutions to process.")
-    parser.add_argument("--rgb_veto", type=str, required=False, help="Boolean flag to indicate whether to use RGB vetoing (True/False).")
+    parser.add_argument("--rgb_veto", type=str, default='false', help="Use RGB vetoing (true/false).")  
     parser.add_argument("--return_all", type=str, required=False, default='false', help="Flag to indicate whether to return coverage, support, and centroids.")
     parser.add_argument("--no_veto", action="store_true", help="dont veto")
+
+    hp = parser.add_argument_group("deployer hyperparameters")
+    for name, default in DEPLOYER_PARAMS.items():
+        hp.add_argument(f"--{name}", type=type(default), default=default)
+
     args = parser.parse_args()
-    main(args.dem_path, args.model_state_path, args.veto_model_state_path, args.rgb_path, args.device, args.resolutions, args.rgb_veto, args.run_name, return_all=args.return_all, no_veto=args.no_veto)
+    hyperparams = {k: getattr(args, k) for k in DEPLOYER_PARAMS}
+
+    main(args.dem_path, args.model_state_path, args.veto_model_state_path,
+         args.rgb_path, args.device, args.resolutions, args.rgb_veto,
+         args.run_name, return_all=args.return_all, no_veto=args.no_veto,
+         hyperparams=hyperparams)
+    

@@ -101,8 +101,7 @@ class Deployer:
         max_context_width_m=4000.0,
         native_res = 30,
         stride_frac=0.75,
-       to_veto=True,
-    ):
+       to_veto=True,):
 
         self.base_res = None
         self.NODATA = NODATA
