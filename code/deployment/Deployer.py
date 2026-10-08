@@ -101,13 +101,12 @@ class Deployer:
         max_context_width_m=4000.0,
         native_res = 30,
         stride_frac=0.75,
-       to_veto=True,):
+        to_veto=True,):
 
         self.base_res = None
         self.NODATA = NODATA
         self.mask_threshold = mask_threshold
         self.score_threshold = score_threshold
-        self.mask_threshold = mask_threshold
 
         self.model_dict = model_state_dict
         self.model = self.build_wrapper()
@@ -265,7 +264,7 @@ class Deployer:
             rgb_path=self.rgb_path,
             dem_path=self.dem_path,
             batch_size=self.veto_batch_size,
-            detect_threshold=self.score_threshold,
+            detect_threshold=0.6,
             veto_threshold=self.veto_threshold,
             min_crop_pixels=64,
             object_fraction=0.5,

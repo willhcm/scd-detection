@@ -13,7 +13,7 @@ DEPLOYER_PARAMS = {
     "tile_size": 512,
     "veto_context_tile_size": 224,
     "veto_batch_size": 16,
-    "veto_threshold": 0.74, # tune on larger train set
+    "veto_threshold": 0.60, # tune on larger train set
     "score_threshold": 0.60, # to tune
     "mask_threshold": 0.55, # to tune
     "context_scale": 5.0,
@@ -44,6 +44,12 @@ def main(dem_path, model_state_path, veto_model_state_path, rgb_path, device, re
     veto_state = torch.load(veto_model_path, map_location=device) if veto_model_state_path else None
     rgb_path = Path(rgb_path) if rgb_path else None
 
+    params = {**DEPLOYER_PARAMS, **(hyperparams or {})}
+    print("effective hyperparams:")
+    for k, v in params.items():
+        print(f"  {k} = {v}")
+    print(f"  no_veto = {no_veto}, rgb_veto = {rgb_veto}")
+
     # Create an instance of the SCDModel
     scd_model = SCDModel(
         MaskRCNN_model_state=model_state,
@@ -54,7 +60,7 @@ def main(dem_path, model_state_path, veto_model_state_path, rgb_path, device, re
         resolutions=resolutions,
         out_path=out_path,
         rgb_path=rgb_path,
-        hyperparams={**DEPLOYER_PARAMS, **(hyperparams or {})},
+        hyperparams=params,
         run_name=run_name,
         to_veto=not no_veto
     )

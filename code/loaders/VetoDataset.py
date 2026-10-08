@@ -18,42 +18,29 @@ sys.path.insert(0, str(CODE_DIR))
 
 from VetoHelpers import build_dem_context, VETO_SCALAR_NAMES
 
-class VetoLoader:
+class DEMVetoLoader:
 
     def __init__(
         self,
         shp_path,
         dem_path,
-        rgb_flag = False,
-        rgb_path = None,
         target_crs = None,
         context_scale=4.0,
-        min_context_width_m=500.0,
-        max_context_width_m=4000.0,
-        context_tile_size=224):
+        min_width_m=750.0,
+        max_width_m=4000.0,
+        tile_size=224):
 
         self.predictions = ShapeLabels(shp_path)
-
-        self.rgb_flag = rgb_flag
-        if self.rgb:
-            self.spectral = DataSource.from_tiff(
-                            rgb_path,
-                            type="RGB")
-            self.rgb_res = self.rgb_source.res
-        else:
-            self.rgb_res = 3 # planet labs backup
-
         self.dem_source = DataSource.from_tiff(
             dem_path,
             type="DEM")
-
+        self.dem_res = self.dem_source.res
         self.target_crs = target_crs
         self.tiles = []
-
+        self.tile_size = tile_size
         self.context_scale = context_scale
-        self.min_context_width_m = min_context_width_m
-        self.max_context_width_m = max_context_width_m
-        self.context_tile_size = context_tile_size
+        self.min_width_m = min_width_m
+        self.max_width_m = max_width_m
 
     # build tile from candidate object, including local RGB and DEM context
     def _make_tile(self, obj, tile_size=96, min_crop_pixels=64, object_fraction=0.5):
@@ -63,57 +50,21 @@ class VetoLoader:
         cy = obj["cy"]
 
         # object size
-        diameter_m = (obj.equivalent_diameter_area * self.dem_source.res)
+        diameter_m = (obj.equivalent_diameter_area * 1)
         object_crop_width_m = (diameter_m / object_fraction)
-        min_crop_width_m = (min_crop_pixels * self.rgb_res)
-        local_crop_width_m = max(min_crop_width_m, object_crop_width_m)
-        local_half_width = local_crop_width_m / 2.0
-
-        if self.rgb_flag:
-            local_bounds = (
-                cx - local_half_width,
-                cy - local_half_width,
-                cx + local_half_width,
-                cy + local_half_width,
-            )
-
-            rgb = self.spectral.reproject_to_shape(
-                target_crs=self.target_crs,
-                tile_bounds=local_bounds,
-                out_width=tile_size,
-                out_height=tile_size,
-                resampling=Resampling.bilinear,
-            )
-
-            if not np.isfinite(rgb).any() or np.all(rgb == 0):
-                return None
-
-            local_transform = from_bounds(
-                *local_bounds,
-                tile_size,
-                tile_size,
-            )
-
-            local_mask = rasterize(
-                [(obj["geom"], 1)],
-                out_shape=(tile_size, tile_size),
-                transform=local_transform,
-                fill=0,
-                dtype=np.uint8,
-        )
 
         # DEM crop width
-        # Four-times wider context, clipped to fixed limits.
+        # Four-times object box width, clipped to fixed limits.
         context_width_m = float(
             np.clip(
-                self.context_scale * local_crop_width_m,
-                self.min_context_width_m,
-                self.max_context_width_m,
+                self.context_scale * object_crop_width_m,
+                self.min_width_m,
+                self.max_width_m,
             )
         )
 
+        # build bbox around centre
         context_half_width = context_width_m / 2.0
-
         context_bounds = (
             cx - context_half_width,
             cy - context_half_width,
@@ -124,8 +75,8 @@ class VetoLoader:
         dem = self.dem_source.reproject_to_shape(
             target_crs=self.target_crs,
             tile_bounds=context_bounds,
-            out_width=self.context_tile_size,
-            out_height=self.context_tile_size,
+            out_width=self.tile_size,
+            out_height=self.tile_size,
             resampling=Resampling.bilinear,
         )
 
@@ -139,15 +90,15 @@ class VetoLoader:
 
         context_transform = from_bounds(
             *context_bounds,
-            self.context_tile_size,
-            self.context_tile_size,
+            self.tile_size,
+            self.tile_size,
         )
 
         context_mask = rasterize(
             [(obj["geom"], 1)],
             out_shape=(
-                self.context_tile_size,
-                self.context_tile_size,
+                self.tile_size,
+                self.tile_size,
             ),
             transform=context_transform,
             fill=0,
@@ -165,18 +116,13 @@ class VetoLoader:
             return None
 
         return {
-            "rgb": rgb.astype(np.float32),
-            "mask": local_mask,
             "dem_context": dem_context,
             "scalar_features": scalar_features,
             "id": obj["id"],
             "area": obj["area"],
             "diameter": obj["diameter"],
-            "bounds": local_bounds,
-            "context_bounds": context_bounds,
-            "local_crop_width_m": local_crop_width_m,
-            "context_width_m": context_width_m,
-            "mask_fraction": float(local_mask.mean()),
+            "bounds": context_bounds,
+            "width_m": context_width_m,
         }
 
     # show for labelling
@@ -296,3 +242,4 @@ class VetoLoader:
                 context_width_m=np.float32(tile["context_width_m"]))
 
         print(f"Exported {len(self.tiles)} candidates.")
+
