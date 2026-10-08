@@ -18,23 +18,24 @@ class DatasetWrapper():
         self.train_positives_distribution = {'positive': 0, 'negative': 0}
         self.geography_positives_distribution = {}
         self.resolutions_positive_distribution = {}
+        self.normalisation_stats = {}
 
-    def generate_dataset(self, test_region: None):
-        # region is folded out region
+    def generate_dataset(self, test_region=None):
 
         self.train_paths = []
         self.test_paths = []
-        
+
         if test_region is None:
-            # no region specified, use all data for training
+
             for tile in self.root_dir.glob("*.npz"):
                 self.train_paths.append(tile)
-            
-            self._analyze_dataset()
-            return MaskRCNNDataset(self.train_paths)
 
-        else: 
-            # LORO-CV run, leave region out of training set and use for testing.
+            self._analyze_dataset()
+            self._estimate_normalization_stats()
+            return MaskRCNNDataset(self.train_paths, self.normalisation_stats)
+
+        else:
+
             for tile in self.root_dir.glob("*.npz"):
                 region = self._get_region(tile)
                 if region != test_region:
@@ -43,7 +44,12 @@ class DatasetWrapper():
                     self.test_paths.append(tile)
 
             self._analyze_dataset()
-            return MaskRCNNDataset(self.train_paths), MaskRCNNDataset(self.test_paths)
+            self._estimate_normalization_stats()
+
+            return (
+                MaskRCNNDataset(self.train_paths, self.normalisation_stats),
+                MaskRCNNDataset(self.test_paths, self.normalisation_stats)
+            )
 
     def plot_distribution(self):
 
@@ -137,6 +143,102 @@ class DatasetWrapper():
         # extract positive label from metadata of the image at path
         with np.load(path, allow_pickle=True) as tile:
             return tile['positive'].item()
+
+    def _estimate_normalization_stats(
+        self,
+        n_pixels_per_tile=5000,
+        seed=42):
+
+        """
+        Estimate training-set normalization statistics.
+
+        Each training tile contributes approximately the same number
+        of randomly sampled valid pixels.
+
+        DEM is deliberately excluded because it is normalized
+        independently on a tile-by-tile basis.
+
+        Returns:
+            dict containing median/IQR for:
+                slope
+                laplace
+                rr
+                hillshade
+        """
+
+        rng = np.random.default_rng(seed)
+
+        channels = {
+            1: "slope",
+            2: "laplace",
+            3: "rr",
+            4: "hillshade",
+        }
+
+        samples = {
+            name: []
+            for name in channels.values()
+        }
+
+        for path in self.train_paths:
+
+            with np.load(path, allow_pickle=True) as tile:
+                
+                image = tile["image"]
+
+                valid = np.isfinite(image).all(axis=0)
+
+                valid_indices = np.flatnonzero(valid)
+
+                if len(valid_indices) == 0:
+                    continue
+
+                n = min(
+                    n_pixels_per_tile,
+                    len(valid_indices)
+                )
+
+                chosen = rng.choice(
+                    valid_indices,
+                    size=n,
+                    replace=False
+                )
+
+                for channel_idx, channel_name in channels.items():
+
+                    values = image[channel_idx].ravel()[chosen]
+
+                    samples[channel_name].append(values)
+
+        stats = {}
+
+        for channel_name, channel_samples in samples.items():
+
+            if not channel_samples:
+                raise RuntimeError(
+                    f"No valid samples found for {channel_name}"
+                )
+
+            values = np.concatenate(channel_samples)
+
+            median = np.median(values)
+            q25, q75 = np.percentile(values, [25, 75])
+            iqr = q75 - q25
+
+            if iqr == 0:
+                raise RuntimeError(
+                    f"IQR is zero for {channel_name}"
+                )
+
+            stats[channel_name] = {
+                "median": float(median),
+                "iqr": float(iqr),
+                "n_samples": int(len(values)),
+            }
+
+        self.normalization_stats = stats
+
+        return stats
 
 class DatasetRefiner():
 
@@ -368,4 +470,5 @@ class DatasetRefiner():
                     tiles.append(path)
 
         return tiles
+
     

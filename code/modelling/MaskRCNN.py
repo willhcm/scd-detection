@@ -1,6 +1,8 @@
 from pathlib import Path
 import sys
 
+from matplotlib import image
+
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 
@@ -228,11 +230,12 @@ class MaskRCNNDataset(Dataset):
     The target dictionary contains bounding boxes, labels, masks, and other relevant information."""
 
     # remove path checking for time optimisation
-    def __init__(self, all_paths, augment=True, min_instance_area=20):
+    def __init__(self, all_paths, norm_stats, augment=True, min_instance_area=20,):
 
         self.augment = augment
         self.paths = all_paths
         self.min_instance_area = min_instance_area
+        self.norm_stats = norm_stats
 
     def __len__(self):
         return len(self.paths)
@@ -312,21 +315,31 @@ class MaskRCNNDataset(Dataset):
             np.ascontiguousarray(mask),
         )
 
-    @staticmethod
-    def _normalise_band(band, name):
-        band = band.astype(np.float32)
+    def _normalise(self, image):
 
-        if name in {"DEM_SLOPE",  "DEM"}:
-            transformed = band
-        else:
-            transformed = np.sign(band) * np.log1p(np.abs(band))
+        # DEM
+        dem = image[0]
 
-        median = np.median(transformed)
-        q75, q25 = np.percentile(transformed, [75, 25])
-        iqr = q75 - q25
-        scaled = (transformed - median) / (iqr + 1e-6)
+        valid = np.isfinite(dem)
 
-        return scaled
+        dem_median = np.median(dem[valid])
+
+        image[0] = dem - dem_median
+
+        # Other channels
+        for idx, name in enumerate(
+            ["slope", "laplace", "rr", "hillshade"],
+            start=1
+        ):
+
+            median = self.norm_stats[name]["median"]
+            iqr = self.norm_stats[name]["iqr"]
+
+            image[idx] = (
+                image[idx] - median
+            ) / iqr
+
+        return image
 
     def __getitem__(self, idx):
         path = self.paths[idx]
@@ -357,10 +370,6 @@ class MaskRCNNDataset(Dataset):
         # Hillshade is calculated from the unnormalised DEM.
         hillshade = calculate_hillshade(raw_dem).astype(np.float32)
 
-        # Normalise bands.
-        for i, name in enumerate(_BANDS_TO_LOAD):
-            image[i] = self._normalise_band(image[i], name)
-
         # normalise hillshade seperately.
         hillshade = (
             hillshade - hillshade.mean()
@@ -372,6 +381,8 @@ class MaskRCNNDataset(Dataset):
             [image, hillshade[None, :, :]],
             axis=0,
         ).astype(np.float32)
+
+        image = self._normalise(image)
         
         boxes, labels, masks, areas, iscrowd = self._mask_to_instances(mask)
 

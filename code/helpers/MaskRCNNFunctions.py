@@ -2,6 +2,8 @@ import numpy as np
 from scipy.ndimage import label, center_of_mass 
 import torch
 
+from collections import defaultdict
+
 # AI assistance with:
 
 # collate_fn. (didnt know what this was)
@@ -289,3 +291,106 @@ def apply_training_stage(model, optimizer, stage):
             f"lr={group['lr']:.2e}, "
             f"trainable={n_trainable:,}"
         )
+
+
+
+
+CHANNELS = ["dem", "slope", "laplace", "rr", "hillshade"]
+
+
+def estimate_training_stats(
+    dataset,
+    n_pixels_per_tile=2000,
+    seed=42,
+):
+    """
+    Estimate normalization statistics from the training dataset.
+
+    Every tile contributes approximately the same number of pixels,
+    so large tiles / regions don't dominate the statistics.
+
+    DEM:
+        tile-level median is calculated later, so no global DEM stats.
+
+    Other channels:
+        global median + IQR estimated from sampled training pixels.
+    """
+
+    rng = np.random.default_rng(seed)
+
+    samples = {
+        ch: []
+        for ch in CHANNELS
+        if ch != "dem"
+    }
+
+    for tile_idx in range(len(dataset)):
+
+        # ---------------------------------------------------------
+        # Load your 5-channel tile
+        # ---------------------------------------------------------
+        # Adapt this to however your Dataset returns data.
+        #
+        # e.g.
+        # tile = dataset.load_tile(tile_idx)
+        #
+        # Expected shape:
+        #     (5, 512, 512)
+        #
+        tile = dataset.load_tile(tile_idx)
+
+        # ---------------------------------------------------------
+        # Valid pixel mask
+        # ---------------------------------------------------------
+        #
+        # You should adapt this to your NoData/mask convention.
+        #
+        valid = np.isfinite(tile).all(axis=0)
+
+        valid_indices = np.flatnonzero(valid)
+
+        if len(valid_indices) == 0:
+            continue
+
+        n = min(n_pixels_per_tile, len(valid_indices))
+
+        chosen = rng.choice(
+            valid_indices,
+            size=n,
+            replace=False,
+        )
+
+        # ---------------------------------------------------------
+        # Collect samples
+        # ---------------------------------------------------------
+
+        for ch_idx, ch in enumerate(CHANNELS):
+
+            if ch == "dem":
+                continue
+
+            values = tile[ch_idx].ravel()[chosen]
+
+            samples[ch].append(values)
+
+    # -------------------------------------------------------------
+    # Calculate robust statistics
+    # -------------------------------------------------------------
+
+    stats = {}
+
+    for ch in samples:
+
+        values = np.concatenate(samples[ch])
+
+        median = np.median(values)
+        q25, q75 = np.percentile(values, [25, 75])
+        iqr = q75 - q25
+
+        stats[ch] = {
+            "median": float(median),
+            "iqr": float(iqr),
+            "n_samples": len(values),
+        }
+
+    return stats
