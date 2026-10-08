@@ -16,6 +16,7 @@ import numpy as np
 from modelling.Veto import VetoDataset
 import copy
 from tqdm import tqdm
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 class Trainer():
 
@@ -24,7 +25,7 @@ class Trainer():
         self.dset = DatasetWrapper(root)
         self.device = device
 
-    def _get_loaders(self, folded_out_region, batch_size):
+    def _get_MaskRCNN_loaders(self, folded_out_region, batch_size):
         train_set, val_set = self.dset.generate_dataset(folded_out_region)
 
         train_loader = DataLoader(train_set,
@@ -38,9 +39,11 @@ class Trainer():
                         num_workers=0,
                         batch_size=batch_size,
                         collate_fn=collate_fn)
-    
-    def train_fold(self, folded_out_region, epochs=50, batch_size=8):
-        train_loader, val_loader = self._get_loaders(folded_out_region)
+        
+        return train_loader, val_loader
+
+    def train_fold(self, folded_out_region, epochs=50, batch_size=8, out_path=None):
+        train_loader, val_loader = self._get_MaskRCNN_loaders(folded_out_region, batch_size)
         model = MaskRCNN()
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -137,27 +140,22 @@ class Trainer():
                 best_epoch = epoch + 1
                 best_state = copy.deepcopy(model.state_dict())
 
-                torch.save({
-                    "epoch": best_epoch,
-                    "model_state_dict": best_state,
-                    "best_f1": best_f1,
-                    "train_losses": train_losses,
-                    "val_precisions": val_precisions,
-                    "val_recalls": val_recalls,
-                    "val_f1s": val_f1s,
-                }, "/content/drive/MyDrive/IRP/models/best_maskrcnn_scd.pt")
-
                 print(f"Saved new best model at epoch {best_epoch} with F1={best_f1:.4f}")
                 bad_epochs = 0
             else:
                 bad_epochs += 1
 
         results = {'train_losses': train_losses,
-                   'val_precisions': val_precisions,
                    'val_recalls': val_recalls,
+                   'val_precisions': val_precisions,
+                   'val_ious': val_ious,
                    'val_f1s': val_f1s}
 
-        return results
+        torch.save(best_state, out_path / f"best_model_fold_{folded_out_region}.pt")
+        print(f"Best model saved at epoch {best_epoch} with F1={best_f1:.4f}")
+
+        # save dict of results to npz file
+        np.savez_compressed(out_path / f"training_metrics_fold_{folded_out_region}.npz", **results)
 
     def LORO_CV(self, regions):
         results = {}
@@ -166,9 +164,3 @@ class Trainer():
             results[region] = self.train_fold(region)
 
         return results
-
-    def train_rgb_veto(self):
-        ...
-
-    def train_dem_veto(self):
-        ...
