@@ -13,12 +13,12 @@ def main(args):
     trainer = Trainer(args.root, device="cuda" if torch.cuda.is_available() else "cpu")
 
     out_path = REPO_ROOT / "results" / "training" / args.run
-    
+
     trainer.train_fold(
         folded_out_region=args.folded_out_region,
         epochs=args.epochs,
         batch_size=args.batch_size,
-        run=args.run)
+        run=out_path)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a Mask R-CNN model for SCD detection.")
