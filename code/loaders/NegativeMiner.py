@@ -130,7 +130,7 @@ class NegativeMiner:
                     continue
                 # empty check 
 
-                invalid = np.isclose(tile[self.layer_index['DEM']], 0) | ~np.isfinite(tile[self.layer_index['DEM']])
+                invalid = np.isclose(tile[self.layer_index['DEM']], -9999.0) | ~np.isfinite(tile[self.layer_index['DEM']])
                 if invalid.any():
                     continue
                 
