@@ -19,7 +19,7 @@ DEPLOYER_PARAMS = {
     "context_scale": 5.0,
     "min_context_width_m": 750.0,
     "max_context_width_m": 4000.0,
-    "native_res": 1,
+    "native_res": 1.0,
     "stride_frac": 0.75,
 }
 
