@@ -6,7 +6,7 @@
 #SBATCH --qos intermediate
 #SBATCH --mem 32G
 #SBATCH --gres=gpu:1 # request a H200 GPU
-#SBATCH --time=02:00:00
+#SBATCH --time=01:00:00
 #SBATCH --output=/scratch_root/SHORTCODE/logs/%x-%j.out
 #SBATCH --error=/scratch_root/SHORTCODE/logs/%x-%j.err
 #SBATCH -c 8
@@ -35,5 +35,3 @@ python -u scripts/predict.py \
     --score_threshold 0.75 \
     --veto_threshold 0.80 \
     --native_res 1.0 \
-
-
