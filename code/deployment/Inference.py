@@ -87,8 +87,7 @@ class SCDModel():
             f.write(f"Run: {self.run_name}\n")
             f.write(f"Bounds of DEM: {self.DEM_bounds}\n")
             f.write(f"CRS of DEM: {self.DEM_crs}\n")
-            f.write(f"Tiles used: {'\n '.join(self.tiles_names)}\n")
-            f.write(f"\n")
+            f.write(f"Tiles used: {', '.join(self.tiles_names)}\n")
 
         return tuple(results[key] for key, include in requested.items() if include)
 
