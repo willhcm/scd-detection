@@ -5,7 +5,7 @@ import sys
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 
-from modelling.MaskRCNNNew import MaskRCNN
+from modelling.MaskRCNN import MaskRCNN
 from loaders.dataset import DatasetWrapper
 from helpers.MaskRCNNFunctions import evaluate_maskrcnn_metrics, build_staged_optimizer, apply_training_stage, collate_fn
 import torch
@@ -156,10 +156,12 @@ class Trainer():
         # save dict of results to npz file
         np.savez_compressed(out_path / f"training_metrics_fold_{folded_out_region}.npz", **results)
 
-    def LORO_CV(self, regions):
+        return results
+
+    def LORO_CV(self, regions, out_path):
         results = {}
         for region in regions: # where region is the region being folded out.
-            train_loader, val_loader = self._get_loaders(region)
-            results[region] = self.train_fold(region)
+            results[region] = self.train_fold(region, out_path=out_path / f"fold_{region}")
 
-        return results
+
+        np.savez_compressed(out_path / "LORO_CV_results.npz", **results)

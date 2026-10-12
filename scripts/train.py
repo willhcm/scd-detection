@@ -13,20 +13,26 @@ def main(args):
     trainer = Trainer(args.root, device="cuda" if torch.cuda.is_available() else "cpu")
 
     out_path = REPO_ROOT / "results" / "training" / args.run
+    out_path.mkdir(parents=True, exist_ok=True)
 
-    trainer.train_fold(
-        folded_out_region=args.folded_out_region,
-        epochs=args.epochs,
-        batch_size=args.batch_size,
-        run=out_path)
+    if args.LORO_CV:
+        regions = args.folded_out_regions # Replace with actual region names
+        trainer.LORO_CV(regions, out_path)
+    else:
+        trainer.train_fold(
+            folded_out_region=args.folded_out_region[0],
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            out_path=out_path)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a Mask R-CNN model for SCD detection.")
     parser.add_argument("--root", type=str, required=True, help="Root directory of the dataset.")
-    parser.add_argument("--folded_out_region", type=str, required=True, help=" Region to fold out for training.")
+    parser.add_argument("--folded_out_regions", nargs="+", default=[])
     parser.add_argument("--epochs", type=int, default=50, help="Number of training epochs.")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training.")
     parser.add_argument("--run", type=str, default=None, help="Name of the run to save the best model and training metrics.")
+    parser.add_argument("--LORO_CV", action="store_true", help="Perform Leave-One-Region-Out Cross-Validation.")
     args = parser.parse_args()
 
     main(args)
