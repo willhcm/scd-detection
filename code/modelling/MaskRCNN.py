@@ -17,8 +17,7 @@ import numpy as np
 from scipy.ndimage import label, find_objects, gaussian_filter
 from torchvision.models.detection.rpn import RPNHead
 from torchvision.models.detection.anchor_utils import AnchorGenerator
-from helpers import calculate_hillshade
-from MaskRCNNFunctions import evaluate_maskrcnn_metrics, build_staged_optimizer, apply_training_stage
+from helpers.MaskRCNNFunctions import evaluate_maskrcnn_metrics, build_staged_optimizer, apply_training_stage
 import copy
 from tqdm.auto import tqdm
 

@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
-from MaskRCNNNew import MaskRCNNDataset
+from modelling.MaskRCNN import MaskRCNNDataset
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 
