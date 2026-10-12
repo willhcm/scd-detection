@@ -330,7 +330,6 @@ class MaskRCNNDataset(Dataset):
         slope = np.log1p(slope)
 
         # Robust scaling all 
-
         slope = (slope - self.norm_stats['SLOPE']['median']) / self.norm_stats['SLOPE']['iqr']
         rr = (rr - self.norm_stats['RR']['median']) / self.norm_stats['RR']['iqr']
         laplace = (laplace - self.norm_stats['LAPLACE']['median']) / self.norm_stats['LAPLACE']['iqr']  

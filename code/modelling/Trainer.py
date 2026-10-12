@@ -114,8 +114,8 @@ class Trainer():
                 model,
                 val_loader,
                 device,
-                mask_thresh=0.3,
-                score_thresh=0.2
+                mask_thresh=0.50,
+                score_thresh=0.70
             )
 
             val_precisions.append(precision)

@@ -28,16 +28,16 @@ class DatasetWrapper():
         self.all_paths = []
 
         if test_region is None:
-            for tile in self.root_dir.glob("*.npz"):
-                self.all_paths.append(tile)
+            self.all_paths = list(self.root_dir.glob("*.npz"))
 
             train_paths, val_paths = train_test_split(
                 self.all_paths,
                 test_size=0.2,
                 random_state=42)
 
+
             self._analyze_dataset()
-            self._estimate_normalization_stats()
+            self._estimate_normalization_stats(train_paths)
             return MaskRCNNDataset(train_paths, self.normalization_stats), MaskRCNNDataset(val_paths, self.normalization_stats)
 
         else:
@@ -48,9 +48,9 @@ class DatasetWrapper():
                     self.train_paths.append(path)
                 else:
                     self.test_paths.append(path)
-                    
+                
             self._analyze_dataset()
-            self._estimate_normalization_stats()
+            self._estimate_normalization_stats(self.train_paths)
 
 
             return (
@@ -153,6 +153,7 @@ class DatasetWrapper():
 
     def _estimate_normalization_stats(
         self,
+        paths,
         n_pixels_per_tile=5000,
         seed=42):
 
@@ -170,7 +171,6 @@ class DatasetWrapper():
                 SLOPE
                 LAPLACE
                 RR
-                HILLSHADE
         """
 
         rng = np.random.default_rng(seed)
@@ -188,7 +188,7 @@ class DatasetWrapper():
 
         channels = {"DEM_SLOPE": "SLOPE", "RR": "RR", "LAPLACE": "LAPLACE"}
 
-        for path in self.train_paths:
+        for path in paths:
             with np.load(path, allow_pickle=True) as tile:
                 names = list(tile["layer_names"])
                 image = tile["image"]
