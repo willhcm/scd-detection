@@ -46,7 +46,6 @@ class SCDModel():
                 rgb_path=None, 
                 hyperparams=None,
                 run_name=None,
-                native_res=None,
                 to_veto=True):
         
         self.MaskRCNN_model_state = MaskRCNN_model_state
@@ -58,7 +57,6 @@ class SCDModel():
         self.out_path = out_path
         self.run_name = run_name
         self.to_veto = to_veto
-        self.native_res = native_res
 
         self.dem_path = self._resolve_data_source(dem_path)
         self.deployer = self._create_deployer(hyperparams)
@@ -89,6 +87,8 @@ class SCDModel():
             f.write(f"Run: {self.run_name}\n")
             f.write(f"Bounds of DEM: {self.DEM_bounds}\n")
             f.write(f"CRS of DEM: {self.DEM_crs}\n")
+            f.write(f"Tiles used: {'\n '.join(self.tiles_names)}\n")
+            f.write(f"\n")
 
         return tuple(results[key] for key, include in requested.items() if include)
 
@@ -104,7 +104,6 @@ class SCDModel():
             "rgb_path": self.rgb_path,
             "rgb_veto": self.rgb_veto,
             "to_veto": self.to_veto,
-            "native_res": self.native_res,
             "NODATA": self.NODATA,
             **hyperparams
         }
@@ -132,6 +131,7 @@ class SCDModel():
             raise FileExistsError(f"merged.tif already exists in {dem_dir}. Please remove it or choose a different directory.")
 
         print(f"Building DEM from directory: {dem_dir}")
+        self.tiles_names = [p.name for p in paths]
 
         with rio.open(paths[0]) as src:
             self.NODATA = src.nodata
