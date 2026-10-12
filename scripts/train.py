@@ -20,7 +20,7 @@ def main(args):
         trainer.LORO_CV(regions, out_path)
     else:
         trainer.train_fold(
-            folded_out_region=args.folded_out_region[0],
+            folded_out_region=args.folded_out_regions[0],
             epochs=args.epochs,
             batch_size=args.batch_size,
             out_path=out_path)
