@@ -2,7 +2,7 @@ from pathlib import Path
 import sys
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
-from modelling.MaskRCNNNew import MaskRCNN
+from modelling.MaskRCNN import MaskRCNN
 import torch
 
 class ModelWrapper:

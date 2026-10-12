@@ -161,7 +161,10 @@ class Trainer():
     def LORO_CV(self, regions, out_path):
         results = {}
         for region in regions: # where region is the region being folded out.
-            results[region] = self.train_fold(region, out_path=out_path / f"fold_{region}")
+            fold_out_path = out_path / f"fold_{region}"
+            fold_out_path.mkdir(parents=True, exist_ok=True)
+            print(f"\n holding out {region}")
+            results[region] = self.train_fold(region, out_path=fold_out_path)
 
 
         np.savez_compressed(out_path / "LORO_CV_results.npz", **results)
