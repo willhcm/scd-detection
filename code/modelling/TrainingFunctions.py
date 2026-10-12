@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 import numpy as np
 import torch.nn as nn
 from sklearn.model_selection import train_test_split
-from modelling.MaskRCNN import MaskRCNN, MaskRCNNDataset, rcnn_train
+from modelling.MaskRCNNNew import MaskRCNN, MaskRCNNDataset, rcnn_train
 from helpers.MaskRCNNFunctions import collate_fn
 from modelling.Veto import VetoDataset
 import copy

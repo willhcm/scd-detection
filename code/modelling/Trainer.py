@@ -5,7 +5,7 @@ import sys
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 
-from modelling.MaskRCNN import MaskRCNN
+from modelling.MaskRCNNNew import MaskRCNN
 from loaders.dataset import DatasetWrapper
 from helpers.MaskRCNNFunctions import evaluate_maskrcnn_metrics, build_staged_optimizer, apply_training_stage, collate_fn
 import torch
@@ -13,7 +13,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import numpy as np
-from modelling.Veto import VetoDataset
 import copy
 from tqdm import tqdm
 REPO_ROOT = Path(__file__).resolve().parent.parent

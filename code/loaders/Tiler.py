@@ -893,10 +893,7 @@ class SceneTiler:
             image=tile_data.astype(np.float32),
             layer_names=np.array(self.layer_names),
             res=np.array(req["res"], dtype=np.float32),
-            bounds=np.array(req["bounds"], dtype=np.float64),
-        )
-
-
+            bounds=np.array(req["bounds"], dtype=np.float64))
 
     def _save_tile(self, tile_data, req, out_path, name, positive=True, region=None):
         

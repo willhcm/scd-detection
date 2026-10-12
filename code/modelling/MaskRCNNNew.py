@@ -17,8 +17,8 @@ import numpy as np
 from scipy.ndimage import label, find_objects, gaussian_filter
 from torchvision.models.detection.rpn import RPNHead
 from torchvision.models.detection.anchor_utils import AnchorGenerator
-from modelling.helpers import calculate_hillshade
-from helpers.MaskRCNNFunctions import evaluate_maskrcnn_metrics, build_staged_optimizer, apply_training_stage
+from helpers import calculate_hillshade
+from MaskRCNNFunctions import evaluate_maskrcnn_metrics, build_staged_optimizer, apply_training_stage
 import copy
 from tqdm.auto import tqdm
 
@@ -109,7 +109,7 @@ class MaskRCNN(nn.Module):
             trainable_backbone_layers=3
         )
 
-        in_channels = 5
+        in_channels = 4
  
         self._replace_input_conv(in_channels)
         self.model.transform.image_mean = [0.0] * in_channels
@@ -326,20 +326,20 @@ class MaskRCNNDataset(Dataset):
 
         image[0] = dem - dem_median
 
-        # Other channels
-        for idx, name in enumerate(
-            ["slope", "laplace", "rr", "hillshade"],
-            start=1
-        ):
+        # slope log scaled, then Robust scaling
+        slope = image[1]
+        rr = image[2]
+        laplace = image[3] 
 
-            median = self.norm_stats[name]["median"]
-            iqr = self.norm_stats[name]["iqr"]
+        slope = np.log1p(slope)
 
-            image[idx] = (
-                image[idx] - median
-            ) / iqr
+        # Robust scaling all 
 
-        return image
+        slope = (slope - self.norm_stats['SLOPE']['median']) / self.norm_stats['SLOPE']['iqr']
+        rr = (rr - self.norm_stats['RR']['median']) / self.norm_stats['RR']['iqr']
+        laplace = (laplace - self.norm_stats['LAPLACE']['median']) / self.norm_stats['LAPLACE']['iqr']  
+
+        return np.stack([image[0], slope, rr, laplace], axis=0).astype(np.float32)
 
     def __getitem__(self, idx):
         path = self.paths[idx]
@@ -354,33 +354,10 @@ class MaskRCNNDataset(Dataset):
         image = d["image"][band_indices].astype(np.float32)
         mask = d["labels"].astype(np.float32)
 
-        # safe for any adjustments
-        dem_idx = _BANDS_TO_LOAD.index("DEM")
-
-        # dem in metres
-        raw_dem = image[dem_idx].copy()
 
         if self.augment:
             # rotate / flip
             image, mask = self._spatial_augment(image, mask)
-
-            # Retrieve the spatially transformed raw DEM.
-            raw_dem = image[dem_idx]
-
-        # Hillshade is calculated from the unnormalised DEM.
-        hillshade = calculate_hillshade(raw_dem).astype(np.float32)
-
-        # normalise hillshade seperately.
-        hillshade = (
-            hillshade - hillshade.mean()
-        ) / (
-            hillshade.std() + 1e-6
-        )
-
-        image = np.concatenate(
-            [image, hillshade[None, :, :]],
-            axis=0,
-        ).astype(np.float32)
 
         image = self._normalise(image)
         

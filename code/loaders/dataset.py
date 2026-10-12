@@ -5,8 +5,9 @@ from pathlib import Path
 import sys
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
-from modelling.MaskRCNN import MaskRCNNDataset
+from MaskRCNNNew import MaskRCNNDataset
 import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
 
 
 class DatasetWrapper():
@@ -18,37 +19,43 @@ class DatasetWrapper():
         self.train_positives_distribution = {'positive': 0, 'negative': 0}
         self.geography_positives_distribution = {}
         self.resolutions_positive_distribution = {}
-        self.normalisation_stats = {}
+        self.normalization_stats = {}
 
     def generate_dataset(self, test_region=None):
 
         self.train_paths = []
         self.test_paths = []
+        self.all_paths = []
 
         if test_region is None:
-
             for tile in self.root_dir.glob("*.npz"):
-                self.train_paths.append(tile)
+                self.all_paths.append(tile)
+
+            train_paths, val_paths = train_test_split(
+                self.all_paths,
+                test_size=0.2,
+                random_state=42)
 
             self._analyze_dataset()
             self._estimate_normalization_stats()
-            return MaskRCNNDataset(self.train_paths, self.normalisation_stats)
+            return MaskRCNNDataset(train_paths, self.normalization_stats), MaskRCNNDataset(val_paths, self.normalization_stats)
 
         else:
 
-            for tile in self.root_dir.glob("*.npz"):
-                region = self._get_region(tile)
-                if region != test_region:
-                    self.train_paths.append(tile)
+            for path in self.root_dir.glob("*.npz"):
+                tile = np.load(path, allow_pickle=True)
+                if tile['region'] != test_region:
+                    self.train_paths.append(path)
                 else:
-                    self.test_paths.append(tile)
-
+                    self.test_paths.append(path)
+                    
             self._analyze_dataset()
             self._estimate_normalization_stats()
 
+
             return (
-                MaskRCNNDataset(self.train_paths, self.normalisation_stats),
-                MaskRCNNDataset(self.test_paths, self.normalisation_stats)
+                MaskRCNNDataset(self.train_paths, self.normalization_stats),
+                MaskRCNNDataset(self.test_paths, self.normalization_stats)
             )
 
     def plot_distribution(self):
@@ -160,19 +167,18 @@ class DatasetWrapper():
 
         Returns:
             dict containing median/IQR for:
-                slope
-                laplace
-                rr
-                hillshade
+                SLOPE
+                LAPLACE
+                RR
+                HILLSHADE
         """
 
         rng = np.random.default_rng(seed)
 
         channels = {
-            1: "slope",
-            2: "laplace",
-            3: "rr",
-            4: "hillshade",
+            1: "SLOPE",
+            3: "RR",
+            4: "LAPLACE",
         }
 
         samples = {
@@ -180,35 +186,26 @@ class DatasetWrapper():
             for name in channels.values()
         }
 
-        for path in self.train_paths:
+        channels = {"DEM_SLOPE": "SLOPE", "RR": "RR", "LAPLACE": "LAPLACE"}
 
+        for path in self.train_paths:
             with np.load(path, allow_pickle=True) as tile:
-                
+                names = list(tile["layer_names"])
                 image = tile["image"]
 
-                valid = np.isfinite(image).all(axis=0)
-
-                valid_indices = np.flatnonzero(valid)
-
-                if len(valid_indices) == 0:
+                valid = np.isfinite(image).all(axis=0).ravel()
+                idx = np.flatnonzero(valid)
+                if len(idx) == 0:
                     continue
 
-                n = min(
-                    n_pixels_per_tile,
-                    len(valid_indices)
-                )
+                chosen = rng.choice(idx, size=min(n_pixels_per_tile, len(idx)), replace=False)
 
-                chosen = rng.choice(
-                    valid_indices,
-                    size=n,
-                    replace=False
-                )
-
-                for channel_idx, channel_name in channels.items():
-
-                    values = image[channel_idx].ravel()[chosen]
-
-                    samples[channel_name].append(values)
+                for band, name in channels.items():
+                    vals = image[names.index(band)].ravel()[chosen]
+                    if name == "SLOPE":
+                        vals = np.log1p(vals)
+                    samples[name].append(vals)
+                self.vals = samples
 
         stats = {}
 
