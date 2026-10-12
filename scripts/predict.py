@@ -62,15 +62,14 @@ def main(dem_path, model_state_path, veto_model_state_path, rgb_path, device, re
         rgb_path=rgb_path,
         hyperparams=params,
         run_name=run_name,
-        to_veto=not no_veto
-    )
+        to_veto=not no_veto)
 
     # Run prediction
     predictions, transform, crs, coverage, support = scd_model.predict(
         return_coverage=True,
         return_support=True,
-        return_centroids=True
-    )
+        return_centroids=True)
+    
     if return_all:
         return predictions, transform, crs, coverage, support
     

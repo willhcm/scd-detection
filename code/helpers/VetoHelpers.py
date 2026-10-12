@@ -133,7 +133,7 @@ def build_dem_context(
 
 def normalise_dem_context(dem_context):
     # dem context is a 3-channel array: [relative_dem_scaled, slope_scaled, candidate_mask]
-    # We will normalise the first two channels (relative_dem_scaled and slope_scaled) to have zero mean and unit variance, while leaving the candidate_mask channel unchanged.
+    # We will normalise the first two channels (relative_dem_scaled and slope_scaled) but leave mask unchanged.
 
     mean = np.mean(dem_context[:2], axis=(1, 2), keepdims=True)
     std = np.std(dem_context[:2], axis=(1, 2), keepdims=True)

@@ -101,12 +101,9 @@ class MaskRCNN(nn.Module):
         self.model = maskrcnn_resnet50_fpn(
             weights=weights,
             weights_backbone="DEFAULT" if pretrained else None,
-            rpn_fg_iou_thresh=0.70, # rpn proposal thresholds
-            rpn_bg_iou_thresh=0.30,
-            box_fg_iou_thresh=0.55, # roi classification threshold
-            box_bg_iou_thresh=0.45,
-            trainable_backbone_layers=3
-        )
+            trainable_backbone_layers=3,
+            min_size=512,
+            max_size=512)
 
         in_channels = 4
  
