@@ -89,7 +89,7 @@ class MaskRCNN(nn.Module):
     def __init__(
         self,
         num_classes=2,
-        pretrained=False,
+        pretrained=True,
         anchor_sizes= ((20,), (40,), (62,), (120,), (220,)), # decreased to match SCD size population.
         aspect_ratios=((0.75, 1.0, 1.25),) * 5, # elongated doesn't match subcircular appearance (square bounding boxes)
         loss_weights = None, # depreciated but kept for future.
