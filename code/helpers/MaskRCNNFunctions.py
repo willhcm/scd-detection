@@ -248,6 +248,9 @@ def apply_training_stage(model, optimizer, stage):
 
 @torch.no_grad()
 def val_loss(model, loader, device):
+    """
+    Computes the validation loss for a given model and data loader.
+    """
     model.train()
     total, n = 0.0, 0
     parts = {}

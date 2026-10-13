@@ -129,6 +129,7 @@ class Trainer():
             print(
                 f"Epoch {epoch+1:03d} | "
                 f"Train Loss: {train_loss:.4f} | "
+                f"Val Loss: {val_loss:.4f} | "
                 f"IoU: {val_iou:.4f} | "
                 f"Val P: {precision:.4f} | "
                 f"Val R: {recall:.4f} | "
@@ -148,6 +149,7 @@ class Trainer():
                 bad_epochs += 1
 
         results = {'train_losses': train_losses,
+                   'val_losses': val_losses,
                    'val_recalls': val_recalls,
                    'val_precisions': val_precisions,
                    'val_ious': val_ious,
