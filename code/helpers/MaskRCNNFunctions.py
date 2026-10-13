@@ -245,3 +245,18 @@ def apply_training_stage(model, optimizer, stage):
             f"lr={group['lr']:.2e}, "
             f"trainable={n_trainable:,}"
         )
+
+@torch.no_grad()
+def val_loss(model, loader, device):
+    model.train()
+    total, n = 0.0, 0
+    parts = {}
+    for imgs, targets in loader:
+        imgs = [i.to(device) for i in imgs]
+        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        losses = model(imgs, targets)
+        total += sum(losses.values()).item() * len(imgs)
+        n += len(imgs)
+        for k, v in losses.items():
+            parts[k] = parts.get(k, 0.0) + v.item() * len(imgs)
+    return total / n, {k: v / n for k, v in parts.items()}

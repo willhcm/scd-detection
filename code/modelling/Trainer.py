@@ -7,7 +7,7 @@ sys.path.insert(0, str(CODE_DIR))
 
 from modelling.MaskRCNN import MaskRCNN
 from loaders.dataset import DatasetWrapper
-from helpers.MaskRCNNFunctions import evaluate_maskrcnn_metrics, build_staged_optimizer, apply_training_stage, collate_fn
+from helpers.MaskRCNNFunctions import evaluate_maskrcnn_metrics, build_staged_optimizer, apply_training_stage, collate_fn, val_loss
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -16,7 +16,7 @@ import numpy as np
 import copy
 from tqdm import tqdm
 REPO_ROOT = Path(__file__).resolve().parent.parent
-
+    
 class Trainer():
 
     def __init__(self, root, device):
@@ -53,6 +53,7 @@ class Trainer():
         best_epoch = -1
 
         train_losses = []
+        val_losses = []
         val_precisions = []
         val_recalls = []
         val_f1s = []
@@ -108,6 +109,9 @@ class Trainer():
 
             train_loss /= len(train_loader)
             train_losses.append(train_loss)
+
+            val_loss, val_loss_parts = val_loss(model, val_loader, device)
+            val_losses.append(val_loss)
 
             precision, recall, val_f1, val_iou, p_precision, p_recall, p_f1 = evaluate_maskrcnn_metrics(
                 model,
@@ -167,3 +171,4 @@ class Trainer():
 
 
         np.savez_compressed(out_path / "LORO_CV_results.npz", **results)
+
