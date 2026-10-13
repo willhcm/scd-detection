@@ -50,13 +50,11 @@ Now, we need to move the models over to the HPC, so exit (by typing ```exit``` i
 
 ```scp -r downloads/models IMPERIAL_SHORTCODE@borg-login.ese.ic.ac.uk:/scratch_root/IMPERIAL_SHORTCODE/scd-detection```
 
-
  Create a .txt file on your local machine as a line-by-line list of tiles you want the model to merge and predict over (from DEFRA website is the best way). Move the file over to the HPC by doing the following command on your laptop:
 
 ```scp -r path/to/example_request.txt IMPERIAL_SHORTCODE@borg-login.ese.ic.ac.uk:/scratch_root/IMPERIAL_SHORTCODE/scd-detection``` 
 
 Now, connect back on to the HPC to generate URLs, download from URLs and run the model.
-
 
 Then, in the HPC, generate the urls by doing the below command. Customise the example_request and example_request_name inputs to a suitable name to describe the region they represent, for example.
 
@@ -85,9 +83,3 @@ To run the prediction model, inputting the appropriate inputs. Default command i
 This will output the results into ./results/RUN_NAME/predictions.shp
 
 an example of a good run_name would be: 'SW_Cornwall_Zone1'. (could be a good idea to systematically split up England into small subregions in a named grid type thing so its clear through the file names.)
-
-
-
-
-
-

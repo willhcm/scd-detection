@@ -110,9 +110,9 @@ class Trainer():
             train_loss /= len(train_loader)
             train_losses.append(train_loss)
 
-            val_loss, val_loss_parts = val_loss(model, val_loader, device)
-            val_losses.append(val_loss)
-
+            _val_loss, val_loss_parts = val_loss(model, val_loader, device)
+            val_losses.append(_val_loss)
+    
             precision, recall, val_f1, val_iou, p_precision, p_recall, p_f1 = evaluate_maskrcnn_metrics(
                 model,
                 val_loader,
