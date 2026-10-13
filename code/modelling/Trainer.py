@@ -69,14 +69,13 @@ class Trainer():
                 current_stage = 2
                 apply_training_stage(model, optimizer, current_stage)
 
-            elif epoch == 30:
+            elif epoch == 25:
                 current_stage = 3
                 apply_training_stage(model, optimizer, current_stage)
 
-            elif epoch == 40:
+            elif epoch == 35:
                 current_stage = 4
                 apply_training_stage(model, optimizer, current_stage)
-
 
             model.train()
             train_loss = 0.0
@@ -115,7 +114,7 @@ class Trainer():
                 val_loader,
                 device,
                 mask_thresh=0.50,
-                score_thresh=0.70
+                score_thresh=0.50
             )
 
             val_precisions.append(precision)

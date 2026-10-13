@@ -68,7 +68,7 @@ while read -r u; do
   curl -fL -J -O --output-dir ./tiles \
     --retry 5 --retry-delay 10 --retry-all-errors "$u" || echo "$u" >> failed.txt
   sleep 3
-done < urls/Wooley_urls.txt
+done < urls/CHANGE_THIS.txt
 
 Third, unzip all the files (inplace), keeping only the .tif files (the actual data):
 
