@@ -64,7 +64,11 @@ Then, in the HPC, generate the urls by doing the below command. Customise the ex
 
 Second, download the files using curl. The files will be stored in a directory on the HPC called tiles/
 
-```xargs -n 1 curl -L -J -O --output-dir ./tiles < ./urls/example_request_name_urls.txt```
+while read -r u; do
+  curl -fL -J -O --output-dir ./tiles \
+    --retry 5 --retry-delay 10 --retry-all-errors "$u" || echo "$u" >> failed.txt
+  sleep 3
+done < urls/Wooley_urls.txt
 
 Third, unzip all the files (inplace), keeping only the .tif files (the actual data):
 

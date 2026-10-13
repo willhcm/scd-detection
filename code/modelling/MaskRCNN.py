@@ -109,7 +109,7 @@ class MaskRCNN(nn.Module):
         self._replace_input_conv(in_channels)
         self.model.transform.image_mean = [0.0] * in_channels
         self.model.transform.image_std = [1.0] * in_channels
-        #self._set_anchor_generator(anchor_sizes, aspect_ratios)
+        self._set_anchor_generator(anchor_sizes, aspect_ratios)
         self._replace_heads(num_classes)
 
         # add FiLM conditioning to backbone to encode resolution

@@ -4,6 +4,8 @@ import torch
 
 from collections import defaultdict
 
+from torchvision.ops import box_iou
+
 # AI assistance with:
 
 # collate_fn. (didnt know what this was)
@@ -122,6 +124,24 @@ def object_f1_from_instance_masks(pred_masks, gt_masks):
 
     return tp, fp, fn
 
+def object_f1_from_boxes(pred_boxes, gt_boxes, iou_thresh=0.5):
+    n_pred, n_gt = len(pred_boxes), len(gt_boxes)
+    if n_pred == 0 or n_gt == 0:
+        return 0, n_pred, n_gt
+
+    ious = box_iou(pred_boxes, gt_boxes)
+    taken = torch.zeros(n_gt, dtype=torch.bool)
+    tp = 0
+
+    for i in range(n_pred):
+        row = ious[i].masked_fill(taken, -1)
+        j = row.argmax()
+        if row[j] >= iou_thresh:
+            taken[j] = True
+            tp += 1
+
+    return tp, n_pred - tp, n_gt - tp
+
 
 # recomp to make sure IoU and pixel-f1 were calculated at same level (previously image averaged vs global.)
 def evaluate_maskrcnn_metrics(
@@ -168,10 +188,10 @@ def evaluate_maskrcnn_metrics(
                 # threshold masks
                 pred_instance_masks = (raw_pred_masks[keep, 0] >= mask_thresh)
 
-                # Object-level counts
-                tp, fp, fn = object_f1_from_instance_masks(
-                    pred_instance_masks,
-                    gt_instance_masks)
+                pred_boxes = output["boxes"].detach().cpu()[keep]
+                gt_boxes = target_dict["boxes"].detach().cpu()
+
+                tp, fp, fn = object_f1_from_boxes(pred_boxes, gt_boxes, iou_thresh=0.5)
 
                 total_tp += tp
                 total_fp += fp
