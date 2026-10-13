@@ -101,7 +101,7 @@ class Deployer:
         max_context_width_m=4000.0,
         native_res = 30,
         stride_frac=0.75,
-       to_veto=True,):
+        to_veto=True,):
 
         self.base_res = None
         self.NODATA = NODATA
@@ -119,6 +119,7 @@ class Deployer:
         self.resolutions = resolutions
         self.native_res = native_res
         self.stride_frac = stride_frac
+
         # Mask R-CNN deployment tile size.
         self.tile_size = tile_size
         self.rgb_veto = rgb_veto
@@ -129,8 +130,7 @@ class Deployer:
 
             self.veto_model = VetoClassifier(
                 scalar_dim=len(VETO_SCALAR_NAMES),
-                dropout=0.3,
-            )
+                dropout=0.3,)
 
             self.veto_model.load_state_dict(
                 veto_model_dict
@@ -181,8 +181,7 @@ class Deployer:
             preds[res] = {
                 "prob": prob_map,
                 "transform": transform,
-                "crs": crs,
-    }
+                "crs": crs,}
 
         return preds   
 
@@ -252,7 +251,9 @@ class Deployer:
         for m in (merged, support, coverage):
             m.flush()
 
-        return merged, transform, crs, support, coverage
+        del support, coverage
+
+        return merged, transform, crs, None, None
     
     def veto(self, merged, transform, crs):
         """
