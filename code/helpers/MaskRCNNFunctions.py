@@ -22,8 +22,8 @@ STAGE_LRS = {
         "layer3": 0.0,
     },
     2: {
-        "rpn": 1e-3,
-        "roi_heads": 1e-3,
+        "rpn": 5e-4,
+        "roi_heads": 5e-4,
         "film": 1e-3,
         "conv1": 1e-5,
         "fpn": 1e-5,
@@ -31,8 +31,8 @@ STAGE_LRS = {
         "layer3": 0.0,
     },
     3: {
-        "rpn": 5e-4,
-        "roi_heads": 5e-4,
+        "rpn": 1e-4,
+        "roi_heads": 1e-4,
         "conv1": 5e-5,
         "film": 1e-4,
         "fpn": 3e-6,
@@ -40,8 +40,8 @@ STAGE_LRS = {
         "layer3": 0.0,
     },
     4: {
-        "rpn": 1e-4,
-        "roi_heads": 1e-4,
+        "rpn": 1e-5,
+        "roi_heads": 1e-5,
         "conv1": 5e-6,
         "film": 1e-5,
         "fpn": 1e-6,

@@ -89,7 +89,7 @@ class MaskRCNN(nn.Module):
     def __init__(
         self,
         num_classes=2,
-        pretrained=True,
+        pretrained=False,
         anchor_sizes= ((20,), (40,), (62,), (120,), (220,)), # decreased to match SCD size population.
         aspect_ratios=((0.75, 1.0, 1.25),) * 5, # elongated doesn't match subcircular appearance (square bounding boxes)
         loss_weights = None, # depreciated but kept for future.
@@ -101,16 +101,15 @@ class MaskRCNN(nn.Module):
         self.model = maskrcnn_resnet50_fpn(
             weights=weights,
             weights_backbone="DEFAULT" if pretrained else None,
-            trainable_backbone_layers=3,
-            min_size=512,
-            max_size=512)
+            trainable_backbone_layers=3)
 
         in_channels = 4
+        self.pretrained = pretrained
  
         self._replace_input_conv(in_channels)
         self.model.transform.image_mean = [0.0] * in_channels
         self.model.transform.image_std = [1.0] * in_channels
-        self._set_anchor_generator(anchor_sizes, aspect_ratios)
+        #self._set_anchor_generator(anchor_sizes, aspect_ratios)
         self._replace_heads(num_classes)
 
         # add FiLM conditioning to backbone to encode resolution
@@ -129,6 +128,9 @@ class MaskRCNN(nn.Module):
         Stage 3: Unfreeze layer4 of the ResNet backbone.
         Stage 4: Unfreeze layer3 of the ResNet backbone.
         """
+
+        if not self.pretrained:
+            pass
 
         # Freeze backbone.
         for parameter in self.model.backbone.parameters():
