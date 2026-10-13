@@ -26,8 +26,8 @@ STAGE_LRS = {
     2: {
         "rpn": 5e-4,
         "roi_heads": 5e-4,
-        "film": 1e-3,
-        "conv1": 1e-5,
+        "film": 5e-4,
+        "conv1": 2.5e-4,
         "fpn": 1e-5,
         "layer4": 0.0,
         "layer3": 0.0,

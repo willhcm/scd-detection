@@ -154,7 +154,7 @@ class DatasetWrapper():
     def _estimate_normalization_stats(
         self,
         paths,
-        n_pixels_per_tile=5000,
+        n_pixels_per_tile=10000,
         seed=42):
 
         """
