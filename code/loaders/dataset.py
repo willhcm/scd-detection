@@ -205,6 +205,11 @@ class DatasetWrapper():
             "LAPLACE": "LAPLACE",
         }
 
+        samples = {
+            name: []
+            for name in channels.values()
+        }
+
         for path in paths:
             with np.load(path, allow_pickle=True) as tile:
                 names = list(tile["layer_names"])
