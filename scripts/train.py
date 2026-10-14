@@ -18,6 +18,15 @@ def main(args):
     if args.LORO_CV:
         regions = args.folded_out_regions # Replace with actual region names
         trainer.LORO_CV(regions, out_path)
+
+    elif args.random_split:
+        trainer.random_split(
+            out_path=out_path,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            exclude_region=args.folded_out_regions[0] if args.folded_out_regions else None
+        )
+
     else:
         trainer.train_fold(
             folded_out_region=args.folded_out_regions[0],
@@ -33,6 +42,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training.")
     parser.add_argument("--run", type=str, default=None, help="Name of the run to save the best model and training metrics.")
     parser.add_argument("--LORO_CV", action="store_true", help="Perform Leave-One-Region-Out Cross-Validation.")
+    parser.add_argument("--random_split", action="store_true", help="Perform random split training instead of LORO-CV.")
     args = parser.parse_args()
 
     main(args)

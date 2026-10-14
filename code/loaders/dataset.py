@@ -21,6 +21,22 @@ class DatasetWrapper():
         self.resolutions_positive_distribution = {}
         self.normalization_stats = {}
 
+    def generate_random_split(self, train_ratio=0.8, exclude_region=None):
+        self.all_paths = list(self.root_dir.glob("*.npz"))
+
+        if exclude_region:
+            self.all_paths = [p for p in self.all_paths if np.load(p, allow_pickle=True)['region'] != exclude_region]
+            print(f"Excluding region {exclude_region} from dataset. {len(self.all_paths)} tiles remaining.")
+
+        train_paths, val_paths = train_test_split(
+            self.all_paths,
+            test_size=1-train_ratio,
+            random_state=42)
+
+        self._analyze_dataset()
+        self._estimate_normalization_stats(train_paths)
+        return MaskRCNNDataset(train_paths, self.normalization_stats), MaskRCNNDataset(val_paths, self.normalization_stats)
+
     def generate_dataset(self, test_region=None):
 
         self.train_paths = []

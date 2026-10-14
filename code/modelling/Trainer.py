@@ -24,8 +24,16 @@ class Trainer():
         self.dset = DatasetWrapper(root)
         self.device = device
 
-    def _get_MaskRCNN_loaders(self, folded_out_region, batch_size):
-        train_set, val_set = self.dset.generate_dataset(folded_out_region)
+    def _generate_random_split(self, train_ratio=0.8):
+        train_set, val_set = self.dset.generate_random_split(train_ratio=train_ratio)
+        return train_set, val_set
+
+    def _get_MaskRCNN_loaders(self, folded_out_region, batch_size, random_train=False):
+
+        if random_train:
+            train_set, val_set = self.dset.generate_random_split(train_ratio=0.8, exclude_region=folded_out_region)
+        else:
+            train_set, val_set = self.dset.generate_dataset(folded_out_region)
 
         train_loader = DataLoader(train_set,
                             shuffle=True,
@@ -41,8 +49,8 @@ class Trainer():
         
         return train_loader, val_loader
 
-    def train_fold(self, folded_out_region, epochs=50, batch_size=8, out_path=None):
-        train_loader, val_loader = self._get_MaskRCNN_loaders(folded_out_region, batch_size)
+    def train_fold(self, folded_out_region, epochs=50, batch_size=8, out_path=None, random_train=False, exclude_region=None):
+        train_loader, val_loader = self._get_MaskRCNN_loaders(folded_out_region, batch_size, random_train=random_train)
         model = MaskRCNN()
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -171,6 +179,14 @@ class Trainer():
             print(f"\n holding out {region}")
             results[region] = self.train_fold(region, out_path=fold_out_path)
 
-
         np.savez_compressed(out_path / "LORO_CV_results.npz", **results)
 
+    def random_split(self, out_path, epochs=50, batch_size=8, exclude_region=None):
+        fold_out_path = out_path / "random_split"
+        fold_out_path.mkdir(parents=True, exist_ok=True)
+
+        results = self.train_fold(folded_out_region=exclude_region, epochs=epochs, batch_size=batch_size, out_path=fold_out_path)
+        np.savez_compressed(out_path / "random_split_results.npz", **results)
+
+    def parameter_sweep(self):
+        raise NotImplementedError("Parameter sweep functionality is not yet implemented.")
