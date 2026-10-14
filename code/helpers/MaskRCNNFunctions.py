@@ -75,108 +75,65 @@ def object_f1_from_boxes(pred_boxes, gt_boxes, iou_thresh=0.5):
             tp += 1
 
     return tp, n_pred - tp, n_gt - tp
+def merge_masks(masks, h, w):
+    # union of instance masks -> single binary mask
+    if masks.shape[0] == 0:
+        return torch.zeros((h, w), dtype=torch.bool)
+    return masks.any(dim=0)
 
 
-# recomp to make sure IoU and pixel-f1 were calculated at same level (previously image averaged vs global.)
-def evaluate_maskrcnn_metrics(
-    model,
-    val_loader,
-    device,
-    mask_thresh=0.55,
-    score_thresh=0.77):
-    """
-    Evaluates the Mask R-CNN model on a validation dataset and computes object-level and pixel-level metrics.
-    """
+def evaluate_maskrcnn_metrics(model, val_loader, device, mask_thresh=0.55, score_thresh=0.77):
     model.eval()
 
-    total_tp = total_fp = total_fn = 0
-    ptp = pfp = pfn = 0
-    box_iou_final = []
+    tp = fp = fn = 0           # object level
+    ptp = pfp = pfn = 0        # pixel level, global counts
+    box_ious = []
 
     with torch.no_grad():
         for images, targets in val_loader:
-            images_device = [image.to(device) for image in images]
+            res = torch.stack([t["resolution"] for t in targets]).to(device)
+            outputs = model([im.to(device) for im in images], resolutions=res)
 
-            resolutions = torch.stack([target["resolution"] for target in targets]).to(device)
-            outputs = model(images_device, resolutions=resolutions)
+            for image, out, tgt in zip(images, outputs, targets):
+                h, w = image.shape[-2:]
 
-            for image, output, target_dict in zip(images, outputs, targets):
+                keep = out["scores"].cpu() >= score_thresh
+                pred_boxes = out["boxes"].cpu()[keep]
+                gt_boxes = tgt["boxes"].cpu()
 
-                height, width = image.shape[-2:]
+                pred_masks = out["masks"].cpu()[keep, 0] >= mask_thresh
+                gt_masks = tgt["masks"].cpu().bool()
 
-                gt_instance_masks = target_dict["masks"].detach().cpu().bool()
+                if len(pred_boxes) and len(gt_boxes):
+                    # best-matching gt for each kept prediction
+                    box_ious.extend(box_iou(pred_boxes, gt_boxes).max(dim=1).values.tolist())
 
-                if gt_instance_masks.shape[0] > 0:
-                    target_mask = gt_instance_masks.any(dim=0)
-                else:
-                    target_mask = torch.zeros(
-                        (height, width),
-                        dtype=torch.bool,
-                    )
+                a, b, c = object_f1_from_boxes(pred_boxes, gt_boxes, iou_thresh=0.5)
+                tp += a
+                fp += b
+                fn += c
 
-                scores = output["scores"].detach().cpu()
-                raw_pred_masks = output["masks"].detach().cpu()
+                pred = merge_masks(pred_masks, h, w)
+                gt = merge_masks(gt_masks, h, w)
 
-                # predictions only kept if they meet the score threshold
-                keep = scores >= score_thresh
+                ptp += (pred & gt).sum().item()
+                pfp += (pred & ~gt).sum().item()
+                pfn += (~pred & gt).sum().item()
 
-                # threshold masks
-                pred_instance_masks = (raw_pred_masks[keep, 0] >= mask_thresh)
-
-                pred_boxes = output["boxes"].detach().cpu()[keep]
-                gt_boxes = target_dict["boxes"].detach().cpu()
-
-                box_ious = box_iou(pred_boxes, gt_boxes)
-                box_iou_final.extend(box_ious.tolist())
-
-                tp, fp, fn = object_f1_from_boxes(pred_boxes, gt_boxes, iou_thresh=0.5)
-
-                total_tp += tp
-                total_fp += fp
-                total_fn += fn
-
-
-                # Merge predicted instances
-                if pred_instance_masks.shape[0] > 0:
-                    pred_mask = pred_instance_masks.any(dim=0)
-                # or return a zero mask if no predictions were made
-                else:
-                    pred_mask = torch.zeros(
-                        (height, width),
-                        dtype=torch.bool,
-                    )
-
-                # Global pixel counts
-                ptp += (pred_mask & target_mask).sum().item()
-                pfp += (pred_mask & ~target_mask).sum().item()
-                pfn += (~pred_mask & target_mask).sum().item()
-
-    # safe div for precision etc
     eps = 1e-8
 
-    # Object-level metrics
-    precision = total_tp / (total_tp + total_fp + eps)
-    recall = total_tp / (total_tp + total_fn + eps)
-    f1 = 2 * total_tp / (2 * total_tp + total_fp + total_fn + eps)
+    precision = tp / (tp + fp + eps)
+    recall = tp / (tp + fn + eps)
+    f1 = 2 * tp / (2 * tp + fp + fn + eps)
 
-    # Pixel-level metrics, all calculated from identical global counts
     p_precision = ptp / (ptp + pfp + eps)
     p_recall = ptp / (ptp + pfn + eps)
     p_f1 = 2 * ptp / (2 * ptp + pfp + pfn + eps)
     pixel_iou = ptp / (ptp + pfp + pfn + eps)
-    box_iou_final = np.mean(box_iou_final) if box_iou_final else 0.0
 
-    # results for that validation epoch
-    return (
-        precision,
-        recall,
-        f1,
-        pixel_iou,
-        p_precision,
-        p_recall,
-        p_f1,
-        box_iou_final,
-    )
+    mean_box_iou = float(np.mean(box_ious)) if box_ious else 0.0
+
+    return precision, recall, f1, pixel_iou, p_precision, p_recall, p_f1, mean_box_iou
 
 # ai assistance with mask rcnn train functionality and helper functions. original code repo from paper is hard to understand
 # ChatGPT and Claude Sonnet 5 used - whenever I have said AI is used its these models.
