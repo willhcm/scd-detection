@@ -322,7 +322,7 @@ class MaskRCNNDataset(Dataset):
 
         dem_median = np.median(dem[valid])
 
-        image[0] = dem - dem_median
+        dem = image[0] - dem_median
 
         # slope log scaled, then Robust scaling
         slope = image[1]
@@ -331,10 +331,19 @@ class MaskRCNNDataset(Dataset):
 
         slope = np.log1p(slope)
 
-        # Robust scaling all 
-        slope = (slope - self.norm_stats['SLOPE']['median']) / self.norm_stats['SLOPE']['iqr']
-        rr = (rr - self.norm_stats['RR']['median']) / self.norm_stats['RR']['iqr']
-        laplace = (laplace - self.norm_stats['LAPLACE']['median']) / self.norm_stats['LAPLACE']['iqr']  
+        # Robust scaling all (more efficient):
+        for band in ['DEM', 'SLOPE', 'RR', 'LAPLACE']:
+            median = self.norm_stats[band]['median']
+            iqr = self.norm_stats[band]['iqr']
+
+            if band == 'DEM':
+                dem = (dem - median) / iqr
+            elif band == 'SLOPE':
+                slope = (slope - median) / iqr
+            elif band == 'RR':
+                rr = (rr - median) / iqr
+            elif band == 'LAPLACE':
+                laplace = (laplace - median) / iqr
 
         return np.stack([image[0], slope, rr, laplace], axis=0).astype(np.float32)
 
