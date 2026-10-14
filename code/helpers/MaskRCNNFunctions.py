@@ -256,8 +256,9 @@ def val_loss(model, loader, device):
     parts = {}
     for imgs, targets in loader:
         imgs = [i.to(device) for i in imgs]
+        resolutions = torch.stack([t["resolution"] for t in targets]).to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
-        losses = model(imgs, targets)
+        losses = model(imgs, resolutions, targets)
         total += sum(losses.values()).item() * len(imgs)
         n += len(imgs)
         for k, v in losses.items():
