@@ -74,15 +74,15 @@ class Trainer():
 
         for epoch in range(epochs):
                 
-            if epoch == 20:
+            if epoch == 15:
                 current_stage = 2
                 apply_training_stage(model, optimizer, current_stage)
 
-            elif epoch == 25:
+            elif epoch == 20:
                 current_stage = 3
                 apply_training_stage(model, optimizer, current_stage)
 
-            elif epoch == 35:
+            elif epoch == 25:
                 current_stage = 4
                 apply_training_stage(model, optimizer, current_stage)
 
