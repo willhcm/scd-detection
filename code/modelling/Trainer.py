@@ -112,7 +112,7 @@ class Trainer():
 
             _val_loss, val_loss_parts = val_loss(model, val_loader, device)
             val_losses.append(_val_loss)
-    
+
             precision, recall, val_f1, val_iou, p_precision, p_recall, p_f1 = evaluate_maskrcnn_metrics(
                 model,
                 val_loader,
@@ -129,7 +129,7 @@ class Trainer():
             print(
                 f"Epoch {epoch+1:03d} | "
                 f"Train Loss: {train_loss:.4f} | "
-                f"Val Loss: {val_loss:.4f} | "
+                f"Val Loss: {_val_loss:.4f} | "
                 f"IoU: {val_iou:.4f} | "
                 f"Val P: {precision:.4f} | "
                 f"Val R: {recall:.4f} | "
