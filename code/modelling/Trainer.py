@@ -66,6 +66,7 @@ class Trainer():
         val_recalls = []
         val_f1s = []
         val_ious = []
+        bbox_ious = []
         current_stage = 1
         bad_epochs = 0
         optimizer = build_staged_optimizer(model, weight_decay=1e-4)
@@ -78,11 +79,11 @@ class Trainer():
                 current_stage = 2
                 apply_training_stage(model, optimizer, current_stage)
 
-            elif epoch == 25:
+            elif epoch == 30:
                 current_stage = 3
                 apply_training_stage(model, optimizer, current_stage)
 
-            elif epoch == 30:
+            elif epoch == 40:
                 current_stage = 4
                 apply_training_stage(model, optimizer, current_stage)
 
@@ -121,7 +122,7 @@ class Trainer():
             _val_loss, val_loss_parts = val_loss(model, val_loader, device)
             val_losses.append(_val_loss)
 
-            precision, recall, val_f1, val_iou, p_precision, p_recall, p_f1 = evaluate_maskrcnn_metrics(
+            precision, recall, val_f1, val_iou, p_precision, p_recall, p_f1, bbox_iou = evaluate_maskrcnn_metrics(
                 model,
                 val_loader,
                 device,
@@ -133,11 +134,13 @@ class Trainer():
             val_recalls.append(recall)
             val_f1s.append(val_f1)
             val_ious.append(val_iou)
+            bbox_ious.append(bbox_iou)
 
             print(
                 f"Epoch {epoch+1:03d} | "
                 f"Train Loss: {train_loss:.4f} | "
                 f"Val Loss: {_val_loss:.4f} | "
+                f"Box IoU: {bbox_iou:.4f} | "
                 f"IoU: {val_iou:.4f} | "
                 f"Val P: {precision:.4f} | "
                 f"Val R: {recall:.4f} | "
@@ -161,7 +164,8 @@ class Trainer():
                    'val_recalls': val_recalls,
                    'val_precisions': val_precisions,
                    'val_ious': val_ious,
-                   'val_f1s': val_f1s}
+                   'val_f1s': val_f1s,
+                   'bbox_ious': bbox_ious}
 
         torch.save(best_state, out_path / f"best_model_fold_{folded_out_region}.pt")
         print(f"Best model saved at epoch {best_epoch} with F1={best_f1:.4f}")

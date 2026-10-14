@@ -15,19 +15,19 @@ from torchvision.ops import box_iou
 ## Displayed in Table 1 of the report.
 STAGE_LRS = {
     1: {
-        "rpn": 1e-4,
-        "roi_heads": 1e-4,
-        "film": 1e-4,
-        "conv1": 1e-4,
+        "rpn": 1e-3,
+        "roi_heads": 1e-3,
+        "film": 1e-3,
+        "conv1": 1e-3,
         "fpn": 0.0,
         "layer4": 0.0,
         "layer3": 0.0,
     },
     2: {
-        "rpn": 5e-5,
-        "roi_heads": 5e-5,
-        "film": 5e-5,
-        "conv1": 5e-5,
+        "rpn": 1e-4,
+        "roi_heads": 1e-4,
+        "film": 1e-4,
+        "conv1": 1e-4,
         "fpn": 1e-5,
         "layer4": 0.0,
         "layer3": 0.0,
@@ -91,6 +91,7 @@ def evaluate_maskrcnn_metrics(
 
     total_tp = total_fp = total_fn = 0
     ptp = pfp = pfn = 0
+    box_iou_final = []
 
     with torch.no_grad():
         for images, targets in val_loader:
@@ -124,6 +125,9 @@ def evaluate_maskrcnn_metrics(
 
                 pred_boxes = output["boxes"].detach().cpu()[keep]
                 gt_boxes = target_dict["boxes"].detach().cpu()
+
+                box_ious = box_iou(pred_boxes, gt_boxes)
+                box_iou_final.extend(box_ious.tolist())
 
                 tp, fp, fn = object_f1_from_boxes(pred_boxes, gt_boxes, iou_thresh=0.5)
 
@@ -160,6 +164,7 @@ def evaluate_maskrcnn_metrics(
     p_recall = ptp / (ptp + pfn + eps)
     p_f1 = 2 * ptp / (2 * ptp + pfp + pfn + eps)
     pixel_iou = ptp / (ptp + pfp + pfn + eps)
+    box_iou_final = np.mean(box_iou_final) if box_iou_final else 0.0
 
     # results for that validation epoch
     return (
@@ -170,6 +175,7 @@ def evaluate_maskrcnn_metrics(
         p_precision,
         p_recall,
         p_f1,
+        box_iou_final,
     )
 
 # ai assistance with mask rcnn train functionality and helper functions. original code repo from paper is hard to understand
