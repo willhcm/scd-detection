@@ -193,11 +193,6 @@ class DatasetWrapper():
 
         rng = np.random.default_rng(seed)
 
-        samples = {
-            name: []
-            for name in channels.values()
-        }
-
         channels = {
             "DEM": "DEM",
             "SLOPE": "DEM_SLOPE", 
