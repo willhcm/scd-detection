@@ -70,7 +70,6 @@ class DatasetWrapper():
             self._analyze_dataset()
             self._estimate_normalization_stats(self.train_paths)
 
-
             return (
                 MaskRCNNDataset(self.train_paths, self.normalization_stats),
                 MaskRCNNDataset(self.test_paths, self.normalization_stats)
@@ -203,7 +202,7 @@ class DatasetWrapper():
             q1, med, q3 = np.percentile(np.concatenate(chunks), [25, 50, 75])
             stats[name] = {"median": med, "iqr": q3 - q1}
 
-        print(stats)
+        self.normalization_stats = stats
         return stats
 
 class DatasetRefiner():
