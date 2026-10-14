@@ -167,90 +167,37 @@ class DatasetWrapper():
         with np.load(path, allow_pickle=True) as tile:
             return tile['positive'].item()
 
-    def _estimate_normalization_stats(
-        self,
-        paths,
-        n_pixels_per_tile=10000,
-        seed=42):
-
-        """
-        Estimate training-set normalization statistics.
-
-        Each training tile contributes approximately the same number
-        of randomly sampled valid pixels.
-
-        DEM is deliberately excluded because it is normalized
-        independently on a tile-by-tile basis.
-
-        Returns:
-            dict containing median/IQR for:
-                SLOPE
-                LAPLACE
-                RR
-        """
-
+    def _estimate_normalization_stats(self, paths, n_pixels=10000, seed=42):
+        # median/IQR per channel from a fixed-size random pixel sample per tile.
+        # DEM is centered on its own tile median first, so the stats describe
+        # local relief rather than absolute elevation.
         rng = np.random.default_rng(seed)
-
-        channels = {
-            1: "SLOPE",
-            3: "RR",
-            4: "LAPLACE",
-        }
-
-        samples = {
-            name: []
-            for name in channels.values()
-        }
-
-        channels = {"DEM_SLOPE": "SLOPE", "RR": "RR", "LAPLACE": "LAPLACE"}
+        layers = {"DEM": "DEM", "DEM_SLOPE": "SLOPE", "RR": "RR", "LAPLACE": "LAPLACE"}
+        samples = {name: [] for name in layers.values()}
 
         for path in paths:
             with np.load(path, allow_pickle=True) as tile:
                 names = list(tile["layer_names"])
                 image = tile["image"]
 
-                valid = np.isfinite(image).all(axis=0).ravel()
-                idx = np.flatnonzero(valid)
-                if len(idx) == 0:
-                    continue
+            ok = np.flatnonzero(np.isfinite(image).all(axis=0).ravel())
+            if ok.size == 0:
+                continue
+            pick = rng.choice(ok, size=min(n_pixels, ok.size), replace=False)
 
-                chosen = rng.choice(idx, size=min(n_pixels_per_tile, len(idx)), replace=False)
-
-                for band, name in channels.items():
-                    vals = image[names.index(band)].ravel()[chosen]
-                    if name == "SLOPE":
-                        vals = np.log1p(vals)
-                    samples[name].append(vals)
-                self.vals = samples
+            for layer, name in layers.items():
+                flat = image[names.index(layer)].ravel()
+                v = flat[pick]
+                if name == "SLOPE":
+                    v = np.log1p(v)
+                elif name == "DEM":
+                    v = v - np.median(flat[ok])
+                samples[name].append(v)
 
         stats = {}
-
-        for channel_name, channel_samples in samples.items():
-
-            if not channel_samples:
-                raise RuntimeError(
-                    f"No valid samples found for {channel_name}"
-                )
-
-            values = np.concatenate(channel_samples)
-
-            median = np.median(values)
-            q25, q75 = np.percentile(values, [25, 75])
-            iqr = q75 - q25
-
-            if iqr == 0:
-                raise RuntimeError(
-                    f"IQR is zero for {channel_name}"
-                )
-
-            stats[channel_name] = {
-                "median": float(median),
-                "iqr": float(iqr),
-                "n_samples": int(len(values)),
-            }
-
-        self.normalization_stats = stats
-
+        for name, chunks in samples.items():
+            q1, med, q3 = np.percentile(np.concatenate(chunks), [25, 50, 75])
+            stats[name] = {"median": med, "iqr": q3 - q1}
         return stats
 
 class DatasetRefiner():
