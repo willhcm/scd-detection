@@ -313,21 +313,20 @@ class MaskRCNNDataset(Dataset):
             np.ascontiguousarray(mask),
         )
 
-    def _normalise(self, image):
+    def _normalise(self, image, li):
 
         # DEM
-        dem = image[0]
+        dem = image[li["DEM"]]
 
         valid = np.isfinite(dem)
 
         dem_median = np.median(dem[valid])
-
         dem = image[0] - dem_median
 
         # slope log scaled, then Robust scaling
-        slope = image[1]
-        rr = image[2]
-        laplace = image[3] 
+        slope = image[li["SLOPE"]]
+        rr = image[li["RR"]]
+        laplace = image[li["LAPLACE"]] 
 
         slope = np.log1p(slope)
 
@@ -365,7 +364,7 @@ class MaskRCNNDataset(Dataset):
             # rotate / flip
             image, mask = self._spatial_augment(image, mask)
 
-        image = self._normalise(image)
+        image = self._normalise(image, li)
         
         boxes, labels, masks, areas, iscrowd = self._mask_to_instances(mask)
 

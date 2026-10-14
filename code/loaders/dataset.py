@@ -202,7 +202,7 @@ class DatasetWrapper():
 
         samples = {
             name: []
-            for name in channels.values()
+            for name in channels.keys()
         }
 
         for path in paths:
