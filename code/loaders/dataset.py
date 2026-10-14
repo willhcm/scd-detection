@@ -3,6 +3,8 @@ import numpy as np
 import glob
 from pathlib import Path
 import sys
+
+from scipy import stats
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 from modelling.MaskRCNN import MaskRCNNDataset
@@ -172,7 +174,9 @@ class DatasetWrapper():
         # DEM is centered on its own tile median first, so the stats describe
         # local relief rather than absolute elevation.
         rng = np.random.default_rng(seed)
+
         layers = {"DEM": "DEM", "DEM_SLOPE": "SLOPE", "RR": "RR", "LAPLACE": "LAPLACE"}
+
         samples = {name: [] for name in layers.values()}
 
         for path in paths:
@@ -198,6 +202,8 @@ class DatasetWrapper():
         for name, chunks in samples.items():
             q1, med, q3 = np.percentile(np.concatenate(chunks), [25, 50, 75])
             stats[name] = {"median": med, "iqr": q3 - q1}
+
+        print(stats)
         return stats
 
 class DatasetRefiner():
