@@ -324,7 +324,7 @@ class MaskRCNNDataset(Dataset):
         dem = image[0] - dem_median
 
         # slope log scaled, then Robust scaling
-        slope = image[li["SLOPE"]]
+        slope = image[li["DEM_SLOPE"]]
         rr = image[li["RR"]]
         laplace = image[li["LAPLACE"]] 
 
