@@ -345,7 +345,7 @@ class MaskRCNNDataset(Dataset):
             elif band == 'LAPLACE':
                 laplace = (laplace - median) / iqr
 
-        return np.stack([image[0], slope, rr, laplace], axis=0).astype(np.float32)
+        return np.stack([dem, slope, rr, laplace], axis=0).astype(np.float32)
 
     def __getitem__(self, idx):
         path = self.paths[idx]

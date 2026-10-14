@@ -1,10 +1,10 @@
 # dataset wrapper for loading data from a directory of images, and analysing the metadata to see distribution of resolutions and geographies
+from os import name
+
 import numpy as np
 import glob
 from pathlib import Path
 import sys
-
-from scipy import stats
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 from modelling.MaskRCNN import MaskRCNNDataset
@@ -69,6 +69,7 @@ class DatasetWrapper():
                 
             self._analyze_dataset()
             self._estimate_normalization_stats(self.train_paths)
+
 
             return (
                 MaskRCNNDataset(self.train_paths, self.normalization_stats),
@@ -168,41 +169,93 @@ class DatasetWrapper():
         with np.load(path, allow_pickle=True) as tile:
             return tile['positive'].item()
 
-    def _estimate_normalization_stats(self, paths, n_pixels=10000, seed=42):
-        # median/IQR per channel from a fixed-size random pixel sample per tile.
-        # DEM is centered on its own tile median first, so the stats describe
-        # local relief rather than absolute elevation.
+    def _estimate_normalization_stats(
+        self,
+        paths,
+        n_pixels_per_tile=10000,
+        seed=42):
+
+        """
+        Estimate training-set normalization statistics.
+
+        Each training tile contributes approximately the same number
+        of randomly sampled valid pixels.
+
+        DEM is deliberately excluded because it is normalized
+        independently on a tile-by-tile basis.
+
+        Returns:
+            dict containing median/IQR for:
+                SLOPE
+                LAPLACE
+                RR
+        """
+
         rng = np.random.default_rng(seed)
 
-        layers = {"DEM": "DEM", "DEM_SLOPE": "SLOPE", "RR": "RR", "LAPLACE": "LAPLACE"}
+        samples = {
+            name: []
+            for name in channels.values()
+        }
 
-        samples = {name: [] for name in layers.values()}
+        channels = {
+            "DEM": "DEM",
+            "SLOPE": "DEM_SLOPE", 
+            "RR": "RR",
+            "LAPLACE": "LAPLACE",
+        }
 
         for path in paths:
             with np.load(path, allow_pickle=True) as tile:
                 names = list(tile["layer_names"])
                 image = tile["image"]
 
-            ok = np.flatnonzero(np.isfinite(image).all(axis=0).ravel())
-            if ok.size == 0:
-                continue
-            pick = rng.choice(ok, size=min(n_pixels, ok.size), replace=False)
+                valid = np.isfinite(image).all(axis=0).ravel()
+                idx = np.flatnonzero(valid)
+                if len(idx) == 0:
+                    continue
 
-            for layer, name in layers.items():
-                flat = image[names.index(layer)].ravel()
-                v = flat[pick]
-                if name == "SLOPE":
-                    v = np.log1p(v)
-                elif name == "DEM":
-                    v = v - np.median(flat[ok])
-                samples[name].append(v)
+                chosen = rng.choice(idx, size=min(n_pixels_per_tile, len(idx)), replace=False)
+
+                for channel, layer_name in channels.items():
+                    vals = image[names.index(layer_name)].ravel()[chosen]
+                    if channel == "SLOPE":
+                        vals = np.log1p(vals)
+                    elif channel == "DEM":
+                        tile_median = np.median(image[names.index(layer_name)].ravel()[valid])
+                        vals = vals - tile_median
+                    samples[channel].append(vals)
+
+                self.vals = samples
 
         stats = {}
-        for name, chunks in samples.items():
-            q1, med, q3 = np.percentile(np.concatenate(chunks), [25, 50, 75])
-            stats[name] = {"median": med, "iqr": q3 - q1}
+
+        for channel_name, channel_samples in samples.items():
+
+            if not channel_samples:
+                raise RuntimeError(
+                    f"No valid samples found for {channel_name}"
+                )
+
+            values = np.concatenate(channel_samples)
+
+            median = np.median(values)
+            q25, q75 = np.percentile(values, [25, 75])
+            iqr = q75 - q25
+
+            if iqr == 0:
+                raise RuntimeError(
+                    f"IQR is zero for {channel_name}"
+                )
+
+            stats[channel_name] = {
+                "median": float(median),
+                "iqr": float(iqr),
+                "n_samples": int(len(values)),
+            }
 
         self.normalization_stats = stats
+
         return stats
 
 class DatasetRefiner():
