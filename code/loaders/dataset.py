@@ -30,14 +30,14 @@ class DatasetWrapper():
             self.all_paths = [p for p in self.all_paths if np.load(p, allow_pickle=True)['region'] != exclude_region]
             print(f"Excluding region {exclude_region} from dataset. {len(self.all_paths)} tiles remaining.")
 
-        train_paths, val_paths = train_test_split(
+        self.train_paths, self.val_paths = train_test_split(
             self.all_paths,
             test_size=1-train_ratio,
             random_state=42)
 
         self._analyze_dataset()
-        self._estimate_normalization_stats(train_paths)
-        return MaskRCNNDataset(train_paths, self.normalization_stats), MaskRCNNDataset(val_paths, self.normalization_stats)
+        self._estimate_normalization_stats(self.train_paths)
+        return MaskRCNNDataset(self.train_paths, self.normalization_stats), MaskRCNNDataset(self.val_paths, self.normalization_stats)
 
     def generate_dataset(self, test_region=None):
 
@@ -48,15 +48,15 @@ class DatasetWrapper():
         if test_region is None:
             self.all_paths = list(self.root_dir.glob("*.npz"))
 
-            train_paths, val_paths = train_test_split(
+            self.train_paths, self.val_paths = train_test_split(
                 self.all_paths,
                 test_size=0.2,
                 random_state=42)
 
 
             self._analyze_dataset()
-            self._estimate_normalization_stats(train_paths)
-            return MaskRCNNDataset(train_paths, self.normalization_stats), MaskRCNNDataset(val_paths, self.normalization_stats)
+            self._estimate_normalization_stats(self.train_paths)
+            return MaskRCNNDataset(self.train_paths, self.normalization_stats), MaskRCNNDataset(self.val_paths, self.normalization_stats)
 
         else:
 
@@ -169,6 +169,19 @@ class DatasetWrapper():
         with np.load(path, allow_pickle=True) as tile:
             return tile['positive'].item()
 
+    def handle_outliers(self, vals):
+        """
+        Handle outliers in the DEM, Slope, RR, and Laplace bands by clipping to the 1st and 99th percentiles.
+        """
+        for channel in vals:
+            channel_vals = np.concatenate(vals[channel])
+            lower_bound = np.percentile(channel_vals, 0.5)
+            upper_bound = np.percentile(channel_vals, 99.5)
+            for i in range(len(vals[channel])):
+                vals[channel][i] = np.clip(vals[channel][i], lower_bound, upper_bound)
+
+        return vals
+
     def _estimate_normalization_stats(
         self,
         paths,
@@ -220,14 +233,14 @@ class DatasetWrapper():
                 for channel, layer_name in channels.items():
                     vals = image[names.index(layer_name)].ravel()[chosen]
                     if channel == "SLOPE":
-                        vals = np.log1p(vals)
+                        vals = np.power(vals, 0.3)
                     elif channel == "DEM":
                         tile_median = np.median(image[names.index(layer_name)].ravel()[valid])
                         vals = vals - tile_median
                     samples[channel].append(vals)
 
-                self.vals = samples
-
+        self.values = self.handle_outliers(samples)
+        
         stats = {}
 
         for channel_name, channel_samples in samples.items():

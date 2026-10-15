@@ -313,6 +313,22 @@ class MaskRCNNDataset(Dataset):
             np.ascontiguousarray(mask),
         )
 
+    def handle_outliers(self, image, li, band_indices):
+        """
+        Handle outliers in the DEM, Slope, RR, and Laplace bands by clipping to the 1st and 99th percentiles.
+        """
+        for band in ['DEM', 'DEM_SLOPE', 'RR', 'LAPLACE']:
+            band_index = band_indices.index(li[band])
+            band_data = image[band_index]
+
+            lower_bound = np.percentile(band_data, 0.5)
+            upper_bound = np.percentile(band_data, 99.5)
+
+            band_data = np.clip(band_data, lower_bound, upper_bound)
+            image[band_index] = band_data
+
+        return image
+
     def _normalise(self, image, li, band_indices):
 
         # DEM
@@ -328,7 +344,7 @@ class MaskRCNNDataset(Dataset):
         rr = image[band_indices.index(li["RR"])]
         laplace = image[band_indices.index(li["LAPLACE"])]
 
-        slope = np.log1p(slope)
+        slope = np.power(slope, 0.3) 
 
         # Robust scaling all (more efficient):
         for band in ['DEM', 'SLOPE', 'RR', 'LAPLACE']:
@@ -336,9 +352,12 @@ class MaskRCNNDataset(Dataset):
             iqr = self.norm_stats[band]['iqr']
 
             if band == 'DEM':
-                dem = (dem - median) / iqr
+                #dem = (dem - median) / iqr
+                pass # tomorrow: ablate normalisation of DEM to see if it improves performance.
             elif band == 'SLOPE':
+
                 slope = (slope - median) / iqr
+                
             elif band == 'RR':
                 rr = (rr - median) / iqr
             elif band == 'LAPLACE':
@@ -364,6 +383,7 @@ class MaskRCNNDataset(Dataset):
             # rotate / flip
             image, mask = self._spatial_augment(image, mask)
 
+        image = self.handle_outliers(image, li, band_indices)
         image = self._normalise(image, li, band_indices)
         
         boxes, labels, masks, areas, iscrowd = self._mask_to_instances(mask)
