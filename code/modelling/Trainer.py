@@ -7,7 +7,7 @@ sys.path.insert(0, str(CODE_DIR))
 
 from modelling.MaskRCNN import MaskRCNN
 from loaders.dataset import DatasetWrapper
-from helpers.MaskRCNNFunctions import evaluate_maskrcnn_metrics, build_staged_optimizer, apply_training_stage, collate_fn, val_loss
+from helpers.MaskRCNNFunctions import evaluate_maskrcnn_metrics, build_staged_optimizer, apply_training_stage, collate_fn, set_stage_progress, val_loss
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -68,6 +68,9 @@ class Trainer():
         val_ious = []
         bbox_ious = []
         current_stage = 1
+        stage_start = {1: 0, 2: 25, 3: 50, 4: 75}
+        stage_end = {1: 25, 2: 50, 3: 75, 4: epochs}
+
         bad_epochs = 0
         optimizer = build_staged_optimizer(model, weight_decay=1e-4)
 
@@ -75,24 +78,29 @@ class Trainer():
 
         for epoch in range(epochs):
                 
-            if epoch == 20:
+            if epoch == 25:
                 current_stage = 2
                 apply_training_stage(model, optimizer, current_stage)
 
-            elif epoch == 30:
+            elif epoch == 50:
                 current_stage = 3
                 apply_training_stage(model, optimizer, current_stage)
 
-            elif epoch == 40:
+            elif epoch == 75:
                 current_stage = 4
                 apply_training_stage(model, optimizer, current_stage)
+
+
+            s, e = stage_start[current_stage], stage_end[current_stage]
 
             model.train()
             train_loss = 0.0
 
             pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}")
 
-            for images, targets in pbar:
+            for i, (images, targets) in enumerate(pbar):
+                frac = (epoch - s + i / len(train_loader)) / (e - s)
+                set_stage_progress(optimizer, current_stage, frac)
                 images = [img.to(device) for img in images]
 
                 targets = [

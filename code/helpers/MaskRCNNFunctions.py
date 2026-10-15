@@ -3,6 +3,7 @@ from scipy.ndimage import label, center_of_mass
 import torch
 
 from collections import defaultdict
+import math
 
 from torchvision.ops import box_iou
 
@@ -15,20 +16,20 @@ from torchvision.ops import box_iou
 ## Displayed in Table 1 of the report.
 STAGE_LRS = {
     1: {
-        "rpn": 1e-5,
-        "roi_heads": 1e-5,
-        "film": 1e-5,
-        "conv1": 1e-5,
+        "rpn": 1e-4,
+        "roi_heads": 1e-4,
+        "film": 1e-4,
+        "conv1": 1e-4,
         "fpn": 0.0,
         "layer4": 0.0,
         "layer3": 0.0,
     },
     2: {
-        "rpn": 1e-6,
-        "roi_heads": 1e-6,
-        "film": 1e-6,
-        "conv1": 1e-6,
-        "fpn": 1e-6,
+        "rpn": 1e-5,
+        "roi_heads": 1e-5,
+        "film": 1e-5,
+        "conv1": 1e-5,
+        "fpn": 1e-5,
         "layer4": 0.0,
         "layer3": 0.0,
     },
@@ -38,7 +39,7 @@ STAGE_LRS = {
         "conv1": 1e-5,
         "film": 1e-5,
         "fpn": 5e-6,
-        "layer4": 1e-5,
+        "layer4": 1e-6,
         "layer3": 0.0,
     },
     4: {
@@ -227,3 +228,18 @@ def val_loss(model, loader, device):
         for k, v in losses.items():
             parts[k] = parts.get(k, 0.0) + v.item() * len(imgs)
     return total / n, {k: v / n for k, v in parts.items()}
+
+
+
+def stage_lr(stage, name, frac, final_scale=0.1):
+    start = STAGE_LRS[stage][name]
+    if start == 0.0:
+        return 0.0
+    # decay toward whatever the next stage uses; last stage just fades out
+    end = STAGE_LRS.get(stage + 1, {}).get(name, start * final_scale)
+    return end + (start - end) * 0.5 * (1 + math.cos(math.pi * frac))
+
+
+def set_stage_progress(optimizer, stage, frac):
+    for group in optimizer.param_groups:
+        group["lr"] = stage_lr(stage, group["name"], frac)
