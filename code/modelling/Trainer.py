@@ -68,8 +68,8 @@ class Trainer():
         val_ious = []
         bbox_ious = []
         current_stage = 1
-        stage_start = {1: 0, 2: 25, 3: 40, 4: 55}
-        stage_end = {1: 25, 2: 40, 3: 55, 4: epochs}
+        stage_start = {1: 0, 2: 20, 3: 30, 4: 40}
+        stage_end = {1: 20, 2: 30, 3: 40, 4: epochs}
 
         bad_epochs = 0
         optimizer = build_staged_optimizer(model, weight_decay=1e-4)
@@ -78,15 +78,15 @@ class Trainer():
 
         for epoch in range(epochs):
                 
-            if epoch == 25:
+            if epoch == 20:
                 current_stage = 2
                 apply_training_stage(model, optimizer, current_stage)
 
-            elif epoch == 40:
+            elif epoch == 30:
                 current_stage = 3
                 apply_training_stage(model, optimizer, current_stage)
 
-            elif epoch == 55:
+            elif epoch == 40:
                 current_stage = 4
                 apply_training_stage(model, optimizer, current_stage)
 
