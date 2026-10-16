@@ -352,8 +352,8 @@ class MaskRCNNDataset(Dataset):
             iqr = self.norm_stats[band]['iqr']
 
             if band == 'DEM':
-                #dem = (dem - median) / iqr
-                pass # tomorrow: ablate normalisation of DEM to see if it improves performance.
+                dem = (dem - median) / iqr
+                
             elif band == 'SLOPE':
 
                 slope = (slope - median) / iqr
