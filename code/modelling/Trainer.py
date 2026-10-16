@@ -193,7 +193,7 @@ class Trainer():
         fold_out_path = out_path / "random_split"
         fold_out_path.mkdir(parents=True, exist_ok=True)
 
-        results = self.train_fold(folded_out_region=exclude_region, epochs=epochs, batch_size=batch_size, out_path=fold_out_path)
+        results = self.train_fold(folded_out_region=exclude_region, epochs=epochs, batch_size=batch_size, out_path=fold_out_path, random_train=True)
         np.savez_compressed(out_path / "random_split_results.npz", **results)
 
     def parameter_sweep(self):
