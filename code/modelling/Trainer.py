@@ -24,10 +24,6 @@ class Trainer():
         self.dset = DatasetWrapper(root)
         self.device = device
 
-    def _generate_random_split(self, train_ratio=0.8):
-        train_set, val_set = self.dset.generate_random_split(train_ratio=train_ratio)
-        return train_set, val_set
-
     def _get_MaskRCNN_loaders(self, folded_out_region, batch_size, random_train=False):
 
         if random_train:
