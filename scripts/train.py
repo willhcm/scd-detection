@@ -17,7 +17,7 @@ def main(args):
 
     if args.LORO_CV:
         regions = args.folded_out_regions # Replace with actual region names
-        trainer.LORO_CV(regions, out_path)
+        trainer.LORO_CV(regions, out_path, epochs = args.epochs, batch_size=args.batch_size)
 
     elif args.random_split:
         trainer.random_split(

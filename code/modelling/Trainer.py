@@ -68,8 +68,8 @@ class Trainer():
         val_ious = []
         bbox_ious = []
         current_stage = 1
-        stage_start = {1: 0, 2: 20, 3: 30, 4: 40}
-        stage_end = {1: 20, 2: 30, 3: 40, 4: epochs}
+        stage_start = {1: 0, 2: 30, 3: 50, 4: 70}
+        stage_end = {1: 30, 2: 50, 3: 70, 4: epochs}
 
         bad_epochs = 0
         optimizer = build_staged_optimizer(model, weight_decay=1e-4)
@@ -78,15 +78,15 @@ class Trainer():
 
         for epoch in range(epochs):
                 
-            if epoch == 20:
+            if epoch == 30:
                 current_stage = 2
                 apply_training_stage(model, optimizer, current_stage)
 
-            elif epoch == 30:
+            elif epoch == 50:
                 current_stage = 3
                 apply_training_stage(model, optimizer, current_stage)
 
-            elif epoch == 40:
+            elif epoch == 70:
                 current_stage = 4
                 apply_training_stage(model, optimizer, current_stage)
 
@@ -183,13 +183,13 @@ class Trainer():
 
         return results
 
-    def LORO_CV(self, regions, out_path):
+    def LORO_CV(self, regions, out_path, epochs=50, batch_size=8):
         results = {}
         for region in regions: # where region is the region being folded out.
             fold_out_path = out_path / f"fold_{region}"
             fold_out_path.mkdir(parents=True, exist_ok=True)
             print(f"\n holding out {region}")
-            results[region] = self.train_fold(region, out_path=fold_out_path)
+            results[region] = self.train_fold(region, out_path=fold_out_path, epochs=epochs, batch_size=batch_size)
 
         np.savez_compressed(out_path / "LORO_CV_results.npz", **results)
 
