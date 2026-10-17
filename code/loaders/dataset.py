@@ -210,7 +210,7 @@ class DatasetWrapper():
             "SLOPE": "DEM_SLOPE", 
             "RR": "RR",
             "LAPLACE": "LAPLACE",
-        }
+            "HILLSHADE": "HILLSHADE"}
 
         samples = {
             name: []
@@ -236,6 +236,13 @@ class DatasetWrapper():
                     elif channel == "DEM":
                         tile_median = np.median(image[names.index(layer_name)].ravel()[valid])
                         vals = vals - tile_median
+                    elif channel == "HILLSHADE":
+                        #flip 
+                        flat = np.cos(np.radians(45))
+                        vals = flat - vals
+                        vals = np.clip(vals, 0, None)
+                        vals = vals ** 0.25
+
                     samples[channel].append(vals)
 
         self.values = self.handle_outliers(samples)
