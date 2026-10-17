@@ -329,6 +329,23 @@ class MaskRCNNDataset(Dataset):
 
         return image
 
+    def _old_normalise(self, image, li, band_indices):
+        # per tile normalisation, log scaling for slope, robust scaling for all bands.
+
+        for band in ['DEM', 'SLOPE', 'RR', 'LAPLACE']:
+            tile_data = image[band_indices.index(li[band])]
+            median = np.median(tile_data)
+            iqr = np.percentile(tile_data, 75) - np.percentile(tile_data, 25)
+
+            if band == 'SLOPE':
+                tile_data = np.power(tile_data, 0.25)
+
+            tile_data = (tile_data - median) / iqr
+            image[band_indices.index(li[band])] = tile_data
+
+        return image
+
+
     def _normalise(self, image, li, band_indices):
 
         # DEM
@@ -344,7 +361,7 @@ class MaskRCNNDataset(Dataset):
         rr = image[band_indices.index(li["RR"])]
         laplace = image[band_indices.index(li["LAPLACE"])]
 
-        slope = slope / 45
+        slope = np.power(slope, 0.25)
 
         # Robust scaling all (more efficient):
         for band in ['DEM', 'SLOPE', 'RR', 'LAPLACE']:
