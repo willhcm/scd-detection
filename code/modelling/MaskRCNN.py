@@ -371,7 +371,7 @@ class MaskRCNNDataset(Dataset):
         hills = image[-1]
 
         # Robust scaling all (more efficient):
-        for band in ['DEM', 'SLOPE', 'RR', 'LAPLACE', 'HILLSHADE']:
+        for band in ['DEM', 'SLOPE', 'RR', 'LAPLACE']:
             median = self.norm_stats[band]['median']
             iqr = self.norm_stats[band]['iqr']
 
@@ -383,8 +383,8 @@ class MaskRCNNDataset(Dataset):
                 rr = (rr - median) / iqr
             elif band == 'LAPLACE':
                 laplace = (laplace - median) / iqr
-            elif band == 'HILLSHADE':
-                hills = (hills - np.median(hills)) / (np.percentile(hills, 75) - np.percentile(hills, 25))
+
+        hills = (hills - np.median(hills)) / (np.percentile(hills, 75) - np.percentile(hills, 25))
 
 
         return np.stack([dem_rel, slope, rr, laplace, hills], axis=0).astype(np.float32)
