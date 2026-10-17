@@ -233,7 +233,7 @@ class DatasetWrapper():
                 for channel, layer_name in channels.items():
                     vals = image[names.index(layer_name)].ravel()[chosen]
                     if channel == "SLOPE":
-                        vals = np.log1p(vals)
+                        vals = vals / np.log1p(np.median(image[names.index("DEM")].ravel()[valid])) 
                     elif channel == "DEM":
                         tile_median = np.median(image[names.index(layer_name)].ravel()[valid])
                         vals = vals - tile_median
