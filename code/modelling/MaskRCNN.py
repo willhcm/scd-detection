@@ -17,8 +17,8 @@ import numpy as np
 from scipy.ndimage import label, find_objects, gaussian_filter
 from torchvision.models.detection.rpn import RPNHead
 from torchvision.models.detection.anchor_utils import AnchorGenerator
-from helpers.MaskRCNNFunctions import evaluate_maskrcnn_metrics, build_staged_optimizer, apply_training_stage
 import copy
+import cv2
 from tqdm.auto import tqdm
 
 _BANDS_TO_LOAD = ['DEM', 'DEM_SLOPE', 'RR', 'LAPLACE']
@@ -286,6 +286,82 @@ class MaskRCNNDataset(Dataset):
             iscrowd = torch.zeros((len(boxes),), dtype=torch.int64)
 
         return boxes, labels, masks, areas, iscrowd
+
+    def _new_spatial_augment(self, image, mask):
+        image = image.copy()
+        mask = mask.copy()
+
+        if random.random() > 0.5:
+            image = image[:, :, ::-1]
+            mask = mask[:, ::-1]
+
+        if random.random() > 0.5:
+            image = image[:, ::-1, :]
+            mask = mask[::-1, :]
+
+        k = random.randint(0, 3)
+        if k:
+            image = np.rot90(image, k, axes=(1, 2))
+            mask = np.rot90(mask, k)
+
+        if random.random() < 0.8:
+            image, mask = self._affine(image, mask)
+
+        if random.random() < 0.5:
+            image, mask = self._crop_zoom(image, mask)
+
+        return np.ascontiguousarray(image), np.ascontiguousarray(mask)
+
+    def _warp(self, image, mask, M, size):
+        w, h = size
+        flags = dict(borderMode=cv2.BORDER_REFLECT_101)
+        image = np.stack([
+            cv2.warpAffine(np.ascontiguousarray(c), M, (w, h),
+                           flags=cv2.INTER_LINEAR, **flags)
+            for c in image
+        ])
+        mask = cv2.warpAffine(np.ascontiguousarray(mask), M, (w, h),
+                              flags=cv2.INTER_NEAREST, **flags)
+        return image, mask
+
+    def _affine(self, image, mask):
+        h, w = mask.shape
+        cx, cy = w / 2, h / 2
+
+        rot = cv2.getRotationMatrix2D(
+            (cx, cy), random.uniform(-30, 30), random.uniform(0.8, 1.3)
+        )
+        rot = np.vstack([rot, [0, 0, 1]])
+
+        sh = np.tan(np.deg2rad(random.uniform(-10, 10)))
+        shear = np.array([[1, sh, -sh * cy],
+                          [0, 1, 0],
+                          [0, 0, 1]])
+
+        M = (rot @ shear)[:2]
+        M[0, 2] += random.uniform(-0.15, 0.15) * w
+        M[1, 2] += random.uniform(-0.15, 0.15) * h
+
+        return self._warp(image, mask, M, (w, h))
+
+    def _crop_zoom(self, image, mask):
+        h, w = mask.shape
+        s = random.uniform(0.5, 0.9)
+        ch, cw = int(h * s), int(w * s)
+        y = random.randint(0, h - ch)
+        x = random.randint(0, w - cw)
+
+        image = image[:, y:y + ch, x:x + cw]
+        mask = mask[y:y + ch, x:x + cw]
+
+        image = np.stack([
+            cv2.resize(np.ascontiguousarray(c), (w, h),
+                       interpolation=cv2.INTER_LINEAR)
+            for c in image
+        ])
+        mask = cv2.resize(np.ascontiguousarray(mask), (w, h),
+                          interpolation=cv2.INTER_NEAREST)
+        return image, mask
     
     # same augmentation changes as made in FPNCN
     def _spatial_augment(self, image, mask):
@@ -328,23 +404,6 @@ class MaskRCNNDataset(Dataset):
             image[band_index] = band_data
 
         return image
-
-    def _old_normalise(self, image, li, band_indices):
-        # per tile normalisation, log scaling for slope, robust scaling for all bands.
-
-        for band in ['DEM', 'SLOPE', 'RR', 'LAPLACE']:
-            tile_data = image[band_indices.index(li[band])]
-            median = np.median(tile_data)
-            iqr = np.percentile(tile_data, 75) - np.percentile(tile_data, 25)
-
-            if band == 'SLOPE':
-                tile_data = np.power(tile_data, 0.25)
-
-            tile_data = (tile_data - median) / iqr
-            image[band_indices.index(li[band])] = tile_data
-
-        return image
-
 
     def _normalise(self, image, li, band_indices):
 
@@ -395,12 +454,12 @@ class MaskRCNNDataset(Dataset):
         mask = d["labels"].astype(np.float32)
 
 
-        if self.augment:
-            # rotate / flip
-            image, mask = self._spatial_augment(image, mask)
-
         image = self.handle_outliers(image, li, band_indices)
         image = self._normalise(image, li, band_indices)
+
+        if self.augment:
+            # rotate / flip
+            image, mask = self._new_spatial_augment(image, mask)
         
         boxes, labels, masks, areas, iscrowd = self._mask_to_instances(mask)
 
