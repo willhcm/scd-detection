@@ -405,7 +405,7 @@ class MaskRCNNDataset(Dataset):
 
         if self.augment:
             # rotate / flip
-            image, mask = self.spatial_augment(image, mask)
+            image, mask = self._spatial_augment(image, mask)
 
         image = self.handle_outliers(image, li, band_indices)
 
