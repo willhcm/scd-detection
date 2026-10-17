@@ -344,7 +344,7 @@ class MaskRCNNDataset(Dataset):
         rr = image[band_indices.index(li["RR"])]
         laplace = image[band_indices.index(li["LAPLACE"])]
 
-        slope = slope / np.log1p(np.median(dem[valid]))
+        slope = slope / 45
 
         # Robust scaling all (more efficient):
         for band in ['DEM', 'SLOPE', 'RR', 'LAPLACE']:
