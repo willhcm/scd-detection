@@ -368,7 +368,7 @@ class MaskRCNNDataset(Dataset):
         laplace = image[band_indices.index(li["LAPLACE"])]
 
         slope = np.power(slope, 0.25)
-        hills = image[band_indices.index(li["HILLSHADE"])]
+        hills = image[-1]
 
         # Robust scaling all (more efficient):
         for band in ['DEM', 'SLOPE', 'RR', 'LAPLACE', 'HILLSHADE']:
