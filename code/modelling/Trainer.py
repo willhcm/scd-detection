@@ -38,7 +38,7 @@ class Trainer():
                             collate_fn=collate_fn)
 
         val_loader = DataLoader(val_set,
-                        shuffle=True,
+                        shuffle=False,
                         num_workers=0,
                         batch_size=batch_size,
                         collate_fn=collate_fn)

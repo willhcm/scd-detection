@@ -37,7 +37,7 @@ class DatasetWrapper():
 
         self._analyze_dataset()
         self._estimate_normalization_stats(self.train_paths)
-        return MaskRCNNDataset(self.train_paths, self.normalization_stats), MaskRCNNDataset(self.val_paths, self.normalization_stats)
+        return MaskRCNNDataset(self.train_paths, self.normalization_stats, augment=True), MaskRCNNDataset(self.val_paths, self.normalization_stats, augment=False)
 
     def generate_dataset(self, test_region=None):
 
@@ -56,7 +56,7 @@ class DatasetWrapper():
 
             self._analyze_dataset()
             self._estimate_normalization_stats(self.train_paths)
-            return MaskRCNNDataset(self.train_paths, self.normalization_stats), MaskRCNNDataset(self.val_paths, self.normalization_stats)
+            return MaskRCNNDataset(self.train_paths, self.normalization_stats, augment=True), MaskRCNNDataset(self.val_paths, self.normalization_stats, augment=False)
 
         else:
 
@@ -72,8 +72,8 @@ class DatasetWrapper():
 
 
             return (
-                MaskRCNNDataset(self.train_paths, self.normalization_stats),
-                MaskRCNNDataset(self.test_paths, self.normalization_stats)
+                MaskRCNNDataset(self.train_paths, self.normalization_stats, augment=True),
+                MaskRCNNDataset(self.test_paths, self.normalization_stats, augment=False)
             )
 
     def plot_distribution(self):

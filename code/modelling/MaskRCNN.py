@@ -346,7 +346,7 @@ class MaskRCNNDataset(Dataset):
 
     def _crop_zoom(self, image, mask):
         h, w = mask.shape
-        s = random.uniform(0.5, 0.9)
+        s = random.uniform(0.7, 0.9)
         ch, cw = int(h * s), int(w * s)
         y = random.randint(0, h - ch)
         x = random.randint(0, w - cw)
