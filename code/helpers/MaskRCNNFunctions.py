@@ -1,7 +1,6 @@
 import numpy as np
 from scipy.ndimage import label, center_of_mass 
 import torch
-
 from collections import defaultdict
 import math
 
@@ -93,16 +92,14 @@ def old_object_f1_from_boxes(pred_boxes, gt_boxes, iou_thresh=0.3):
         if row[j] >= iou_thresh:
             taken[j] = True
             tp += 1
-
-    # tp if centroid is within gt box
-    for i in range(n_pred):
-        pred_box = pred_boxes[i]
-        pred_centroid = torch.tensor([(pred_box[0] + pred_box[2]) / 2, (pred_box[1] + pred_box[3]) / 2])
-        for j in range(n_gt):
-            gt_box = gt_boxes[j]
-            if (gt_box[0] <= pred_centroid[0] <= gt_box[2]) and (gt_box[1] <= pred_centroid[1] <= gt_box[3]):
-                tp += 1
-                break
+        else:
+            pred_box = pred_boxes[i]
+            pred_centroid = torch.tensor([(pred_box[0] + pred_box[2]) / 2, (pred_box[1] + pred_box[3]) / 2])
+            for j in range(n_gt):
+                gt_box = gt_boxes[j]
+                if (gt_box[0] <= pred_centroid[0] <= gt_box[2]) and (gt_box[1] <= pred_centroid[1] <= gt_box[3]):
+                    tp += 1
+                    break
 
     return tp, n_pred - tp, n_gt - tp
 
