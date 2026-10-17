@@ -83,7 +83,7 @@ def old_object_f1_from_boxes(pred_boxes, gt_boxes, iou_thresh=0.3):
         return 0, n_pred, n_gt
 
     ious = box_iou(pred_boxes, gt_boxes)
-    taken = torch.zeros(n_gt, dtype=torch.bool)
+    taken = torch.zeros(n_gt, dtype=torch.bool, device=ious.device)
     tp = 0
 
     for i in range(n_pred):
@@ -92,14 +92,19 @@ def old_object_f1_from_boxes(pred_boxes, gt_boxes, iou_thresh=0.3):
         if row[j] >= iou_thresh:
             taken[j] = True
             tp += 1
-        else:
-            pred_box = pred_boxes[i]
-            pred_centroid = torch.tensor([(pred_box[0] + pred_box[2]) / 2, (pred_box[1] + pred_box[3]) / 2])
-            for j in range(n_gt):
-                gt_box = gt_boxes[j]
-                if (gt_box[0] <= pred_centroid[0] <= gt_box[2]) and (gt_box[1] <= pred_centroid[1] <= gt_box[3]):
-                    tp += 1
-                    break
+            continue
+
+        # no IoU match, try centroid inside an unmatched gt box
+        x1, y1, x2, y2 = pred_boxes[i]
+        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+        inside = (
+            (gt_boxes[:, 0] <= cx) & (cx <= gt_boxes[:, 2])
+            & (gt_boxes[:, 1] <= cy) & (cy <= gt_boxes[:, 3])
+            & ~taken
+        )
+        if inside.any():
+            taken[inside.nonzero()[0, 0]] = True
+            tp += 1
 
     return tp, n_pred - tp, n_gt - tp
 
