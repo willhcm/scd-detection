@@ -104,7 +104,8 @@ class MaskRCNN(nn.Module):
             weights_backbone="DEFAULT" if pretrained else None,
             trainable_backbone_layers=3)
 
-        in_channels = 4
+        in_channels = 5
+
         self.pretrained = pretrained
  
         self._replace_input_conv(in_channels)
