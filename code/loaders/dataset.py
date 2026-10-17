@@ -11,7 +11,6 @@ from modelling.MaskRCNN import MaskRCNNDataset
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 
-
 class DatasetWrapper():
 
     def __init__(self, root_dir):

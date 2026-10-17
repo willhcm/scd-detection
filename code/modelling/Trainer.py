@@ -126,7 +126,7 @@ class Trainer():
             _val_loss, val_loss_parts = val_loss(model, val_loader, device)
             val_losses.append(_val_loss)
 
-            precision, recall, val_f1, val_iou, p_precision, p_recall, p_f1, bbox_iou = evaluate_maskrcnn_metrics(
+            precision, recall, val_f1, val_iou, p_precision, p_recall, p_f1, bbox_iou, old_f1 = evaluate_maskrcnn_metrics(
                 model,
                 val_loader,
                 device,
@@ -151,7 +151,8 @@ class Trainer():
                 f"Val F1: {val_f1:.4f} | "
                 f"Pixel P: {p_precision:.4f} | "
                 f"Pixel R: {p_recall:.4f} | "
-                f"Pixel F1: {p_f1:.4f} | ")
+                f"Pixel F1: {p_f1:.4f} | "
+                f"Old F1: {old_f1:.4f} | ")
 
             if val_f1 > best_f1:
                 best_f1 = val_f1

@@ -20,6 +20,7 @@ from torchvision.models.detection.anchor_utils import AnchorGenerator
 import copy
 import cv2
 from tqdm.auto import tqdm
+from modelling.helpers import calculate_hillshade
 
 _BANDS_TO_LOAD = ['DEM', 'DEM_SLOPE', 'RR', 'LAPLACE']
 
@@ -109,7 +110,7 @@ class MaskRCNN(nn.Module):
         self._replace_input_conv(in_channels)
         self.model.transform.image_mean = [0.0] * in_channels
         self.model.transform.image_std = [1.0] * in_channels
-        self._set_anchor_generator(anchor_sizes, aspect_ratios)
+        #self._set_anchor_generator(anchor_sizes, aspect_ratios)
         self._replace_heads(num_classes)
 
         # add FiLM conditioning to backbone to encode resolution
@@ -287,63 +288,6 @@ class MaskRCNNDataset(Dataset):
 
         return boxes, labels, masks, areas, iscrowd
 
-    def _new_spatial_augment(self, image, mask):
-        image = image.copy()
-        mask = mask.copy()
-
-        if random.random() > 0.5:
-            image = image[:, :, ::-1]
-            mask = mask[:, ::-1]
-
-        if random.random() > 0.5:
-            image = image[:, ::-1, :]
-            mask = mask[::-1, :]
-
-        k = random.randint(0, 3)
-        if k:
-            image = np.rot90(image, k, axes=(1, 2))
-            mask = np.rot90(mask, k)
-
-        if random.random() < 0.8:
-            image, mask = self._affine(image, mask)
-
-        if random.random() < 0.5:
-            image, mask = self._crop_zoom(image, mask)
-
-        return np.ascontiguousarray(image), np.ascontiguousarray(mask)
-
-    def _warp(self, image, mask, M, size):
-        w, h = size
-        flags = dict(borderMode=cv2.BORDER_REFLECT_101)
-        image = np.stack([
-            cv2.warpAffine(np.ascontiguousarray(c), M, (w, h),
-                           flags=cv2.INTER_LINEAR, **flags)
-            for c in image
-        ])
-        mask = cv2.warpAffine(np.ascontiguousarray(mask), M, (w, h),
-                              flags=cv2.INTER_NEAREST, **flags)
-        return image, mask
-
-    def _affine(self, image, mask):
-        h, w = mask.shape
-        cx, cy = w / 2, h / 2
-
-        rot = cv2.getRotationMatrix2D(
-            (cx, cy), random.uniform(-30, 30), random.uniform(0.8, 1.3)
-        )
-        rot = np.vstack([rot, [0, 0, 1]])
-
-        sh = np.tan(np.deg2rad(random.uniform(-10, 10)))
-        shear = np.array([[1, sh, -sh * cy],
-                          [0, 1, 0],
-                          [0, 0, 1]])
-
-        M = (rot @ shear)[:2]
-        M[0, 2] += random.uniform(-0.15, 0.15) * w
-        M[1, 2] += random.uniform(-0.15, 0.15) * h
-
-        return self._warp(image, mask, M, (w, h))
-
     def _crop_zoom(self, image, mask):
         h, w = mask.shape
         s = random.uniform(0.7, 0.9)
@@ -384,6 +328,9 @@ class MaskRCNNDataset(Dataset):
             image = np.rot90(image, k, axes=(1, 2))
             mask = np.rot90(mask, k)
 
+        if random.random() < 0.5:
+            image, mask = self._crop_zoom(image, mask)
+
         return (
             np.ascontiguousarray(image),
             np.ascontiguousarray(mask),
@@ -413,7 +360,7 @@ class MaskRCNNDataset(Dataset):
         valid = np.isfinite(dem)
 
         dem_median = np.median(dem[valid])
-        dem = image[0] - dem_median
+        dem_rel = dem - dem_median
 
         # slope log scaled, then Robust scaling
         slope = image[band_indices.index(li["DEM_SLOPE"])]
@@ -421,30 +368,33 @@ class MaskRCNNDataset(Dataset):
         laplace = image[band_indices.index(li["LAPLACE"])]
 
         slope = np.power(slope, 0.25)
+        hills = image[band_indices.index(li["HILLSHADE"])]
 
         # Robust scaling all (more efficient):
-        for band in ['DEM', 'SLOPE', 'RR', 'LAPLACE']:
+        for band in ['DEM', 'SLOPE', 'RR', 'LAPLACE', 'HILLSHADE']:
             median = self.norm_stats[band]['median']
             iqr = self.norm_stats[band]['iqr']
 
             if band == 'DEM':
-                dem = (dem - median) / iqr
-
+                dem_rel = (dem_rel - median) / iqr
             elif band == 'SLOPE':
-                slope = (slope - median) / iqr
-                
+                slope = (slope - median) / iqr         
             elif band == 'RR':
                 rr = (rr - median) / iqr
             elif band == 'LAPLACE':
                 laplace = (laplace - median) / iqr
+            elif band == 'HILLSHADE':
+                hills = (hills - np.median(hills)) / (np.percentile(hills, 75) - np.percentile(hills, 25))
 
-        return np.stack([dem, slope, rr, laplace], axis=0).astype(np.float32)
+
+        return np.stack([dem_rel, slope, rr, laplace, hills], axis=0).astype(np.float32)
 
     def __getitem__(self, idx):
         path = self.paths[idx]
         d = np.load(path, allow_pickle=True)
         res = d['res']
-        res_value = np.log(res) / np.log(15.0)
+
+        res_value = np.log1p(res)  / np.log1p(15)
 
         layer_names = list(d["layer_names"])
         li = {name: i for i, name in enumerate(layer_names)}
@@ -453,14 +403,18 @@ class MaskRCNNDataset(Dataset):
         image = d["image"][band_indices].astype(np.float32)
         mask = d["labels"].astype(np.float32)
 
-
-        image = self.handle_outliers(image, li, band_indices)
-        image = self._normalise(image, li, band_indices)
-
         if self.augment:
             # rotate / flip
-            image, mask = self._new_spatial_augment(image, mask)
+            image, mask = self.spatial_augment(image, mask)
+
+        image = self.handle_outliers(image, li, band_indices)
+
+        # Calculate hillshade
+        hillshade = calculate_hillshade(image[band_indices.index(li["DEM"])])
+        image = np.concatenate([image, hillshade[np.newaxis, ...]], axis=0)
         
+        image = self._normalise(image, li, band_indices)
+
         boxes, labels, masks, areas, iscrowd = self._mask_to_instances(mask)
 
         target = {
@@ -470,8 +424,7 @@ class MaskRCNNDataset(Dataset):
             "image_id": torch.tensor([idx]),
             "area": areas,
             "iscrowd": iscrowd,
-            "resolution": torch.tensor([res_value], dtype=torch.float32)
-        }
+            "resolution": torch.tensor([res_value], dtype=torch.float32)}
 
         image = torch.from_numpy(image)
 

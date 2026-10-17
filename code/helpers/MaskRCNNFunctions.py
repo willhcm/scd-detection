@@ -76,6 +76,36 @@ def object_f1_from_boxes(pred_boxes, gt_boxes, iou_thresh=0.5):
             tp += 1
 
     return tp, n_pred - tp, n_gt - tp
+
+
+def old_object_f1_from_boxes(pred_boxes, gt_boxes, iou_thresh=0.3):
+    n_pred, n_gt = len(pred_boxes), len(gt_boxes)
+    if n_pred == 0 or n_gt == 0:
+        return 0, n_pred, n_gt
+
+    ious = box_iou(pred_boxes, gt_boxes)
+    taken = torch.zeros(n_gt, dtype=torch.bool)
+    tp = 0
+
+    for i in range(n_pred):
+        row = ious[i].masked_fill(taken, -1)
+        j = row.argmax()
+        if row[j] >= iou_thresh:
+            taken[j] = True
+            tp += 1
+
+    # tp if centroid is within gt box
+    for i in range(n_pred):
+        pred_box = pred_boxes[i]
+        pred_centroid = torch.tensor([(pred_box[0] + pred_box[2]) / 2, (pred_box[1] + pred_box[3]) / 2])
+        for j in range(n_gt):
+            gt_box = gt_boxes[j]
+            if (gt_box[0] <= pred_centroid[0] <= gt_box[2]) and (gt_box[1] <= pred_centroid[1] <= gt_box[3]):
+                tp += 1
+                break
+
+    return tp, n_pred - tp, n_gt - tp
+
 def merge_masks(masks, h, w):
     # union of instance masks -> single binary mask
     if masks.shape[0] == 0:
@@ -89,6 +119,7 @@ def evaluate_maskrcnn_metrics(model, val_loader, device, mask_thresh=0.55, score
     tp = fp = fn = 0           # object level
     ptp = pfp = pfn = 0        # pixel level, global counts
     box_ious = []
+    old_tp = old_fp = old_fn = 0   # object level, old definition
 
     with torch.no_grad():
         for images, targets in val_loader:
@@ -114,6 +145,11 @@ def evaluate_maskrcnn_metrics(model, val_loader, device, mask_thresh=0.55, score
                 fp += b
                 fn += c
 
+                x, y, z = old_object_f1_from_boxes(pred_boxes, gt_boxes, iou_thresh=0.3)
+                old_tp += x
+                old_fp += y
+                old_fn += z
+
                 pred = merge_masks(pred_masks, h, w)
                 gt = merge_masks(gt_masks, h, w)
 
@@ -132,9 +168,11 @@ def evaluate_maskrcnn_metrics(model, val_loader, device, mask_thresh=0.55, score
     p_f1 = 2 * ptp / (2 * ptp + pfp + pfn + eps)
     pixel_iou = ptp / (ptp + pfp + pfn + eps)
 
+    old_f1 = 2 * old_tp / (2 * old_tp + old_fp + old_fn + eps)
+
     mean_box_iou = float(np.mean(box_ious)) if box_ious else 0.0
 
-    return precision, recall, f1, pixel_iou, p_precision, p_recall, p_f1, mean_box_iou
+    return precision, recall, f1, pixel_iou, p_precision, p_recall, p_f1, mean_box_iou, old_f1
 
 # ai assistance with mask rcnn train functionality and helper functions. original code repo from paper is hard to understand
 # ChatGPT and Claude Sonnet 5 used - whenever I have said AI is used its these models.
