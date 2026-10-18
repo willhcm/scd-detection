@@ -41,8 +41,9 @@ class DatasetWrapper():
 
     
 
-    def generate_unet_dataset(self, paths):
-
+    def generate_unet_dataset(self):
+        paths = list(self.root_dir.glob("*.npz"))
+        
         self.train_paths, self.val_paths = train_test_split(
             paths,
             test_size=0.2,

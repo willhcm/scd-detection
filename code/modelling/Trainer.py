@@ -217,8 +217,8 @@ class Trainer():
 
         ...
 
-    def train_unet(self, paths, epochs=50, batch_size=8, out_path=None, folded_out_region=None):
-        train_set, test_set = self.dset.generate_unet_dataset(paths)
+    def train_unet(self, epochs=50, batch_size=8, out_path=None, folded_out_region=None):
+        train_set, test_set = self.dset.generate_unet_dataset()
 
         train_loader = DataLoader(train_set,
                             shuffle=True,
@@ -229,7 +229,6 @@ class Trainer():
                         shuffle=False,
                         num_workers=0,
                         batch_size=batch_size)
-
 
         model = UNet()
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
