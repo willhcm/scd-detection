@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import sys
+from xml.parsers.expat import model
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 
@@ -16,6 +17,9 @@ import numpy as np
 import copy
 from tqdm import tqdm
 REPO_ROOT = Path(__file__).resolve().parent.parent
+from scipy.ndimage import label
+
+from modelling.UNET import UNet, DiceLoss
     
 class Trainer():
 
@@ -23,6 +27,14 @@ class Trainer():
         self.root = root
         self.dset = DatasetWrapper(root)
         self.device = device
+        self.set_seed(42)
+
+    @staticmethod
+    def set_seed(seed):
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
 
     def _get_MaskRCNN_loaders(self, folded_out_region, batch_size, random_train=False):
 
@@ -198,4 +210,208 @@ class Trainer():
         np.savez_compressed(out_path / "random_split_results.npz", **results)
 
     def parameter_sweep(self):
-        raise NotImplementedError("Parameter sweep functionality is not yet implemented.")
+        params = {'score_thresh': [0.5, 0.6, 0.7, 0.8],
+                  'mask_thresh': [0.5, 0.6, 0.7, 0.8],
+                  'veto_thresh': [0.5, 0.6, 0.7, 0.8],
+                  'detect_thresh': [0.5, 0.6, 0.7, 0.8]}
+
+        ...
+
+    def train_unet(self, paths, epochs=50, batch_size=8, out_path=None, folded_out_region=None):
+        train_set, test_set = self.dset.generate_unet_dataset(paths)
+
+        train_loader = DataLoader(train_set,
+                            shuffle=True,
+                            num_workers=0,
+                            batch_size=batch_size)
+
+        val_loader = DataLoader(test_set,
+                        shuffle=False,
+                        num_workers=0,
+                        batch_size=batch_size)
+
+
+        model = UNet()
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model.to(device)
+        criterion = DiceLoss()
+
+        best_f1 = -1.0
+        best_state = None
+        best_epoch = -1
+
+        train_losses = []
+        val_losses = []
+        val_precisions = []
+        val_recalls = []
+        val_f1s = []
+        val_ious = []
+        bbox_ious = []
+        current_stage = 1
+        stage_start = {1: 0, 2: 20, 3: 40, 4: 60}
+        stage_end = {1: 20, 2: 40, 3: 60, 4: epochs}
+
+        bad_epochs = 0
+        optimizer = build_staged_optimizer(model, weight_decay=1e-4)
+
+        apply_training_stage(model, optimizer, current_stage)
+
+        for epoch in range(epochs):
+                
+            if epoch == 20:
+                current_stage = 2
+                apply_training_stage(model, optimizer, current_stage)
+
+            elif epoch == 40:
+                current_stage = 3
+                apply_training_stage(model, optimizer, current_stage)
+
+            elif epoch == 60:
+                current_stage = 4
+                apply_training_stage(model, optimizer, current_stage)
+
+
+            s, e = stage_start[current_stage], stage_end[current_stage]
+
+            model.train()
+            train_loss = 0.0
+
+            pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}")
+
+            for i, (images, masks) in enumerate(pbar):
+                frac = (epoch - s + i / len(train_loader)) / (e - s)
+                set_stage_progress(optimizer, current_stage, frac)
+                images = [img.to(device) for img in images]
+                masks = [mask.to(device) for mask in masks]
+
+                logits = model(images, masks)
+                loss = criterion(logits, masks)
+        
+                optimizer.zero_grad()
+                optimizer.step()
+
+                train_loss += loss.item()
+
+                pbar.set_postfix({
+                    "loss": float(loss.detach().cpu())
+                })
+
+            train_loss /= len(train_loader)
+            train_losses.append(train_loss)
+
+            model.eval()
+            val_loss = 0.0
+
+            for image, mask in val_loader:
+                image = image.to(device)
+                mask = mask.to(device)
+
+                logits = model(image, mask)
+                val_loss =+ criterion(logits, mask)
+
+                preds = torch.sigmoid(logits) > 0.5
+                preds = preds.cpu().numpy()
+                masks = mask.cpu().numpy()
+                tp = np.sum((preds == 1) & (masks == 1))
+                fp = np.sum((preds == 1) & (masks == 0))
+                fn = np.sum((preds == 0) & (masks == 1))
+
+
+                # object f1
+                instances, num_preds = label(preds.astype(np.uint8))
+                true_instances, n_gt = label(masks.astype(np.uint8))
+                pred_boxes = []
+                for i in range(1, num_preds + 1):
+                    pred_mask = (instances == i)
+                    y, x = np.where(pred_mask)
+                    if len(y) == 0 or len(x) == 0:
+                        continue
+                    pred_boxes.append([x.min(), y.min(), x.max(), y.max()])
+                gt_boxes = []
+                for i in range(1, n_gt + 1):
+                    gt_mask = (true_instances == i)
+                    y, x = np.where(gt_mask)
+                    if len(y) == 0 or len(x) == 0:
+                        continue
+                    gt_boxes.append([x.min(), y.min(), x.max(), y.max()])
+
+                pred_boxes = np.array(pred_boxes)
+                gt_boxes = np.array(gt_boxes)
+
+                # compute object-level precision, recall, f1
+                otp, ofp, ofn = 0, 0, 0
+                for pred_box in pred_boxes:
+                    ious = []
+                    for gt_box in gt_boxes:
+                        xA = max(pred_box[0], gt_box[0])
+                        yA = max(pred_box[1], gt_box[1])
+                        xB = min(pred_box[2], gt_box[2])
+                        yB = min(pred_box[3], gt_box[3])
+                        interArea = max(0, xB - xA + 1) * max(0, yB - yA + 1)
+                        boxAArea = (pred_box[2] - pred_box[0] + 1) * (pred_box[3] - pred_box[1] + 1)
+                        boxBArea = (gt_box[2] - gt_box[0] + 1) * (gt_box[3] - gt_box[1] + 1)
+                        iou = interArea / float(boxAArea + boxBArea - interArea)
+                        ious.append(iou)
+                        centre_of_mass = lambda box: ((box[1] + box[3]) / 2, (box[0] + box[2]) / 2) if box is not None else None
+                    if len(ious) > 0 and max(ious) >= 0.5:
+                        otp += 1
+                    elif centre_of_mass(pred_box) is not None and any(centre_of_mass(pred_box) == centre_of_mass(gt_box) for gt_box in gt_boxes):
+                        otp += 1
+                    else:
+                        ofp += 1
+                
+
+            p_precision = tp / (tp + fp + 1e-8)
+            p_recall = tp / (tp + fn + 1e-8)
+            p_f1 = 2 * p_precision * p_recall / (p_precision + p_recall + 1e-8)
+            val_iou = tp / (tp + fp + fn + 1e-8)
+
+            object_precision = otp / (otp + ofp + 1e-8)
+            object_recall = otp / (otp + ofn + 1e-8)
+            object_f1 = 2 * object_precision * object_recall / (object_precision + object_recall + 1e-8)
+
+                    
+
+            val_precisions.append(object_precision)
+            val_recalls.append(object_recall)
+            val_f1s.append(object_f1)
+            val_ious.append(val_iou)
+
+            print(
+                f"Epoch {epoch+1:03d} | "
+                f"Train Loss: {train_loss:.4f} | "
+                f"Val Loss: {val_loss:.4f} | "
+                f"IoU: {val_iou:.4f} | "
+                f"Val P: {object_precision:.4f} | "
+                f"Val R: {object_recall:.4f} | "
+                f"Val F1: {object_f1:.4f} | "
+                f"Pixel P: {p_precision:.4f} | "
+                f"Pixel R: {p_recall:.4f} | "
+                f"Pixel F1: {p_f1:.4f} | ")
+
+            if object_f1 > best_f1:
+                best_f1 = object_f1
+                best_epoch = epoch + 1
+                best_state = copy.deepcopy(model.state_dict())
+
+                print(f"Saved new best model at epoch {best_epoch} with F1={best_f1:.4f}")
+                bad_epochs = 0
+            else:
+                bad_epochs += 1
+
+        results = {'train_losses': train_losses,
+                'val_losses': val_losses,
+                'val_recalls': val_recalls,
+                'val_precisions': val_precisions,
+                'val_ious': val_ious,
+                'val_f1s': val_f1s,
+                'bbox_ious': bbox_ious}
+
+        torch.save(best_state, out_path / f"best_UNET_model_fold_{folded_out_region}.pt")
+        print(f"Best model saved at epoch {best_epoch} with F1={best_f1:.4f}")
+
+        # save dict of results to npz file
+        np.savez_compressed(out_path / f"training_metrics_fold_{folded_out_region}.npz", **results)
+
+        return results
+        
