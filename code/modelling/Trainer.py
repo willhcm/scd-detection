@@ -245,7 +245,7 @@ class Trainer():
 
         bad_epochs = 0
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
 
         for epoch in range(epochs):
 
@@ -294,7 +294,7 @@ class Trainer():
 
             val_loss /= len(val_loader)
             val_losses.append(val_loss)
-            scheduler.step(loss)
+            scheduler.step()
                 
             p_precision = tp / (tp + fp + 1e-8)
             p_recall = tp / (tp + fn + 1e-8)
