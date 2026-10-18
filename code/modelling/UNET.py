@@ -6,6 +6,9 @@ import numpy as np
 from modelling.helpers import calculate_hillshade
 import torch
 
+import torch.nn.functional as F
+
+
 
 _BANDS_TO_LOAD = ['DEM', 'DEM_SLOPE', 'RR', 'LAPLACE']
 
@@ -47,6 +50,11 @@ class UNetNDataset(Dataset):
 
     def __len__(self):
         return len(self.paths)
+
+    @staticmethod
+    def pad_to(x, size=512):
+        h, w = x.shape[-2:]
+        return F.pad(x, (0, size - w, 0, size - h))
 
     def _crop_zoom(self, image, mask):
         h, w = mask.shape
@@ -171,6 +179,9 @@ class UNetNDataset(Dataset):
         image = np.concatenate([image, hillshade[np.newaxis, ...]], axis=0)
         
         image = self._normalise(image, li, band_indices)
+
+        image = self.pad_to(image, size=512)
+        mask = self.pad_to(mask, size=512)
 
         image = torch.from_numpy(image)
         mask = torch.from_numpy(mask).unsqueeze(0) 
