@@ -265,7 +265,7 @@ class Trainer():
                 images = images.to(device)
                 masks = masks.to(device)
 
-                logits = model(images, masks)
+                logits = model(images)
                 loss = criterion(logits, masks)
         
                 optimizer.zero_grad()
