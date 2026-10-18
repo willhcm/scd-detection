@@ -181,9 +181,11 @@ class UNetNDataset(Dataset):
         image = self._normalise(image, li, band_indices)
 
         image = torch.from_numpy(image)
-        mask = torch.from_numpy(mask).unsqueeze(1) 
+        mask = torch.from_numpy(mask)
 
-        image = self.pad_to(image, size=512)
-        mask = self.pad_to(mask, size=512)
+        h, w = mask.shape
+        pad = (0, 512 - w, 0, 512 - h)
+        image = F.pad(image, pad)
+        mask = F.pad(mask, pad).unsqueeze(0)
 
         return image, mask
