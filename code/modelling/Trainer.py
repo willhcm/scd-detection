@@ -259,13 +259,11 @@ class Trainer():
                 masks = masks.to(device)
 
                 logits = model(images)
-                print(images.shape, logits.shape, masks.shape)
                 loss = criterion(logits, masks)
         
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-
 
                 train_loss += loss.item()
 
@@ -280,12 +278,11 @@ class Trainer():
             val_loss = 0.0
 
             with torch.no_grad():
-                for image, masks in val_loader:
-                    image = image.to(device)
+                for images, masks in val_loader:
+                    images = images.to(device)
                     masks = masks.to(device)
 
                     logits = model(images)
-                    print(images.shape, logits.shape, masks.shape)
                     val_loss += criterion(logits, masks).item()
 
                     preds = torch.sigmoid(logits) > 0.5
