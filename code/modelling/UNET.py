@@ -26,8 +26,13 @@ class UNet(torch.nn.Module):
     def forward(self, x):
         return self.model(x)
 
-def DiceLoss(pred, target):
-    return loss_fn(pred, target)
+class DiceLoss(torch.nn.Module):
+    def __init__(self):
+        super(DiceLoss, self).__init__()
+        self.loss = loss_fn
+
+    def forward(self, pred, target):
+        return self.loss(pred, target)
 
 # AI assistance with several refactors of dataset when changing augmentation and channel logic.
 class UNetNDataset(Dataset):
