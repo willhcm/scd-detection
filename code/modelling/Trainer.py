@@ -258,6 +258,7 @@ class Trainer():
                 images = images.to(device)
                 masks = masks.to(device)
 
+                print(images.shape, logits.shape, masks.shape)
                 logits = model(images)
                 loss = criterion(logits, masks)
         
