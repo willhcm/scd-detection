@@ -278,20 +278,24 @@ class Trainer():
             model.eval()
             val_loss = 0.0
 
-            for image, mask in val_loader:
-                image = image.to(device)
-                mask = mask.to(device)
+            with torch.no_grad():
+                for image, masks in val_loader:
+                    image = image.to(device)
+                    masks = masks.to(device)
 
-                logits = model(images)
-                val_loss += criterion(logits, mask)
+                    logits = model(images)
+                    print(images.shape, logits.shape, masks.shape)
+                    val_loss += criterion(logits, masks).item()
 
-                preds = torch.sigmoid(logits) > 0.5
-                preds = preds.cpu().numpy()
-                masks = mask.cpu().numpy()
-                tp = np.sum((preds == 1) & (masks == 1))
-                fp = np.sum((preds == 1) & (masks == 0))
-                fn = np.sum((preds == 0) & (masks == 1))
+                    preds = torch.sigmoid(logits) > 0.5
+                    preds = preds.cpu().numpy()
+                    masks = masks.cpu().numpy()
+                    tp = np.sum((preds == 1) & (masks == 1))
+                    fp = np.sum((preds == 1) & (masks == 0))
+                    fn = np.sum((preds == 0) & (masks == 1))
 
+            val_loss /= len(val_loader)
+            val_losses.append(val_loss)
             scheduler.step(loss)
                 
             p_precision = tp / (tp + fp + 1e-8)
