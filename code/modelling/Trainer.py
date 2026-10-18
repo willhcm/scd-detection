@@ -251,43 +251,27 @@ class Trainer():
         stage_end = {1: 20, 2: 40, 3: 60, 4: epochs}
 
         bad_epochs = 0
-        optimizer = build_staged_optimizer(model, weight_decay=1e-4)
-
-        apply_training_stage(model, optimizer, current_stage)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
 
         for epoch in range(epochs):
-                
-            if epoch == 20:
-                current_stage = 2
-                apply_training_stage(model, optimizer, current_stage)
-
-            elif epoch == 40:
-                current_stage = 3
-                apply_training_stage(model, optimizer, current_stage)
-
-            elif epoch == 60:
-                current_stage = 4
-                apply_training_stage(model, optimizer, current_stage)
-
-
-            s, e = stage_start[current_stage], stage_end[current_stage]
 
             model.train()
             train_loss = 0.0
 
             pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}")
 
-            for i, (images, masks) in enumerate(pbar):
-                frac = (epoch - s + i / len(train_loader)) / (e - s)
-                set_stage_progress(optimizer, current_stage, frac)
-                images = [img.to(device) for img in images]
-                masks = [mask.to(device) for mask in masks]
+            for images, masks in pbar:
+                images = images.to(device)
+                masks = masks.to(device)
 
                 logits = model(images, masks)
                 loss = criterion(logits, masks)
         
                 optimizer.zero_grad()
+                loss.backward()
                 optimizer.step()
+
 
                 train_loss += loss.item()
 
@@ -305,7 +289,7 @@ class Trainer():
                 image = image.to(device)
                 mask = mask.to(device)
 
-                logits = model(image, mask)
+                logits = model(images)
                 val_loss =+ criterion(logits, mask)
 
                 preds = torch.sigmoid(logits) > 0.5
@@ -358,6 +342,8 @@ class Trainer():
                         otp += 1
                     else:
                         ofp += 1
+
+            scheduler.step(loss)
                 
 
             p_precision = tp / (tp + fp + 1e-8)
@@ -368,6 +354,7 @@ class Trainer():
             object_precision = otp / (otp + ofp + 1e-8)
             object_recall = otp / (otp + ofn + 1e-8)
             object_f1 = 2 * object_precision * object_recall / (object_precision + object_recall + 1e-8)
+
 
                     
 
