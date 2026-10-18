@@ -306,7 +306,7 @@ class Trainer():
                 pred_boxes = []
                 for i in range(1, num_preds + 1):
                     pred_mask = (instances == i)
-                    y, x = np.where(pred_mask)
+                    (y, x) = np.where(pred_mask)
                     if len(y) == 0 or len(x) == 0:
                         continue
                     pred_boxes.append([x.min(), y.min(), x.max(), y.max()])
