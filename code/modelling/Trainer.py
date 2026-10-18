@@ -241,14 +241,7 @@ class Trainer():
 
         train_losses = []
         val_losses = []
-        val_precisions = []
-        val_recalls = []
-        val_f1s = []
         val_ious = []
-        bbox_ious = []
-        current_stage = 1
-        stage_start = {1: 0, 2: 20, 3: 40, 4: 60}
-        stage_end = {1: 20, 2: 40, 3: 60, 4: epochs}
 
         bad_epochs = 0
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
@@ -299,68 +292,13 @@ class Trainer():
                 fp = np.sum((preds == 1) & (masks == 0))
                 fn = np.sum((preds == 0) & (masks == 1))
 
-
-                # object f1
-                instances, num_preds = label(preds.astype(np.uint8))
-                true_instances, n_gt = label(masks.astype(np.uint8))
-                pred_boxes = []
-                for i in range(1, num_preds + 1):
-                    pred_mask = (instances == i)
-                    (y, x) = np.where(pred_mask)
-                    if len(y) == 0 or len(x) == 0:
-                        continue
-                    pred_boxes.append([x.min(), y.min(), x.max(), y.max()])
-                gt_boxes = []
-                for i in range(1, n_gt + 1):
-                    gt_mask = (true_instances == i)
-                    y, x = np.where(gt_mask)
-                    if len(y) == 0 or len(x) == 0:
-                        continue
-                    gt_boxes.append([x.min(), y.min(), x.max(), y.max()])
-
-                pred_boxes = np.array(pred_boxes)
-                gt_boxes = np.array(gt_boxes)
-
-                # compute object-level precision, recall, f1
-                otp, ofp, ofn = 0, 0, 0
-                for pred_box in pred_boxes:
-                    ious = []
-                    for gt_box in gt_boxes:
-                        xA = max(pred_box[0], gt_box[0])
-                        yA = max(pred_box[1], gt_box[1])
-                        xB = min(pred_box[2], gt_box[2])
-                        yB = min(pred_box[3], gt_box[3])
-                        interArea = max(0, xB - xA + 1) * max(0, yB - yA + 1)
-                        boxAArea = (pred_box[2] - pred_box[0] + 1) * (pred_box[3] - pred_box[1] + 1)
-                        boxBArea = (gt_box[2] - gt_box[0] + 1) * (gt_box[3] - gt_box[1] + 1)
-                        iou = interArea / float(boxAArea + boxBArea - interArea)
-                        ious.append(iou)
-                        centre_of_mass = lambda box: ((box[1] + box[3]) / 2, (box[0] + box[2]) / 2) if box is not None else None
-                    if len(ious) > 0 and max(ious) >= 0.5:
-                        otp += 1
-                    elif centre_of_mass(pred_box) is not None and any(centre_of_mass(pred_box) == centre_of_mass(gt_box) for gt_box in gt_boxes):
-                        otp += 1
-                    else:
-                        ofp += 1
-
             scheduler.step(loss)
                 
-
             p_precision = tp / (tp + fp + 1e-8)
             p_recall = tp / (tp + fn + 1e-8)
             p_f1 = 2 * p_precision * p_recall / (p_precision + p_recall + 1e-8)
             val_iou = tp / (tp + fp + fn + 1e-8)
-
-            object_precision = otp / (otp + ofp + 1e-8)
-            object_recall = otp / (otp + ofn + 1e-8)
-            object_f1 = 2 * object_precision * object_recall / (object_precision + object_recall + 1e-8)
-
-
                     
-
-            val_precisions.append(object_precision)
-            val_recalls.append(object_recall)
-            val_f1s.append(object_f1)
             val_ious.append(val_iou)
 
             print(
@@ -368,30 +306,13 @@ class Trainer():
                 f"Train Loss: {train_loss:.4f} | "
                 f"Val Loss: {val_loss:.4f} | "
                 f"IoU: {val_iou:.4f} | "
-                f"Val P: {object_precision:.4f} | "
-                f"Val R: {object_recall:.4f} | "
-                f"Val F1: {object_f1:.4f} | "
                 f"Pixel P: {p_precision:.4f} | "
                 f"Pixel R: {p_recall:.4f} | "
                 f"Pixel F1: {p_f1:.4f} | ")
 
-            if object_f1 > best_f1:
-                best_f1 = object_f1
-                best_epoch = epoch + 1
-                best_state = copy.deepcopy(model.state_dict())
-
-                print(f"Saved new best model at epoch {best_epoch} with F1={best_f1:.4f}")
-                bad_epochs = 0
-            else:
-                bad_epochs += 1
-
         results = {'train_losses': train_losses,
                 'val_losses': val_losses,
-                'val_recalls': val_recalls,
-                'val_precisions': val_precisions,
-                'val_ious': val_ious,
-                'val_f1s': val_f1s,
-                'bbox_ious': bbox_ious}
+                'val_ious': val_ious}
 
         torch.save(best_state, out_path / f"best_UNET_model_fold_{folded_out_region}.pt")
         print(f"Best model saved at epoch {best_epoch} with F1={best_f1:.4f}")
