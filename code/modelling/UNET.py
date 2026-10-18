@@ -187,5 +187,6 @@ class UNetNDataset(Dataset):
         pad = (0, 512 - w, 0, 512 - h)
         image = F.pad(image, pad)
         mask = F.pad(mask, pad).unsqueeze(0)
+        print(f"Image shape: {image.shape}, Mask shape: {mask.shape}")
 
         return image, mask
