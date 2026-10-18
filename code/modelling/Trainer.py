@@ -283,7 +283,7 @@ class Trainer():
                 mask = mask.to(device)
 
                 logits = model(images)
-                val_loss =+ criterion(logits, mask)
+                val_loss += criterion(logits, mask)
 
                 preds = torch.sigmoid(logits) > 0.5
                 preds = preds.cpu().numpy()

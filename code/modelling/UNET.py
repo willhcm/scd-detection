@@ -181,11 +181,9 @@ class UNetNDataset(Dataset):
         image = self._normalise(image, li, band_indices)
 
         image = torch.from_numpy(image)
-        mask = torch.from_numpy(mask).unsqueeze(0) 
+        mask = torch.from_numpy(mask).unsqueeze(1) 
 
         image = self.pad_to(image, size=512)
         mask = self.pad_to(mask, size=512)
-
-
 
         return image, mask
