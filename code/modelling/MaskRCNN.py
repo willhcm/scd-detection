@@ -370,7 +370,7 @@ class MaskRCNNDataset(Dataset):
 
         slope = np.power(slope, 0.25)
         hills = np.cos(np.radians(45)) - image[-1]
-        hills = np.power(hills, 0.25)
+        hills = np.power(hills, 0.5)
 
         # Robust scaling all (more efficient):
         for band in ['DEM', 'SLOPE', 'RR', 'LAPLACE']:

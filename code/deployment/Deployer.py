@@ -9,6 +9,7 @@ from pathlib import Path
 import sys
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
+import numpy as np
 
 from rasterio.warp import reproject
 import os
@@ -107,6 +108,7 @@ class Deployer:
         self.NODATA = NODATA
         self.mask_threshold = mask_threshold
         self.score_threshold = score_threshold
+        self.norm_stats = {}
 
         self.model_dict = model_state_dict
         self.model = self.build_wrapper()
@@ -173,7 +175,8 @@ class Deployer:
                 self.device,
                 self.tile_size,
                 stride_frac=self.stride_frac,
-                NODATA=self.NODATA)
+                NODATA=self.NODATA,
+                norm_stats=self.norm_stats)
 
             prob_map, transform, crs = predictor.predict()
 
@@ -429,7 +432,7 @@ class Deployer:
 # self contained res predictor to decrease amount of calculations needed to be made repetitively!
 class ResPredictor():
 
-    def __init__(self, res, dem_path, model, device, tile_size=512, stride_frac = 0.75, batch_size=16, NODATA=-3.4028234663852886e38):
+    def __init__(self, res, dem_path, model, device, tile_size=512, stride_frac = 0.75, batch_size=16, NODATA=-3.4028234663852886e38, norm_stats=None):
         
         self.device = device
         self.dem_path = dem_path
@@ -439,6 +442,7 @@ class ResPredictor():
         self.stride_frac = stride_frac
         self.batch_size = batch_size
         self.NODATA = NODATA
+        self.norm_stats = norm_stats
 
         self.sigma_px = 12
 
@@ -676,13 +680,23 @@ class ResPredictor():
         print(f"Completed {resolution:g} m inference: {predicted_tiles}/{total_tiles} tiles predicted, {skipped_tiles} skipped.")
 
         return prob_map, transform, dem_source.crs
-    
+
+    @staticmethod
+    def handle_outliers(band):
+        p995 = np.nanpercentile(band, 99.5)
+        p005 = np.nanpercentile(band, 0.5)
+        band = np.clip(band, p005, p995) 
+
+        return band
         
     def _normalise_band(self, band, name):
         band = band.astype(np.float32)
 
+        def scale(x):
+            return (x - self.norm_stats[name]['median']) / self.norm_stats[name]['iqr']
+
         if name == "HILLSHADE":
-            return (band - band.mean()) / (band.std() + 1e-6)
+            band = np.power(band, 0.25)
 
         if name in {"DEM_SLOPE",  "DEM"}:
             transformed = band

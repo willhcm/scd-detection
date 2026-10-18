@@ -43,7 +43,7 @@ class DatasetWrapper():
 
     def generate_unet_dataset(self):
         paths = list(self.root_dir.glob("*.npz"))
-        
+
         self.train_paths, self.val_paths = train_test_split(
             paths,
             test_size=0.2,
@@ -257,7 +257,7 @@ class DatasetWrapper():
                         flat = np.cos(np.radians(45))
                         vals = flat - vals
                         vals = np.clip(vals, 0, None)
-                        vals = np.power(vals, 0.3)  # log transform to reduce skewness
+                        vals = np.power(vals, 0.5)  # log transform to reduce skewness
 
                     samples[channel].append(vals)
 
