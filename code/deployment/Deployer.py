@@ -590,10 +590,12 @@ class ResPredictor():
 
         # moving valid checks from make_tile to save compute on skips.
 
+        print(f"Predicting at {resolution:g} m: {len(x_positions)} x {len(y_positions)} tiles ({len(x_positions) * len(y_positions)} total)")
         valid_x = (x_positions - self.overlap_m >= minx) & (x_positions + tile_w_m + self.overlap_m <= maxx)
         valid_y = (y_positions - self.overlap_m >= miny) & (y_positions + tile_w_m + self.overlap_m <= maxy)
         x_positions = x_positions[valid_x]
         y_positions = y_positions[valid_y]
+        print(f"Valid tiles: {len(x_positions)} x {len(y_positions)} ({len(x_positions) * len(y_positions)} total)")
 
         # progress bar
         total_tiles = len(x_positions) * len(y_positions)
