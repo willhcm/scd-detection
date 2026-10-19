@@ -692,27 +692,30 @@ class ResPredictor():
     def _normalise_band(self, band, name):
         band = band.astype(np.float32)
 
-        def scale(x):
-            return (x - self.norm_stats[name]['median']) / self.norm_stats[name]['iqr']
+        if name == ['DEM_SLOPE']:
+            name = 'SLOPE'
+
+        band = self.handle_outliers(band)
 
         if name == "HILLSHADE":
+            flat = np.cos(np.radians(45))
+            band = flat - band
+            band = np.power(band, 0.5)
+
+        if name == 'SLOPE':
             band = np.power(band, 0.25)
 
-        if name in {"DEM_SLOPE",  "DEM"}:
-            transformed = band
-        else:
-            transformed = np.sign(band) * np.log1p(np.abs(band))
+        if name == 'DEM':
+            band = band - np.median(band)
 
-        median = np.median(transformed)
-        q75, q25 = np.percentile(transformed, [75, 25])
-        iqr = q75 - q25
-        scaled = (transformed - median) / (iqr + 1e-6)
+        band = band - self.norm_stats[name]['median']
+        band = band / self.norm_stats[name]['iqr']
 
-        return scaled
+        return band
     
     def _prepare_tile(self, tile):
 
-        for i, name in enumerate(TILE_ORDER):
+        for i, name in enumerate(TILE_ORDER):   
             tile[i] = self._normalise_band(tile[i], name)
 
         return tile
