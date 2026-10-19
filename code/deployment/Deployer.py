@@ -502,11 +502,13 @@ class ResPredictor():
         ).astype(np.float32)
 
         invalid = np.isclose(dem_padded, self.NODATA) | ~np.isfinite(dem_padded)
+        print(f"Invalid pixels in strip: {invalid.sum()} / {invalid.size} ({100 * invalid.sum() / invalid.size:.2f}%)")
 
         invalid = binary_dilation(
             invalid,
             iterations=int(np.ceil(3 * self.sigma_px))
         )
+        print(f"Invalid pixels after dilation: {invalid.sum()} / {invalid.size} ({100 * invalid.sum() / invalid.size:.2f}%)")
 
         sx = sobel(dem_padded, axis=0)
         sy = sobel(dem_padded, axis=1)
@@ -541,6 +543,7 @@ class ResPredictor():
         if invalid_tile.any():
             return None
 
+        print('this tile is valid')
         return np.stack(
             [strip[name][:, col0:col1] for name in TILE_ORDER],
             axis=0)
@@ -570,6 +573,8 @@ class ResPredictor():
 
         # calculate tile positions (using stride and res)
         minx, miny, maxx, maxy = dem_source.bounds
+
+        print(f"bounds: {minx:g}, {miny:g}, {maxx:g}, {maxy:g}, tile size: {tile_w_m:g} m, stride: {stride_m:g} m, overlap: {self.overlap_m:g} m")
         x_positions = self._axis_positions(
                         minx,
                         maxx,
@@ -590,12 +595,10 @@ class ResPredictor():
 
         # moving valid checks from make_tile to save compute on skips.
 
-        print(f"Predicting at {resolution:g} m: {len(x_positions)} x {len(y_positions)} tiles ({len(x_positions) * len(y_positions)} total)")
         valid_x = (x_positions - self.overlap_m >= minx) & (x_positions + tile_w_m + self.overlap_m <= maxx)
         valid_y = (y_positions - self.overlap_m >= miny) & (y_positions + tile_w_m + self.overlap_m <= maxy)
         x_positions = x_positions[valid_x]
         y_positions = y_positions[valid_y]
-        print(f"Valid tiles: {len(x_positions)} x {len(y_positions)} ({len(x_positions) * len(y_positions)} total)")
 
         # progress bar
         total_tiles = len(x_positions) * len(y_positions)
