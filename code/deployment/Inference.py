@@ -83,6 +83,7 @@ class SCDModel():
             "support": return_support}
 
         self.deployer.merge_predictions(results['predictions'], results['transform'], results['crs'], out_path)
+        np.save(self.out_path / "predictions.npy", results['raw'])
 
         # write bounds of DEM to a text file for reference
         with open(self.out_path / "covered_bounds.txt", "a") as f:

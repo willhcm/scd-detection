@@ -546,13 +546,12 @@ class ResPredictor():
     # changed for batching approach for optimisation - takes long time to predict 1000kms^2
     def predict(self):
 
+        resolution = self.res
+        res_value = np.log(resolution) / np.log(15.0)
+        dem_source = WindowedDataSource.from_tiff_utm(self.dem_path, resolution=resolution)
+        
         try:
 
-            resolution = self.res
-            res_value = np.log(resolution) / np.log(15.0)
-
-            # same logic as before
-            dem_source = WindowedDataSource.from_tiff_utm(self.dem_path, resolution=resolution)
             h, w = dem_source.height, dem_source.width
             transform = dem_source.transform
 
