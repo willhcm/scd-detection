@@ -1,3 +1,5 @@
+from turtle import fd
+
 from tqdm.auto import tqdm
 from scipy.ndimage import label as ndi_label
 from skimage.measure import regionprops
@@ -6,8 +8,16 @@ import torch
 from rasterio.enums import Resampling
 from rasterio.transform import from_bounds
 from helpers.VetoHelpers import build_dem_context, normalise_dem_context
+from loaders.Tiler import _utm_epsg
 import rasterio as rio
-from rasterio.warp import reproject
+import os
+import tempfile
+
+
+from rasterio.crs import CRS
+from rasterio.warp import calculate_default_transform, reproject, Resampling
+
+
 
 # windowed data source to limit RAM usage during deployment with huge rasters
 class WindowedDataSource:
@@ -15,9 +25,13 @@ class WindowedDataSource:
     A class to handle windowed reading and reprojection of raster data from a file.
     """
 
-    def __init__(self, path, type="DEM", nominal_res=None):
+    def __init__(self, path, type="DEM", nominal_res=None, temp_path=None):
         self.path = path
         self.type = type
+
+        # seperate temp path for reprojected raster, to be deleted at the end of the run.
+        # will be the same as path when from_tiff class method is used, but saves deleting original raster if not.
+        self.temp_path = temp_path
 
         # only read metadata here
         with rio.open(path) as src:
@@ -40,9 +54,61 @@ class WindowedDataSource:
 
     @classmethod
     def from_tiff_utm(cls, path, native_res, type="DEM"):
-        # no longer reproject whole raster in init
-        # native_res is retained as the nominal pixel resolution.
-        return cls(path=path, type=type, nominal_res=native_res)
+
+        with rio.open(path) as src:
+            target_crs = CRS.from_epsg(_utm_epsg(src.crs, src.bounds))
+
+        temp_path = cls.reproject_raster(src_path=path, dst_crs=target_crs)
+        
+        return cls(path=temp_path, type=type, nominal_res=native_res, temp_path=temp_path)
+
+    def reproject_raster(self, src_path,dst_crs):
+        """
+        Reproject a raster file to a new coordinate reference system (CRS).
+
+        Parameters:
+        - src_path: Path to the source raster file.
+        - dst_crs: Target CRS in the format "EPSG:XXXX".
+
+        Returns:
+        - None
+        """
+
+        fd, dst_path = tempfile.mkstemp(suffix=".tif")
+        os.close(fd)
+
+        with rio.open(src_path) as src:
+            transform, width, height = calculate_default_transform(
+                src.crs, dst_crs, src.width, src.height, *src.bounds
+            )
+
+            profile = src.profile.copy()
+            profile.update(
+                crs=dst_crs,
+                transform=transform,
+                width=width,
+                height=height,
+                tiled=True,
+                blockxsize=512,
+                blockysize=512,
+                compress="deflate",
+                BIGTIFF="IF_SAFER",
+            )
+
+            with rio.open(dst_path, "w", **profile) as dst:
+                for i in range(1, src.count + 1):
+                    reproject(
+                        source=rio.band(src, i),
+                        destination=rio.band(dst, i),
+                        src_transform=src.transform,
+                        src_crs=src.crs,
+                        dst_transform=transform,
+                        dst_crs=dst_crs,
+                        resampling=Resampling.bilinear,
+                        num_threads=4,
+                    )
+
+            return dst_path
 
     def reproject_to_shape(
         self,
@@ -71,7 +137,7 @@ class WindowedDataSource:
                         dst_crs=target_crs,
                         resampling=resampling,
                         dst_nodata=np.nan)
-                    
+            
             else:
                 out = np.full((out_height, out_width), np.nan, dtype=np.float32)
 
@@ -503,6 +569,9 @@ class PostProcessor:
 
         # Process the final partial batch.
         flush_batch()
+
+        if self.dem_source.temp_path is not None and os.path.exists(self.dem_source.temp_path):
+            os.remove(self.dem_source.temp_path)
 
         progress.set_postfix(
             predicted=predicted,

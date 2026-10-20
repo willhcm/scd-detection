@@ -497,18 +497,17 @@ class ResPredictor():
 
         strip_width_px = int(round((maxx - minx) / resolution))
 
+        # target crs is source crs in this case! possibly redundant parameter, as source is reprojected within WindowedDataSource class.
         dem_padded = dem_source.reproject_to_shape(
             dem_source.crs, strip_bounds, strip_width_px, self.padded_size, resampling=Resampling.cubic
         ).astype(np.float32)
 
         invalid = np.isclose(dem_padded, self.NODATA) | ~np.isfinite(dem_padded)
-        print(f"Invalid pixels in strip: {invalid.sum()} / {invalid.size} ({100 * invalid.sum() / invalid.size:.2f}%)")
 
         invalid = binary_dilation(
             invalid,
             iterations=int(np.ceil(3 * self.sigma_px))
         )
-        print(f"Invalid pixels after dilation: {invalid.sum()} / {invalid.size} ({100 * invalid.sum() / invalid.size:.2f}%)")
 
         sx = sobel(dem_padded, axis=0)
         sy = sobel(dem_padded, axis=1)
