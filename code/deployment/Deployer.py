@@ -90,7 +90,7 @@ class Deployer:
         rgb_path=None,
         tile_size=512,
         rgb_veto=False,
-        NODATA=0,
+        NODATA=-9999,
         veto_tile_size=96, 
         veto_context_tile_size=224,
         veto_batch_size=16,
@@ -120,6 +120,7 @@ class Deployer:
         self.resolutions = resolutions
         self.native_res = native_res
         self.stride_frac = stride_frac
+        
         # Mask R-CNN deployment tile size.
         self.tile_size = tile_size
         self.rgb_veto = rgb_veto

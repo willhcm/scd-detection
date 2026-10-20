@@ -62,6 +62,7 @@ class WindowedDataSource:
         
         return cls(path=temp_path, type=type, nominal_res=native_res, temp_path=temp_path)
 
+    # add to a helper .py later
     @staticmethod
     def reproject_raster(src_path, dst_crs):
         """

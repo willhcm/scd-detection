@@ -102,7 +102,7 @@ class SCDModel():
             "rgb_path": self.rgb_path,
             "rgb_veto": self.rgb_veto,
             "to_veto": self.to_veto,
-            "NODATA": self.NODATA,
+            "NODATA": self.NODATA if self.NODATA is not None else -9999,
             **hyperparams
         }
         
