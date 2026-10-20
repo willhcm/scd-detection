@@ -35,6 +35,7 @@ from affine import Affine
 # dont need to export tiles as they will only be used once at inference
 # unlike in training, where several epochs are run
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
 TILE_ORDER = ['DEM',  'DEM_SLOPE', 'RR','LAPLACE', 'HILLSHADE']
 
 class Deployer:
@@ -204,7 +205,7 @@ class Deployer:
         transform, crs = base["transform"], base["crs"]
         h, w = base["prob"].shape
 
-        scratch_dir = Path("/scratch_root/wm722/scd-detection/") / 'merge' 
+        scratch_dir = REPO_ROOT / 'scratch' / 'merge' 
         scratch_dir.mkdir(parents=True, exist_ok=True)
         merged = np.lib.format.open_memmap(
             scratch_dir / "merged.npy", mode="w+", dtype=np.float32, shape=(h, w))
@@ -561,7 +562,7 @@ class ResPredictor():
         transform = dem_source.transform
 
         # saved on file to reduce memory failure
-        scratch = Path("/scratch_root/wm722/scd-detection/work") / 'predict' / f"{resolution:g}m"
+        scratch = REPO_ROOT / 'scratch' / 'predict' / f"{resolution:g}m"
         scratch.mkdir(parents=True, exist_ok=True)
         tag = f"{resolution:g}m"
         prob_map = np.lib.format.open_memmap(scratch / f"prob_{tag}.npy", mode="w+", dtype=np.float32, shape=(h, w))
