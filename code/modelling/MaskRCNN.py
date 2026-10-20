@@ -104,7 +104,7 @@ class MaskRCNN(nn.Module):
             weights_backbone="DEFAULT" if pretrained else None,
             trainable_backbone_layers=3)
 
-        in_channels = 4
+        in_channels = 5
 
         self.pretrained = pretrained
  
@@ -369,11 +369,11 @@ class MaskRCNNDataset(Dataset):
         laplace = image[band_indices.index(li["LAPLACE"])]
 
         slope = np.power(slope, 0.25)
-        #hills = np.cos(np.radians(45)) - image[-1]
-        #hills = np.power(hills, 0.5)
+        hills = np.cos(np.radians(45)) - image[-1]
+        hills = np.power(hills, 0.5)
 
         # Robust scaling all (more efficient):
-        for band in ['DEM', 'SLOPE', 'RR', 'LAPLACE']:
+        for band in ['DEM', 'SLOPE', 'RR', 'LAPLACE', 'HILLSHADE']:
             median = self.norm_stats[band]['median']
             iqr = self.norm_stats[band]['iqr']
 
@@ -385,10 +385,10 @@ class MaskRCNNDataset(Dataset):
                 rr = (rr - median) / iqr
             elif band == 'LAPLACE':
                 laplace = (laplace - median) / iqr
-            #elif band == 'HILLSHADE':
-            #    hills = (hills - median) / iqr
+            elif band == 'HILLSHADE':
+                hills = (hills - median) / iqr
 
-        return np.stack([dem_rel, slope, rr, laplace], axis=0).astype(np.float32)
+        return np.stack([dem_rel, slope, rr, laplace, hills], axis=0).astype(np.float32)
 
     def __getitem__(self, idx):
         path = self.paths[idx]
