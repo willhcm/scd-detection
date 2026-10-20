@@ -62,7 +62,8 @@ class WindowedDataSource:
         
         return cls(path=temp_path, type=type, nominal_res=native_res, temp_path=temp_path)
 
-    def reproject_raster(self, src_path,dst_crs):
+    @staticmethod
+    def reproject_raster(src_path, dst_crs):
         """
         Reproject a raster file to a new coordinate reference system (CRS).
 
