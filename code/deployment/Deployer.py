@@ -449,14 +449,13 @@ class ResPredictor():
             int(round(
                 OVERLAP_SIGMA_MULTIPLIER
                 * self.sigma_px
-            )),
-        )
+            )))
 
         self.overlap_m = self.overlap_px * res
         self.padded_size = (
             self.tile_size
-            + 2 * self.overlap_px
-        )
+            + 2 * self.overlap_px)
+
     # handles edges better than previous x and y position calculations. forces a tile at the edges.
     @staticmethod
     def _axis_positions(axis_min, axis_max, tile_width_m, stride_m, overlap_m, resolution):
@@ -549,8 +548,8 @@ class ResPredictor():
         resolution = self.res
         res_value = np.log(resolution) / np.log(15.0)
 
-        # msame logic as before
-        dem_source = WindowedDataSource.from_tiff_utm(self.dem_path, native_res=resolution)
+        # same logic as before
+        dem_source = WindowedDataSource.from_tiff_utm(self.dem_path, resolution=resolution)
         h, w = dem_source.height, dem_source.width
         transform = dem_source.transform
 
@@ -574,8 +573,7 @@ class ResPredictor():
                         tile_w_m,
                         stride_m,
                         self.overlap_m,
-                        resolution,
-                    )
+                        resolution)
 
         y_positions = self._axis_positions(
             miny,
@@ -583,11 +581,9 @@ class ResPredictor():
             tile_w_m,
             stride_m,
             self.overlap_m,
-            resolution,
-        )
+            resolution)
 
         # moving valid checks from make_tile to save compute on skips.
-
         valid_x = (x_positions - self.overlap_m >= minx) & (x_positions + tile_w_m + self.overlap_m <= maxx)
         valid_y = (y_positions - self.overlap_m >= miny) & (y_positions + tile_w_m + self.overlap_m <= maxy)
         x_positions = x_positions[valid_x]
@@ -667,7 +663,7 @@ class ResPredictor():
         progress.close()
 
         # h is DEM height, r is rows, step is number of rows to split it up into.
-        for r in range(0, h, 256):
+        for r in range(0, h, 1024):
             p, wt = prob_map[r:r + 1024], weight_map[r:r + 1024]
             ok = wt > 0
             p[ok] /= wt[ok]

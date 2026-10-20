@@ -18,7 +18,7 @@ import tempfile
 from rasterio.crs import CRS
 from rasterio.warp import calculate_default_transform, reproject, Resampling
 
-
+REPO_ROOT = 
 
 # windowed data source to limit RAM usage during deployment with huge rasters
 class WindowedDataSource:
@@ -54,18 +54,18 @@ class WindowedDataSource:
         return cls(path=path, type=type)
 
     @classmethod
-    def from_tiff_utm(cls, path, native_res, type="DEM"):
+    def from_tiff_utm(cls, path, resolution, type="DEM"):
 
         with rio.open(path) as src:
             target_crs = CRS.from_epsg(_utm_epsg(src.crs, src.bounds))
 
-        temp_path = cls.reproject_raster(src_path=path, dst_crs=target_crs)
+        temp_path = cls.reproject_raster(src_path=path, dst_crs=target_crs, resolution=resolution)
         
-        return cls(path=temp_path, type=type, nominal_res=native_res, temp_path=temp_path)
+        return cls(path=temp_path, type=type, nominal_res=resolution, temp_path=temp_path)
 
     # add to a helper .py later
     @staticmethod
-    def reproject_raster(src_path, dst_crs):
+    def reproject_raster(src_path, dst_crs, resolution=None):
         """
         Reproject a raster file to a new coordinate reference system (CRS).
 
@@ -82,8 +82,8 @@ class WindowedDataSource:
 
         with rio.open(src_path) as src:
             transform, width, height = calculate_default_transform(
-                src.crs, dst_crs, src.width, src.height, *src.bounds
-            )
+            src.crs, dst_crs, src.width, src.height, *src.bounds,
+            resolution=resolution,)
 
             profile = src.profile.copy()
             profile.update(
