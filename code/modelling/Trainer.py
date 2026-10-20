@@ -190,7 +190,7 @@ class Trainer():
         # save dict of results to npz file
         np.savez_compressed(out_path / f"training_metrics_fold_{folded_out_region}.npz", **results)
 
-        return results
+        return results, best_state 
 
     def LORO_CV(self, regions, out_path, epochs=50, batch_size=8):
         results = {}
@@ -206,8 +206,9 @@ class Trainer():
         fold_out_path = out_path / "random_split"
         fold_out_path.mkdir(parents=True, exist_ok=True)
 
-        results = self.train_fold(folded_out_region=exclude_region, epochs=epochs, batch_size=batch_size, out_path=fold_out_path, random_train=True)
-        np.savez_compressed(out_path / "random_split_results.npz", **results)
+        results, state = self.train_fold(folded_out_region=exclude_region, epochs=epochs, batch_size=batch_size, out_path=fold_out_path, random_train=True)
+        self.save_model(state, fold_out_path, exclude_region)
+        np.savez_compressed(fold_out_path / "random_split_results.npz", **results)
 
     def parameter_sweep(self):
         params = {'score_thresh': [0.5, 0.6, 0.7, 0.8],
