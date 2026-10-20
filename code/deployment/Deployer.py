@@ -106,7 +106,7 @@ class Deployer:
         to_veto=True,):
 
         self.base_res = None
-        self.NODATA = NODATA
+        self.NODATA = NODATA if NODATA is not None else -9999
         self.mask_threshold = mask_threshold
         self.score_threshold = score_threshold
         self.norm_stats = {}
@@ -555,137 +555,141 @@ class ResPredictor():
 
         resolution = self.res
         res_value = np.log(resolution) / np.log(15.0)
+        dem_source = WindowedDataSource.from_tiff_utm(self.dem_path, resolution=resolution)
 
-        # msame logic as before
-        dem_source = WindowedDataSource.from_tiff_utm(self.dem_path, native_res=resolution)
-        h, w = dem_source.height, dem_source.width
-        transform = dem_source.transform
+        try:
 
-        # saved on file to reduce memory failure
-        scratch = REPO_ROOT / 'scratch' / 'predict' / f"{resolution:g}m"
-        scratch.mkdir(parents=True, exist_ok=True)
-        tag = f"{resolution:g}m"
-        prob_map = np.lib.format.open_memmap(scratch / f"prob_{tag}.npy", mode="w+", dtype=np.float32, shape=(h, w))
-        weight_map = np.lib.format.open_memmap(scratch / f"weight_{tag}.npy", mode="w+", dtype=np.float32, shape=(h, w))
+            h, w = dem_source.height, dem_source.width
+            transform = dem_source.transform
 
-        # calculate streides and tile size in meetres
-        stride_px = max(1, int(round(self.tile_size * self.stride_frac)))
-        stride_m = stride_px * resolution
-        tile_w_m = self.tile_size * resolution
+            # saved on file to reduce memory failure
+            scratch = REPO_ROOT / 'scratch' / 'predict' / f"{resolution:g}m"
+            scratch.mkdir(parents=True, exist_ok=True)
+            tag = f"{resolution:g}m"
+            prob_map = np.lib.format.open_memmap(scratch / f"prob_{tag}.npy", mode="w+", dtype=np.float32, shape=(h, w))
+            weight_map = np.lib.format.open_memmap(scratch / f"weight_{tag}.npy", mode="w+", dtype=np.float32, shape=(h, w))
 
-        # calculate tile positions (using stride and res)
-        minx, miny, maxx, maxy = dem_source.bounds
+            # calculate streides and tile size in meetres
+            stride_px = max(1, int(round(self.tile_size * self.stride_frac)))
+            stride_m = stride_px * resolution
+            tile_w_m = self.tile_size * resolution
 
-        print(f"bounds: {minx:g}, {miny:g}, {maxx:g}, {maxy:g}, tile size: {tile_w_m:g} m, stride: {stride_m:g} m, overlap: {self.overlap_m:g} m")
-        x_positions = self._axis_positions(
-                        minx,
-                        maxx,
-                        tile_w_m,
-                        stride_m,
-                        self.overlap_m,
-                        resolution,
-                    )
+            # calculate tile positions (using stride and res)
+            minx, miny, maxx, maxy = dem_source.bounds
 
-        y_positions = self._axis_positions(
-            miny,
-            maxy,
-            tile_w_m,
-            stride_m,
-            self.overlap_m,
-            resolution,
-        )
+            print(f"bounds: {minx:g}, {miny:g}, {maxx:g}, {maxy:g}, tile size: {tile_w_m:g} m, stride: {stride_m:g} m, overlap: {self.overlap_m:g} m")
+            x_positions = self._axis_positions(
+                            minx,
+                            maxx,
+                            tile_w_m,
+                            stride_m,
+                            self.overlap_m,
+                            resolution,
+                        )
 
-        # moving valid checks from make_tile to save compute on skips.
+            y_positions = self._axis_positions(
+                miny,
+                maxy,
+                tile_w_m,
+                stride_m,
+                self.overlap_m,
+                resolution,
+            )
 
-        valid_x = (x_positions - self.overlap_m >= minx) & (x_positions + tile_w_m + self.overlap_m <= maxx)
-        valid_y = (y_positions - self.overlap_m >= miny) & (y_positions + tile_w_m + self.overlap_m <= maxy)
-        x_positions = x_positions[valid_x]
-        y_positions = y_positions[valid_y]
+            # moving valid checks from make_tile to save compute on skips.
 
-        # progress bar
-        total_tiles = len(x_positions) * len(y_positions)
-        skipped_tiles = 0
-        predicted_tiles = 0
+            valid_x = (x_positions - self.overlap_m >= minx) & (x_positions + tile_w_m + self.overlap_m <= maxx)
+            valid_y = (y_positions - self.overlap_m >= miny) & (y_positions + tile_w_m + self.overlap_m <= maxy)
+            x_positions = x_positions[valid_x]
+            y_positions = y_positions[valid_y]
 
-        progress = tqdm(total=total_tiles, desc=f"Inference at {resolution:g} m", unit="tile", dynamic_ncols=True)
-        weight_kernel = self._tile_weight_kernel()
+            # progress bar
+            total_tiles = len(x_positions) * len(y_positions)
+            skipped_tiles = 0
+            predicted_tiles = 0
 
-        # temporary lists to hold input tiles before they are put onto device for prediction
-        batch_tiles = []
-        
-        # corresponding list which stores the pixel-based locations for each tile.
-        batch_locs = [] 
+            progress = tqdm(total=total_tiles, desc=f"Inference at {resolution:g} m", unit="tile", dynamic_ncols=True)
+            weight_kernel = self._tile_weight_kernel()
 
-        # Claude assistance with this function. optimising and batching by-hand was something i hadnt done before!
-        def flush_batch():
-            # variable declared in nested function (has access to all internal variables.)
-            nonlocal predicted_tiles
-            if not batch_tiles:
-                return
+            # temporary lists to hold input tiles before they are put onto device for prediction
+            batch_tiles = []
+            
+            # corresponding list which stores the pixel-based locations for each tile.
+            batch_locs = [] 
 
-            # create tensor from batch_tiles list.
-            stacked = np.stack(batch_tiles, axis=0)
-            x = torch.from_numpy(stacked).float()
-            resolutions = torch.full((len(batch_tiles), 1), res_value, dtype=torch.float32)
+            # Claude assistance with this function. optimising and batching by-hand was something i hadnt done before!
+            def flush_batch():
+                # variable declared in nested function (has access to all internal variables.)
+                nonlocal predicted_tiles
+                if not batch_tiles:
+                    return
 
-            # outputs (prob map)
-            masks = self.model.predict(x, resolutions, self.device) 
+                # create tensor from batch_tiles list.
+                stacked = np.stack(batch_tiles, axis=0)
+                x = torch.from_numpy(stacked).float()
+                resolutions = torch.full((len(batch_tiles), 1), res_value, dtype=torch.float32)
 
-            # saves to correct locations in global prob_map and weight_map
-            for mask, (row0, col0) in zip(masks, batch_locs):
-                pred = mask.numpy() if torch.is_tensor(mask) else np.asarray(mask)
-                row1, col1 = row0 + self.tile_size, col0 + self.tile_size
-                prob_map[row0:row1, col0:col1] += pred * weight_kernel
-                weight_map[row0:row1, col0:col1] += weight_kernel
-                predicted_tiles += 1
+                # outputs (prob map)
+                masks = self.model.predict(x, resolutions, self.device) 
 
-            # clears batch
-            batch_tiles.clear()
-            batch_locs.clear()
-
-        with torch.inference_mode():
-
-            for y0 in y_positions:
-                strip, strip_minx = self._make_row_strip(dem_source, y0, x_positions, tile_w_m, resolution)
-
-                for x0 in x_positions:
-
-                    tile = self._tile_from_strip(strip, strip_minx, x0, resolution)
-
-                    col0, row0 = ~transform * (x0, y0 + tile_w_m)
-                    col0, row0 = int(round(col0)), int(round(row0))
+                # saves to correct locations in global prob_map and weight_map
+                for mask, (row0, col0) in zip(masks, batch_locs):
+                    pred = mask.numpy() if torch.is_tensor(mask) else np.asarray(mask)
                     row1, col1 = row0 + self.tile_size, col0 + self.tile_size
+                    prob_map[row0:row1, col0:col1] += pred * weight_kernel
+                    weight_map[row0:row1, col0:col1] += weight_kernel
+                    predicted_tiles += 1
 
-                    in_bounds = row0 >= 0 and col0 >= 0 and row1 <= h and col1 <= w
+                # clears batch
+                batch_tiles.clear()
+                batch_locs.clear()
 
-                    if tile is None or not in_bounds:
-                        skipped_tiles += 1
-                    else:
-                        tile = self._prepare_tile(tile)
-                        batch_tiles.append(tile)
-                        batch_locs.append((row0, col0))
+            with torch.inference_mode():
 
-                        if len(batch_tiles) >= self.batch_size:
-                            flush_batch()
-                            progress.set_postfix(predicted=predicted_tiles, skipped=skipped_tiles)
+                for y0 in y_positions:
+                    strip, strip_minx = self._make_row_strip(dem_source, y0, x_positions, tile_w_m, resolution)
 
-                    progress.update(1)
+                    for x0 in x_positions:
 
-            flush_batch()
+                        tile = self._tile_from_strip(strip, strip_minx, x0, resolution)
 
-        progress.close()
+                        col0, row0 = ~transform * (x0, y0 + tile_w_m)
+                        col0, row0 = int(round(col0)), int(round(row0))
+                        row1, col1 = row0 + self.tile_size, col0 + self.tile_size
 
-        # h is DEM height, r is rows, step is number of rows to split it up into.
-        for r in range(0, h, 256):
-            p, wt = prob_map[r:r + 1024], weight_map[r:r + 1024]
-            ok = wt > 0
-            p[ok] /= wt[ok]
-            p[~ok] = np.nan
-        prob_map.flush()
-        del weight_map
+                        in_bounds = row0 >= 0 and col0 >= 0 and row1 <= h and col1 <= w
 
-        print(f"Completed {resolution:g} m inference: {predicted_tiles}/{total_tiles} tiles predicted, {skipped_tiles} skipped.")
+                        if tile is None or not in_bounds:
+                            skipped_tiles += 1
+                        else:
+                            tile = self._prepare_tile(tile)
+                            batch_tiles.append(tile)
+                            batch_locs.append((row0, col0))
 
+                            if len(batch_tiles) >= self.batch_size:
+                                flush_batch()
+                                progress.set_postfix(predicted=predicted_tiles, skipped=skipped_tiles)
+
+                        progress.update(1)
+
+                flush_batch()
+
+            
+            # h is DEM height, r is rows, step is number of rows to split it up into.
+            for r in range(0, h, 256):
+                p, wt = prob_map[r:r + 1024], weight_map[r:r + 1024]
+                ok = wt > 0
+                p[ok] /= wt[ok]
+                p[~ok] = np.nan
+            prob_map.flush()
+            del weight_map
+
+            print(f"Completed {resolution:g} m inference: {predicted_tiles}/{total_tiles} tiles predicted, {skipped_tiles} skipped.")
+
+        finally:
+            progress.close()
+            os.remove(dem_source.temp_path)
+            
         return prob_map, transform, dem_source.crs
 
     @staticmethod
