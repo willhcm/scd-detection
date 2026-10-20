@@ -89,7 +89,7 @@ class Deployer:
         rgb_path=None,
         tile_size=512,
         rgb_veto=False,
-        NODATA=0,
+        NODATA=-9999,
         veto_tile_size=96, 
         veto_context_tile_size=224,
         veto_batch_size=16,
@@ -104,7 +104,7 @@ class Deployer:
         to_veto=True,):
 
         self.base_res = None
-        self.NODATA = NODATA
+        self.NODATA = NODATA if NODATA is not None else -9999
         self.mask_threshold = mask_threshold
         self.score_threshold = score_threshold
         self.mask_threshold = mask_threshold
@@ -431,7 +431,7 @@ class Deployer:
 # self contained res predictor to decrease amount of calculations needed to be made repetitively!
 class ResPredictor():
 
-    def __init__(self, res, dem_path, model, device, tile_size=512, stride_frac = 0.75, batch_size=16, NODATA=-3.4028234663852886e38):
+    def __init__(self, res, dem_path, model, device, tile_size=512, stride_frac = 0.75, batch_size=16, NODATA=-9999):
         
         self.device = device
         self.dem_path = dem_path
