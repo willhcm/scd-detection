@@ -13,7 +13,9 @@ class ModelWrapper:
     def __init__(self, model_dict, score_threshold=0.75, mask_threshold=0.50):
 
         self.model = MaskRCNN()
-        self.model.load_state_dict(model_dict)
+        self.norm_stats = model_dict.get('norm_stats', None)
+        self.state_dict = model_dict.get('model_state_dict', None)
+        self.model.load_state_dict(self.state_dict)
         self.score_threshold = score_threshold
         self.mask_threshold = mask_threshold
 

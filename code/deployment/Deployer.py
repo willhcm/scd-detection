@@ -110,9 +110,9 @@ class Deployer:
         self.score_threshold = score_threshold
         self.norm_stats = {}
 
-        self.model_dict = model_state_dict
+        self.norm_stats = model_state_dict.get('norm_stats', None)
         self.model = self.build_wrapper()
-        del self.model_dict
+        del model_state_dict
 
         self.dem_path = dem_path
         self.rgb_path = rgb_path
@@ -275,7 +275,8 @@ class Deployer:
             context_scale=self.context_scale,
             min_context_width_m=self.min_context_width_m,
             max_context_width_m=self.max_context_width_m,
-            rgb=self.rgb_veto)
+            rgb=self.rgb_veto,
+            norm_stats=self.norm_stats,)
 
             
         (stitched, rejected, veto_probability_map, out_transform, out_crs) = postproc.predict(merged,
@@ -433,7 +434,7 @@ class Deployer:
 # self contained res predictor to decrease amount of calculations needed to be made repetitively!
 class ResPredictor():
 
-    def __init__(self, res, dem_path, model, device, tile_size=512, stride_frac = 0.75, batch_size=16, NODATA=-3.4028234663852886e38, norm_stats=None):
+    def __init__(self, res, dem_path, model, device, tile_size=512, stride_frac = 0.75, batch_size=16, NODATA=-9999, norm_stats=None):
         
         self.device = device
         self.dem_path = dem_path
