@@ -36,7 +36,7 @@ from affine import Affine
 # unlike in training, where several epochs are run
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-TILE_ORDER = ['DEM',  'DEM_SLOPE', 'RR','LAPLACE', 'HILLSHADE']
+TILE_ORDER = ['DEM',  'DEM_SLOPE', 'RR','LAPLACE']
 
 class Deployer:
 
@@ -525,16 +525,14 @@ class ResPredictor():
 
         # cut to size!
         s, e = self.overlap_px, self.overlap_px + self.tile_size
-        hillshade = calculate_hillshade(dem_padded)
 
         dem = dem_padded[s:e, :]
         rr = rr[s:e, :]
         slope = slope[s:e, :]
         lap = lap[s:e, :]
-        hillshade = hillshade[s:e, :]
         invalid = invalid[s:e, :]
 
-        strip = {'DEM': dem, 'RR': rr, 'DEM_SLOPE': slope, 'LAPLACE': lap, 'HILLSHADE': hillshade, 'RES': res_value, 'INVALID': invalid}
+        strip = {'DEM': dem, 'RR': rr, 'DEM_SLOPE': slope, 'LAPLACE': lap, 'RES': res_value, 'INVALID': invalid}
         return strip, minx
 
     # get next x tile from y-horizontal strip

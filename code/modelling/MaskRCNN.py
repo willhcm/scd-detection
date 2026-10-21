@@ -104,7 +104,7 @@ class MaskRCNN(nn.Module):
             weights_backbone="DEFAULT" if pretrained else None,
             trainable_backbone_layers=3)
 
-        in_channels = 5
+        in_channels = 4
 
         self.pretrained = pretrained
  
@@ -370,10 +370,6 @@ class MaskRCNNDataset(Dataset):
 
         slope = np.power(slope, 0.25)
 
-        # Calculate hillshade
-        hills = np.cos(np.radians(45)) - image[-1]
-        hills = np.power(hills, 0.5)
-
         # Robust scaling all (more efficient):
         for band in ['DEM', 'SLOPE', 'RR', 'LAPLACE']:
             median = self.norm_stats[band]['median']
@@ -387,10 +383,8 @@ class MaskRCNNDataset(Dataset):
                 rr = (rr - median) / iqr
             elif band == 'LAPLACE':
                 laplace = (laplace - median) / iqr
-            elif band == 'HILLSHADE':
-                hills = (hills - median) / iqr
 
-        return np.stack([dem_rel, slope, rr, laplace, hills], axis=0).astype(np.float32)
+        return np.stack([dem_rel, slope, rr, laplace], axis=0).astype(np.float32)
 
     def __getitem__(self, idx):
         path = self.paths[idx]
@@ -412,10 +406,6 @@ class MaskRCNNDataset(Dataset):
 
         image = self.handle_outliers(image, li, band_indices)
 
-        # Calculate hillshade
-        hillshade = calculate_hillshade(image[band_indices.index(li["DEM"])])
-        image = np.concatenate([image, hillshade[np.newaxis, ...]], axis=0)
-        
         image = self._normalise(image, li, band_indices)
 
         boxes, labels, masks, areas, iscrowd = self._mask_to_instances(mask)
