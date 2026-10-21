@@ -218,8 +218,8 @@ class Trainer():
 
         ...
 
-    def save_model(self, model, out_path, folded_out_region):
-        out = {'model_state_dict': model.state_dict(), 
+    def save_model(self, state, out_path, folded_out_region):
+        out = {'model_state_dict': state, 
                'norm_stats': self.dset.norm_stats,
                'folded_out_region': folded_out_region}
 
