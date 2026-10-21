@@ -38,7 +38,6 @@ class ModelWrapper:
 
         outputs = self.model(image_list, resolutions=resolutions)
 
-
         probability_maps = []
 
         for output in outputs:

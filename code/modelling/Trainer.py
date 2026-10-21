@@ -210,14 +210,6 @@ class Trainer():
         self.save_model(state, fold_out_path, exclude_region)
         np.savez_compressed(fold_out_path / "random_split_results.npz", **results)
 
-    def parameter_sweep(self):
-        params = {'score_thresh': [0.5, 0.6, 0.7, 0.8],
-                  'mask_thresh': [0.5, 0.6, 0.7, 0.8],
-                  'veto_thresh': [0.5, 0.6, 0.7, 0.8],
-                  'detect_thresh': [0.5, 0.6, 0.7, 0.8]}
-
-        ...
-
     def save_model(self, state, out_path, folded_out_region):
         out = {'model_state_dict': state, 
                'norm_stats': self.dset.normalization_stats,

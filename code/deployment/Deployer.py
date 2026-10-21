@@ -99,6 +99,7 @@ class Deployer:
         score_threshold=0.65, # tune
         mask_threshold=0.50, # tune
         context_scale=4.0,
+        detect_threshold=0.6, # tune
         min_context_width_m=500.0,
         max_context_width_m=4000.0,
         native_res = 30,
@@ -121,6 +122,7 @@ class Deployer:
         self.resolutions = resolutions
         self.native_res = native_res
         self.stride_frac = stride_frac
+        self.detect_threshold = detect_threshold
         
         # Mask R-CNN deployment tile size.
         self.tile_size = tile_size
@@ -269,7 +271,7 @@ class Deployer:
             rgb_path=self.rgb_path,
             dem_path=self.dem_path,
             batch_size=self.veto_batch_size,
-            detect_threshold=0.6,
+            detect_threshold=self.detect_threshold,
             veto_threshold=self.veto_threshold,
             min_crop_pixels=64,
             object_fraction=0.5,
