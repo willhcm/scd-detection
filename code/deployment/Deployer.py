@@ -385,7 +385,7 @@ class Deployer:
         """
 
         # native res should determine smallest resolvable objects.
-        min_m2 = (self.native_res ** 2) * 10 # resolution constrain, an area.
+        min_m2 = (self.native_res ** 2) * 25 # resolution constrain, an area.
         min_scd_size = 20 ** 2 # minimum SCD size reasonable wanted. 20m x 20m = 400m^2, an area.
         min_pixels = int(np.ceil(max(min_m2, min_scd_size) / (self.base_res ** 2)))
 
