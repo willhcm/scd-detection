@@ -112,6 +112,7 @@ class Deployer:
         self.score_threshold = score_threshold
         self.norm_stats = {}
 
+        self.model_dict = model_state_dict.get('model_dict', None)
         self.norm_stats = model_state_dict.get('norm_stats', None)
         self.model = self.build_wrapper()
         del model_state_dict
