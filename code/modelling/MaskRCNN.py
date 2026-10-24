@@ -353,6 +353,18 @@ class MaskRCNNDataset(Dataset):
 
         return image
 
+    @staticmethod
+    def _augment_resolution(res_value):
+
+        """
+        Augment the resolution value by adding Gaussian noise. resolution in log space prior to augmentation.
+        """
+        noise = np.random.normal(loc=0.0, scale=0.1)
+        resolution_augmented = res_value + noise
+        resolution_augmented = np.clip(resolution_augmented, 0.0, 1.0)
+        return resolution_augmented
+    
+
     def _normalise(self, image, li, band_indices):
 
         # DEM
@@ -405,8 +417,8 @@ class MaskRCNNDataset(Dataset):
             image, mask = self._spatial_augment(image, mask)
 
         image = self.handle_outliers(image, li, band_indices)
-
         image = self._normalise(image, li, band_indices)
+        res_value = self._augment_resolution(res_value)
 
         boxes, labels, masks, areas, iscrowd = self._mask_to_instances(mask)
 
