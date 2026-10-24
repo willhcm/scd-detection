@@ -403,8 +403,6 @@ class MaskRCNNDataset(Dataset):
         d = np.load(path, allow_pickle=True)
         res = d['res']
 
-
-
         layer_names = list(d["layer_names"])
         li = {name: i for i, name in enumerate(layer_names)}
         band_indices = [li[b] for b in _BANDS_TO_LOAD]

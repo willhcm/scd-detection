@@ -37,7 +37,7 @@ from affine import Affine
 # unlike in training, where several epochs are run
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-TILE_ORDER = ['DEM',  'DEM_SLOPE', 'RR','LAPLACE']
+TILE_ORDER = ['DEM', 'SLOPE', 'RR','LAPLACE']
 
 class Deployer:
 
@@ -703,9 +703,6 @@ class ResPredictor():
         
     def _normalise_band(self, band, name):
         band = band.astype(np.float32)
-
-        if name == ['DEM_SLOPE']:
-            name = 'SLOPE'
 
         band = self.handle_outliers(band)
 
