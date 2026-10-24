@@ -37,7 +37,7 @@ from affine import Affine
 # unlike in training, where several epochs are run
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-TILE_ORDER = ['DEM', 'SLOPE', 'RR','LAPLACE']
+TILE_ORDER = ['DEM', 'DEM_SLOPE', 'RR','LAPLACE']
 
 class Deployer:
 
@@ -711,8 +711,9 @@ class ResPredictor():
             band = flat - band
             band = np.power(band, 0.5)
 
-        if name == 'SLOPE':
+        if name == 'DEM_SLOPE':
             band = np.power(band, 0.25)
+            name = 'SLOPE'
 
         if name == 'DEM':
             band = band - np.median(band)
