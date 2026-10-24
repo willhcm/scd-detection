@@ -61,6 +61,10 @@ class Trainer():
         train_loader, val_loader = self._get_MaskRCNN_loaders(folded_out_region, batch_size, random_train=random_train)
         model = MaskRCNN()
 
+        print(f"Training on {len(train_loader.dataset)} samples, validating on {len(val_loader.dataset)} samples.")
+        print(f"Training with {len(train_loader)} batches of size {batch_size}.")
+        print(f'Input channels: {model.in_channels}.')
+
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)
 
