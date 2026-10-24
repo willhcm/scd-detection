@@ -188,11 +188,8 @@ class Trainer():
                    'val_f1s': val_f1s,
                    'bbox_ious': bbox_ious}
 
-        torch.save(best_state, out_path / f"best_model_fold_{folded_out_region}.pt")
-        print(f"Best model saved at epoch {best_epoch} with F1={best_f1:.4f}")
-
-        # save dict of results to npz file
         np.savez_compressed(out_path / f"training_metrics_fold_{folded_out_region}.npz", **results)
+        np.savez_compressed(out_path / f"res_size_distributions.npz", seen_resolutions=self.train_loader.dataset.seen_resolutions, object_sizes=self.train_loader.dataset.object_sizes)
 
         return results, best_state 
 

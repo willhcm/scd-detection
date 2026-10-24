@@ -21,7 +21,8 @@ from scipy.ndimage import sobel, gaussian_filter, laplace
 from deployment.ModelWrapper import ModelWrapper
 from modelling.helpers import calculate_hillshade
 from tqdm.auto import tqdm
-from deployment.PostProcesser import PostProcessor, WindowedDataSource
+from deployment.PostProcesser import PostProcessor
+from loaders.WindowedDataSource import WindowedDataSource
 from modelling.Veto import VetoClassifier
 import geopandas as gpd
 from rasterio.features import shapes, sieve
@@ -115,7 +116,6 @@ class Deployer:
         self.model_dict = model_state_dict['model_state_dict']
         self.norm_stats = model_state_dict['norm_stats']
         self.model = self.build_wrapper()
-        del model_state_dict
 
         self.dem_path = dem_path
         self.rgb_path = rgb_path

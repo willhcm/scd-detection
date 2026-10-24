@@ -236,6 +236,8 @@ class MaskRCNNDataset(Dataset):
         self.paths = all_paths
         self.min_instance_area = min_instance_area
         self.norm_stats = norm_stats
+        self.seen_resolutions = []
+        self.object_sizes = []
 
     def __len__(self):
         return len(self.paths)
@@ -289,7 +291,7 @@ class MaskRCNNDataset(Dataset):
 
         return boxes, labels, masks, areas, iscrowd
 
-    def _crop_zoom(self, image, mask):
+    def _crop_zoom(self, image, mask, res):
         h, w = mask.shape
         s = random.uniform(0.7, 0.9)
         ch, cw = int(h * s), int(w * s)
@@ -306,16 +308,17 @@ class MaskRCNNDataset(Dataset):
         ])
         mask = cv2.resize(np.ascontiguousarray(mask), (w, h),
                           interpolation=cv2.INTER_NEAREST)
-        return image, mask
+
+        return image, mask, res * s
     
     # same augmentation changes as made in FPNCN
-    def _spatial_augment(self, image, mask):
+    def _spatial_augment(self, image, mask, res):
         """
         Apply identical spatial transformations to every channel and the mask.
         """
         image = image.copy()
         mask = mask.copy()
-
+        res = res.copy()
         if random.random() > 0.5:
             image = image[:, :, ::-1]
             mask = mask[:, ::-1]
@@ -330,12 +333,9 @@ class MaskRCNNDataset(Dataset):
             mask = np.rot90(mask, k)
 
         if random.random() < 0.5:
-            image, mask = self._crop_zoom(image, mask)
+            image, mask, res = self._crop_zoom(image, mask, res)
 
-        return (
-            np.ascontiguousarray(image),
-            np.ascontiguousarray(mask),
-        )
+        return (np.ascontiguousarray(image), np.ascontiguousarray(mask), res)
 
     def handle_outliers(self, image, li, band_indices):
         """
@@ -403,7 +403,7 @@ class MaskRCNNDataset(Dataset):
         d = np.load(path, allow_pickle=True)
         res = d['res']
 
-        res_value = np.log1p(res)  / np.log1p(15)
+
 
         layer_names = list(d["layer_names"])
         li = {name: i for i, name in enumerate(layer_names)}
@@ -414,7 +414,9 @@ class MaskRCNNDataset(Dataset):
 
         if self.augment:
             # rotate / flip
-            image, mask = self._spatial_augment(image, mask)
+            image, mask, res = self._spatial_augment(image, mask, res)
+
+        res_value = np.log1p(res)  / np.log1p(15)
 
         image = self.handle_outliers(image, li, band_indices)
         image = self._normalise(image, li, band_indices)
@@ -430,6 +432,10 @@ class MaskRCNNDataset(Dataset):
             "area": areas,
             "iscrowd": iscrowd,
             "resolution": torch.tensor([res_value], dtype=torch.float32)}
+
+        
+        self.seen_resolutions.append(res_value)
+        self.object_sizes.extend(areas)
 
         image = torch.from_numpy(image)
 
