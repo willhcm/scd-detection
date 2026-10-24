@@ -35,6 +35,7 @@ class PostProcessor:
         context_scale=5.0,
         min_context_width_m=750.0,
         max_context_width_m=4000.0,
+        norm_stats=None,
         rgb=False):
 
         self.tile_size = rgb_tile_size if rgb else None
