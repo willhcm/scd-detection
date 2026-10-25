@@ -1,15 +1,14 @@
 # loads DEM tiles (and merges into chunks) from directory of small DEM scenes.
 # feeds into model deployer and handles result internally.
 # at the end, combines all into one final .shp file. 
-# need to set up kwargs here for sure.
 
 # imports
 import os
-import pathlib
 from pathlib import Path
 import sys
 CODE_DIR = Path("../../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
+import config
 from deployment.Deployer import Deployer
 import numpy as np
 import rasterio as rio
@@ -37,31 +36,37 @@ class SCDModel():
 
     def __init__(self, 
                 MaskRCNN_model_state, 
-                rgb_veto:bool,
                 dem_path:Path, 
                 device:str,
                 resolutions:list, 
                 out_path:Path,
                 veto_model_state=None, 
-                rgb_path=None, 
                 hyperparams=None,
                 run_name=None,
                 to_veto=True):
+
+        if to_veto and veto_model_state is None:
+            raise ValueError("to_veto is True but no veto_model_state was given.")
         
         self.MaskRCNN_model_state = MaskRCNN_model_state
         self.veto_model_state = veto_model_state
-        self.rgb_veto = rgb_veto
-        self.rgb_path = rgb_path
         self.device = device
         self.resolutions = resolutions
         self.out_path = out_path
         self.run_name = run_name
         self.to_veto = to_veto
 
+        # config needs the resolved DEM path and its nodata value, so it is
+        # initialised after the DEM has been found/merged.
         self.dem_path = self._resolve_data_source(dem_path)
         self.deployer = self._create_deployer(hyperparams)
 
-    # PUBLIC METHOD
+    # PUBLIC METHODS
+    def set_params(self, **params):
+        # Deployer snapshots the config on init, so it has to be rebuilt.
+        config.update(**params)
+        self.deployer = Deployer(self.MaskRCNN_model_state, self.veto_model_state)
+
     def predict(self,
                 return_coverage=False,
                 return_support=False,
@@ -93,21 +98,16 @@ class SCDModel():
     # Private
     def _create_deployer(self, hyperparams):
 
-        deployer_kwargs = {
-            "dem_path": self.dem_path,
-            "model_state_dict": self.MaskRCNN_model_state,
-            "veto_model_dict": self.veto_model_state,
-            "device": self.device,
-            "resolutions": self.resolutions,
-            "rgb_path": self.rgb_path,
-            "rgb_veto": self.rgb_veto,
-            "to_veto": self.to_veto,
-            "NODATA": self.NODATA if self.NODATA is not None else -9999,
-            **hyperparams
-        }
-        
+        config.init(
+            dem_path=self.dem_path,
+            resolutions=tuple(self.resolutions),
+            device=self.device,
+            nodata=self.NODATA if self.NODATA is not None else -9999,
+            to_veto=self.to_veto,
+            **(hyperparams or {}),
+        )
 
-        return Deployer(**deployer_kwargs)
+        return Deployer(self.MaskRCNN_model_state, self.veto_model_state)
 
     def _resolve_data_source(self, dem_path):
         if os.path.isfile(dem_path):
@@ -122,21 +122,23 @@ class SCDModel():
             raise TypeError('Please input a valid file or directory as a PosixPath')
 
     def _build_dem(self, dem_dir):
-        if not isinstance(dem_dir, pathlib.PosixPath):
-            dem_dir = Path(dem_dir)
+        dem_dir = Path(dem_dir)
 
         paths = list(dem_dir.glob("*.tif"))
+        if not paths:
+            raise FileNotFoundError(f"No .tif files found in {dem_dir}.")
         if 'merged.tif' in [p.name for p in paths]:
             raise FileExistsError(f"merged.tif already exists in {dem_dir}. Please remove it or choose a different directory.")
 
         print(f"Building DEM from directory: {dem_dir}")
 
         with rio.open(paths[0]) as src:
-            self.NODATA = src.nodata
+            src_nodata = src.nodata
 
-        subprocess.run([
-            "gdalwarp",
-            "-srcnodata", str(self.NODATA),
+        cmd = ["gdalwarp"]
+        if src_nodata is not None:
+            cmd += ["-srcnodata", str(src_nodata)]
+        cmd += [
             "-dstnodata", "-9999",
             "-co", "COMPRESS=LZW",
             "-co", "TILED=YES",
@@ -144,7 +146,11 @@ class SCDModel():
             "-co", "BIGTIFF=YES",
             *[str(p) for p in paths],
             str(dem_dir / "merged.tif")
-        ], check=True)
+        ]
+        subprocess.run(cmd, check=True)
+
+        # merged raster is written with -9999 as nodata
+        self.NODATA = -9999
 
         with rio.open(dem_dir / "merged.tif") as src:
             self.DEM_bounds = src.bounds
@@ -153,4 +159,3 @@ class SCDModel():
 
 
         return output_path
-

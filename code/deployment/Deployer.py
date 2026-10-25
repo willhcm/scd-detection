@@ -15,6 +15,7 @@ from rasterio.warp import reproject
 import os
 import numpy as np
 import torch
+import config
 from loaders.Tiler import OVERLAP_SIGMA_MULTIPLIER
 from rasterio.enums import Resampling
 from scipy.ndimage import sobel, gaussian_filter, laplace
@@ -29,178 +30,244 @@ from rasterio.features import shapes, sieve
 from shapely.geometry import shape
 from helpers.VetoHelpers import VETO_SCALAR_NAMES
 from modelling.DEMVeto import DEM_Based_Vetoer
-from scipy.ndimage import binary_dilation
+from scipy.ndimage import binary_dilation, label
 from affine import Affine
-
-# AI assistance with conversion of DataStack logic to a deployment system. 
-# dont need to export tiles as they will only be used once at inference
-# unlike in training, where several epochs are run
+from modelling.MaskRCNN import MaskRCNN
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TILE_ORDER = ['DEM', 'DEM_SLOPE', 'RR','LAPLACE']
 
 class Deployer:
 
-    # dosctring generated with assistance from Github Copilot Free.
     """
-    Deployer class for running inference on a DEM and RGB dataset using a Mask R-CNN model and a Veto classifier.
-    This class handles the loading of the DEM and RGB data, running predictions at multiple resolutions, merging the predictions, and applying the Veto classifier to filter out false positives.
+    Deployer class for running inference on a DEM using a Mask R-CNN model and a Veto classifier.
+    Handles loading the DEM, running predictions at multiple resolutions, merging the predictions,
+    and applying the Veto classifier to filter out false positives.
+
+    All run parameters (paths, resolutions, thresholds, tile sizes...) live in config.DeployConfig,
+    so config.init(...) must be called before constructing this.
 
     Parameters
     ----------
-    dem_path: str
-        Path to the DEM file.      
-    rgb_path: str
-        Path to the RGB file.
     model_state_dict: dict
-        State dictionary of the trained Mask R-CNN model.
-    veto_model_dict: dict
-        State dictionary of the trained Veto classifier model.
-    device: str
-        Device to run the inference on (e.g., 'cpu' or 'cuda').
-    resolutions: list
-        List of resolutions to run the inference at.
-    tile_size: int, optional
-        Size of the tiles to use for inference. Default is 512.
-    veto: bool, optional  
-        Whether to apply the Veto classifier to filter out false positives. Default is True.
-    veto_tile_size: int, optional  
-        Size of the tiles to use for the Veto classifier. Default is 96.
-    veto_context_tile_size: int, optional   
-        Size of the context tiles to use for the Veto classifier. Default is 224.
-    veto_batch_size: int, optional
-        Batch size to use for the Veto classifier. Default is 16.
-    veto_threshold: float, optional
-        Threshold to use for the Veto classifier. Default is 0.90.
-    context_scale: float, optional
-        Scale to use for the context tiles in the Veto classifier. Default is 4.0.
-    min_context_width_m: float, optional
-        Minimum width of the context tiles in meters for the Veto classifier. Default is 768.0.
-    max_context_width_m: float, optional
-        Maximum width of the context tiles in meters for the Veto classifier. Default is 4000.0.
-    native_res: float, optional 
-        Native resolution of the DEM in meters. Default is 30.
+        Checkpoint of the trained Mask R-CNN model, containing 'model_state_dict' and 'norm_stats'.
+    veto_model_dict: dict or None
+        State dictionary of the trained Veto classifier model. Only needed if cfg.to_veto is True.
     """
 
-    def __init__(
-        self,
-        dem_path,
-        model_state_dict,
-        veto_model_dict,
-        device,
-        resolutions,
-        rgb_path=None,
-        tile_size=512,
-        rgb_veto=False,
-        NODATA=-9999,
-        veto_tile_size=96, 
-        veto_context_tile_size=224,
-        veto_batch_size=16,
-        veto_threshold=0.6, # tune
-        score_threshold=0.65, # tune
-        mask_threshold=0.50, # tune
-        context_scale=4.0,
-        detect_threshold=0.6, # tune
-        min_context_width_m=500.0,
-        max_context_width_m=4000.0,
-        native_res = 30,
-        stride_frac=0.75,
-        to_veto=True,):
+    def __init__(self, model_state_dict, veto_model_dict):
 
+        # snapshot, so changing the config mid-run can't alter this instance
+        self.cfg = config.get()
         self.base_res = None
-        self.NODATA = NODATA if NODATA is not None else -9999
-        self.mask_threshold = mask_threshold
-        self.score_threshold = score_threshold
-        self.norm_stats = {}
 
-        self.model_dict = model_state_dict['model_state_dict']
         self.norm_stats = model_state_dict['norm_stats']
-        self.model = self.build_wrapper()
+        self.model = ModelWrapper(
+            model_state_dict['model_state_dict'],
+            self.cfg.score_threshold,
+            self.cfg.mask_threshold)
 
-        self.dem_path = dem_path
-        self.rgb_path = rgb_path
-        self.device = device
-        self.resolutions = resolutions
-        self.native_res = native_res
-        self.stride_frac = stride_frac
-        self.detect_threshold = detect_threshold
-        
-        # Mask R-CNN deployment tile size.
-        self.tile_size = tile_size
-        self.rgb_veto = rgb_veto
-        self.to_veto = to_veto
-
-        # if using spectral data
-        if self.rgb_veto:
-
-            self.veto_model = VetoClassifier(
-                scalar_dim=len(VETO_SCALAR_NAMES),
-                dropout=0.3,
-            )
-
-            self.veto_model.load_state_dict(
-                veto_model_dict
-            )
-
-            self.veto_model.to(self.device)
-            self.veto_model.eval()
-
-        # if not using spectral data 
-        else:
+        self.veto_model = None
+        if self.cfg.to_veto:
             self.veto_model = DEM_Based_Vetoer()
             self.veto_model.load_state_dict(veto_model_dict)
-            self.veto_model.to(self.device)
+            self.veto_model.to(self.cfg.device)
             self.veto_model.eval()
-
-        self.veto_tile_size = veto_tile_size
-        self.veto_context_tile_size = veto_context_tile_size
-        self.veto_batch_size = veto_batch_size
-        self.veto_threshold = veto_threshold
-
-        self.context_scale = context_scale
-        self.min_context_width_m = min_context_width_m
-        self.max_context_width_m = max_context_width_m
-
-    def build_wrapper(self):
-        return ModelWrapper(self.model_dict, self.score_threshold, self.mask_threshold)
 
     def predict(self):
         """
-        Predicts the probability maps for each resolution in self.resolutions using the Mask R-CNN model.
+        Predicts the probability maps for each resolution in cfg.resolutions using the Mask R-CNN model.
         """
 
         self.model.model.eval()
-        self.model.model.to(self.device)
+        self.model.model.to(self.cfg.device)
         preds = {}
-        for res in self.resolutions:
-            predictor = ResPredictor(
-                res,
-                self.dem_path,
-                self.model,
-                self.device,
-                self.tile_size,
-                stride_frac=self.stride_frac,
-                NODATA=self.NODATA,
-                norm_stats=self.norm_stats)
+        for res in self.cfg.resolutions:
+            predictor = ResPredictor(res, self.model, self.norm_stats)
 
             prob_map, transform, crs = predictor.predict()
 
             preds[res] = {
                 "prob": prob_map,
                 "transform": transform,
-                "crs": crs,
-    }
+                "crs": crs}
 
         return preds   
 
 
-    def merge_predictions_pyramid(
-            self,
-            preds,
-            support_threshold=0.65,
-            min_support=2,
-            single_scale_keep=0.90,
-            band=1024):
+    def new_voting_scheme(self, preds):
+        """
+        Object-aware weighted voting.
+
+        1. Generate a provisional merged map.
+        2. Label candidate objects and estimate their sizes.
+        3. Reproject predictions in bands and apply object-specific weights.
+
+        Assumes larger resolution values represent coarser predictions.
+        Object size is measured in base-grid pixels.
+        """
+
+        cfg = self.cfg
+        band = cfg.merge_band
+
+        base_res = min(preds)
+        self.base_res = base_res
+
+        base = preds[base_res]
+        transform, crs = base["transform"], base["crs"]
+        h, w = base["prob"].shape
+
+        scratch_dir = REPO_ROOT / "scratch" / "merge"
+        scratch_dir.mkdir(parents=True, exist_ok=True)
+
+        # Pass 1: provisional predictions from the plain merge.
+        provisional, _, _, _, _ = self.merge_predictions_pyramid(preds)
+
+        labels_path = scratch_dir / "labels.npy"
+        labels = np.lib.format.open_memmap(
+            labels_path,
+            mode="w+",
+            dtype=np.int32,
+            shape=(h, w))
+
+        # Threshold the provisional map to identify candidate objects.
+        # For very large rasters, connected-component labeling may need
+        # to be replaced with a tiled implementation.
+        mask = np.isfinite(provisional) & (
+            provisional >= cfg.object_threshold)
+
+        labels_array, n_objects = label(
+            mask,
+            structure=np.ones((3, 3), dtype=np.uint8))
+        
+        labels[:] = labels_array
+        labels.flush()
+        del labels_array, mask
+
+        # Count pixels in each object.
+        counts = np.bincount(
+            np.asarray(labels).ravel(),
+            minlength=n_objects + 1)
+
+        # Resolution weights for each object size.
+        resolutions = np.array(sorted(preds), dtype=np.float64)
+
+        if np.any(resolutions <= 0):
+            raise ValueError("Resolution values must be positive.")
+
+        log_res = np.log(resolutions)
+
+        # Object characteristic size in base-grid pixels.
+        object_size = np.sqrt(np.maximum(counts, 1))
+
+        # Preferred resolution increases with object size.
+        # size_scale controls how quickly the preference shifts.
+        target_res = np.clip(
+            base_res * cfg.size_scale * object_size,
+            resolutions.min(),
+            resolutions.max(),
+        )
+
+        # Rows are objects; columns are resolutions.
+        logits = -(
+            log_res[None, :]
+            - np.log(target_res[:, None])
+        ) ** 2 / (2 * cfg.size_sigma**2)
+
+        logits -= logits.max(axis=1, keepdims=True)
+        weights = np.exp(logits)
+        weights /= weights.sum(axis=1, keepdims=True)
+
+        # Pass 2: weighted merge, processed in bands.
+        merged = np.lib.format.open_memmap(
+            scratch_dir / "weighted_merged.npy",
+            mode="w+",
+            dtype=np.float32,
+            shape=(h, w))
+
+        for r0 in range(0, h, band):
+            r1 = min(r0 + band, h)
+            shape = (r1 - r0, w)
+            band_transform = transform * Affine.translation(0, r0)
+
+            band_labels = np.asarray(labels[r0:r1])
+
+            numerator = np.zeros(shape, dtype=np.float32)
+            denominator = np.zeros(shape, dtype=np.float32)
+            coverage = np.zeros(shape, dtype=np.uint8)
+            support = np.zeros(shape, dtype=np.uint8)
+            best = np.full(shape, np.nan, dtype=np.float32)
+
+            for j, (res, pred) in enumerate(
+                sorted(preds.items())
+            ):
+                if res == base_res:
+                    cur = np.asarray(
+                        pred["prob"][r0:r1],
+                        dtype=np.float32,
+                    )
+                else:
+                    cur = np.full(shape, np.nan, dtype=np.float32)
+
+                    reproject(
+                        source=pred["prob"],
+                        destination=cur,
+                        src_transform=pred["transform"],
+                        src_crs=pred["crs"],
+                        src_nodata=np.nan,
+                        dst_transform=band_transform,
+                        dst_crs=crs,
+                        dst_nodata=np.nan,
+                        resampling=Resampling.nearest,
+                        init_dest_nodata=True,
+                    )
+
+                valid = np.isfinite(cur)
+
+                coverage += valid
+                support += valid & (cur >= cfg.support_threshold)
+                best = np.fmax(best, cur)
+
+                # Object-specific weight for this resolution.
+                pixel_weights = weights[
+                    np.clip(band_labels, 0, n_objects),
+                    j,
+                ].astype(np.float32, copy=False)
+
+                effective_weights = pixel_weights * valid
+
+                numerator += np.nan_to_num(cur, nan=0.0) * (
+                    effective_weights
+                )
+                denominator += effective_weights
+
+            result = np.full(shape, np.nan, dtype=np.float32)
+            valid = denominator > 0
+
+            result[valid] = (
+                numerator[valid] / denominator[valid]
+            )
+
+            # Preserve your existing weak-support filtering.
+            weak = (
+                (coverage > 0)
+                & (support < cfg.min_support)
+                & (best < cfg.single_scale_keep)
+            )
+            result[weak] = 0.0
+
+            merged[r0:r1] = result
+
+        merged.flush()
+        labels.flush()
+
+        return merged, transform, crs
+        
+
+    def merge_predictions_pyramid(self, preds):
+
+        cfg = self.cfg
+        band = cfg.merge_band
 
         base_res = min(preds)
         self.base_res = base_res
@@ -245,10 +312,10 @@ class Deployer:
 
                 ok = np.isfinite(cur)
                 cov += ok
-                sup += ok & (cur >= support_threshold)
+                sup += ok & (cur >= cfg.support_threshold)
                 best = np.fmax(best, cur)
 
-            weak = (cov > 0) & (sup < min_support) & (best < single_scale_keep)
+            weak = (cov > 0) & (sup < cfg.min_support) & (best < cfg.single_scale_keep)
             best[weak] = 0.0
             best[cov == 0] = np.nan
 
@@ -265,24 +332,8 @@ class Deployer:
         """
         Applies the Veto classifier to the merged predictions to filter out false positives."""
 
-        postproc = PostProcessor(
-            context_tile_size=self.veto_context_tile_size,
-            device=self.device,
-            model=self.veto_model,
-            rgb_path=self.rgb_path,
-            dem_path=self.dem_path,
-            batch_size=self.veto_batch_size,
-            detect_threshold=self.detect_threshold,
-            veto_threshold=self.veto_threshold,
-            min_crop_pixels=64,
-            object_fraction=0.5,
-            context_scale=self.context_scale,
-            min_context_width_m=self.min_context_width_m,
-            max_context_width_m=self.max_context_width_m,
-            rgb=self.rgb_veto,
-            norm_stats=self.norm_stats,)
+        postproc = PostProcessor(self.veto_model)
 
-            
         (stitched, rejected, veto_probability_map, out_transform, out_crs) = postproc.predict(merged,
                                                                                              transform,
                                                                                              crs)
@@ -297,45 +348,30 @@ class Deployer:
 
         Returns
         -------
-
-        If self.rgb_veto is False:
-            predictions: dict
-                Dictionary of predictions at each resolution.
-            merged: np.ndarray
-                Merged probability map.
+        dict with keys:
+            raw: dict
+                Predictions at each resolution.
+            predictions: np.ndarray
+                Merged probability map (Veto-cleaned if cfg.to_veto).
             transform: affine.Affine
-                Affine transform of the merged probability map.
             crs: rasterio.crs.CRS
-                Coordinate reference system of the merged probability map.
             support: np.ndarray
                 Support count for each pixel in the merged probability map.
             coverage: np.ndarray
                 Coverage count for each pixel in the merged probability map.
 
-        If self.rgb_veto is True:
-            predictions: dict
-                Dictionary of predictions at each resolution.
-            cleaned: np.ndarray
-                Merged and Veto-cleaned probability map.
+        If cfg.to_veto is True, also:
             rejected: np.ndarray
                 Rejected predictions by the Veto classifier.
             veto_probability_map: np.ndarray
                 Probability map from the Veto classifier.
-            out_transform: affine.Affine
-                Affine transform of the Veto-cleaned probability map.
-            out_crs: rasterio.crs.CRS
-                Coordinate reference system of the Veto-cleaned probability map.
-            support: np.ndarray
-                Support count for each pixel in the merged probability map.
-            coverage: np.ndarray
-                Coverage count for each pixel in the merged probability map.
         """
 
         predictions = self.predict()
 
         (merged, transform, crs, support, coverage) = self.merge_predictions_pyramid(predictions)
 
-        if self.to_veto:
+        if self.cfg.to_veto:
             accepted, rejected, veto_probability_map, out_transform, out_crs = self.veto(merged, transform, crs)
 
             out = {
@@ -387,14 +423,15 @@ class Deployer:
             GeoDataFrame containing the merged predictions as polygons.
         """
 
+        cfg = self.cfg
+
         # native res should determine smallest resolvable objects.
-        min_m2 = (self.native_res ** 2) * 25 # resolution constrain, an area.
-        min_scd_size = 20 ** 2 # minimum SCD size reasonable wanted. 20m x 20m = 400m^2, an area.
-        min_pixels = int(np.ceil(max(min_m2, min_scd_size) / (self.base_res ** 2)))
+        min_m2 = (cfg.native_res ** 2) * cfg.min_native_pixels # resolution constrain, an area.
+        min_pixels = int(np.ceil(max(min_m2, cfg.min_object_m2) / (self.base_res ** 2)))
 
         binary = (
             np.isfinite(cleaned)
-            & (cleaned >= 0.40)).astype(np.uint8)
+            & (cleaned >= cfg.export_threshold)).astype(np.uint8)
         
         binary = sieve(
                 binary,
@@ -438,19 +475,21 @@ class Deployer:
 # self contained res predictor to decrease amount of calculations needed to be made repetitively!
 class ResPredictor():
 
-    def __init__(self, res, dem_path, model, device, tile_size=512, stride_frac = 0.75, batch_size=16, NODATA=-9999, norm_stats=None):
-        
-        self.device = device
-        self.dem_path = dem_path
-        self.model = model
+    def __init__(self, res, model, norm_stats):
+
+        cfg = config.get()
+
         self.res = res
-        self.tile_size = tile_size
-        self.stride_frac = stride_frac
-        self.batch_size = batch_size
-        self.NODATA = NODATA
+        self.model = model
         self.norm_stats = norm_stats
 
-        self.sigma_px = 12
+        self.device = cfg.device
+        self.dem_path = cfg.dem_path
+        self.tile_size = cfg.tile_size
+        self.stride_frac = cfg.stride_frac
+        self.batch_size = cfg.batch_size
+        self.NODATA = cfg.nodata
+        self.sigma_px = cfg.sigma_px
 
         self.overlap_px = max(
             4,
@@ -546,7 +585,6 @@ class ResPredictor():
         if invalid_tile.any():
             return None
 
-        print('this tile is valid')
         return np.stack(
             [strip[name][:, col0:col1] for name in TILE_ORDER],
             axis=0)
@@ -557,6 +595,7 @@ class ResPredictor():
         resolution = self.res
         res_value = np.log(resolution) / np.log(15.0)
         dem_source = WindowedDataSource.from_tiff_utm(self.dem_path, resolution=resolution)
+        progress = None
 
         try:
 
@@ -676,9 +715,11 @@ class ResPredictor():
                 flush_batch()
 
             
-            # h is DEM height, r is rows, step is number of rows to split it up into.
-            for r in range(0, h, 256):
-                p, wt = prob_map[r:r + 1024], weight_map[r:r + 1024]
+            # normalise in row chunks so the memmaps never need to be fully in memory.
+            # chunk step must equal chunk height or rows get divided more than once.
+            chunk = 1024
+            for r in range(0, h, chunk):
+                p, wt = prob_map[r:r + chunk], weight_map[r:r + chunk]
                 ok = wt > 0
                 p[ok] /= wt[ok]
                 p[~ok] = np.nan
@@ -688,7 +729,8 @@ class ResPredictor():
             print(f"Completed {resolution:g} m inference: {predicted_tiles}/{total_tiles} tiles predicted, {skipped_tiles} skipped.")
 
         finally:
-            progress.close()
+            if progress is not None:
+                progress.close()
             os.remove(dem_source.temp_path)
             
         return prob_map, transform, dem_source.crs
@@ -744,4 +786,3 @@ class ResPredictor():
 
         self._weight_kernel = kernel
         return kernel
-

@@ -91,10 +91,8 @@ class MaskRCNN(nn.Module):
         self,
         num_classes=2,
         pretrained=True,
-        anchor_sizes= ((20,), (40,), (62,), (120,), (220,)), # decreased to match SCD size population.
-        aspect_ratios=((0.75, 1.0, 1.25),) * 5, # elongated doesn't match subcircular appearance (square bounding boxes)
-        loss_weights = None, # depreciated but kept for future.
-    ):
+        loss_weights = None):
+
         super().__init__()
 
         # changed proposal thresholds 
@@ -111,7 +109,6 @@ class MaskRCNN(nn.Module):
         self._replace_input_conv(self.in_channels)
         self.model.transform.image_mean = [0.0] * self.in_channels
         self.model.transform.image_std = [1.0] * self.in_channels
-        #self._set_anchor_generator(anchor_sizes, aspect_ratios)
         self._replace_heads(num_classes)
 
         # add FiLM conditioning to backbone to encode resolution
@@ -188,16 +185,6 @@ class MaskRCNN(nn.Module):
                 new_conv.weight.copy_(mean_weight.repeat(1, in_channels, 1, 1))
 
         self.model.backbone.body.conv1 = new_conv
-
-    def _set_anchor_generator(self, sizes, aspect_ratios):
-        """
-        Sets a custom anchor generator for the RPN with specified sizes and aspect ratios that suit typicalSCD morphology"""
-        anchor_gen = AnchorGenerator(sizes=sizes, aspect_ratios=aspect_ratios)
-        self.model.rpn.anchor_generator = anchor_gen
-        num_anchors = anchor_gen.num_anchors_per_location()[0]
-        in_channels = self.model.backbone.out_channels
-
-        self.model.rpn.head = RPNHead(in_channels, num_anchors)
  
     def _replace_heads(self, num_classes):
         box_in_features = self.model.roi_heads.box_predictor.cls_score.in_features
@@ -206,8 +193,7 @@ class MaskRCNN(nn.Module):
         mask_in_features = self.model.roi_heads.mask_predictor.conv5_mask.in_channels
         mask_hidden_layers = 256
         self.model.roi_heads.mask_predictor = MaskRCNNPredictor(
-            mask_in_features, mask_hidden_layers, num_classes
-        )
+            mask_in_features, mask_hidden_layers, num_classes)
 
     def forward(self, images, resolutions= None , targets=None):
         self.model.backbone.set_condition(resolutions)
@@ -238,6 +224,7 @@ class MaskRCNNDataset(Dataset):
         self.norm_stats = norm_stats
         self.seen_resolutions = []
         self.object_sizes = []
+        self.real_object_diameters = []
 
     def __len__(self):
         return len(self.paths)
@@ -434,6 +421,9 @@ class MaskRCNNDataset(Dataset):
         
         self.seen_resolutions.append(res_value)
         self.object_sizes.extend(areas)
+        real_object_diameter = np.sqrt(areas) * res 
+        self.real_object_diameters.append(real_object_diameter)
+
 
         image = torch.from_numpy(image)
 

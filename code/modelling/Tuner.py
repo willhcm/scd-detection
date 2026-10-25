@@ -1,4 +1,4 @@
-import torch 
+import itertools
 import numpy as np
 from pathlib import Path
 import sys
@@ -29,49 +29,39 @@ class Tuner():
                 to_veto=True,
                 label_path=None):
 
-        self.model = model
-        self.dem_path = dem_path
-        self.device = device
-        self.resolutions = resolutions
-        self.out_path = out_path   
-        self.run_name = run_name
-        self.rgb_veto = False
-        self.rgb_path = None
-        self.veto_model_state = veto_model_state
-        self.hyperparams = hyperparams
-        self.to_veto = to_veto
-        self.labels = gpd.read_file(label_path) if label_path is not None else None
+        if label_path is None:
+            raise ValueError("Tuner needs a label_path to evaluate against.")
 
-        self.model = SCDModel(MaskRCNN_model_state=model['model_state_dict'],
-                              rgb_veto=self.rgb_veto,
-                              dem_path=self.dem_path,
-                              device=self.device,
-                              resolutions=self.resolutions,
-                              out_path=self.out_path,
-                              veto_model_state=self.veto_model_state,
-                              rgb_path=self.rgb_path,
-                              hyperparams=self.hyperparams,
-                              run_name=self.run_name,
-                              to_veto=self.to_veto)
+        self.out_path = out_path
+        self.labels = gpd.read_file(label_path)
+
+        # the full checkpoint goes in (model_state_dict + norm_stats), Deployer unpacks it.
+        # hyperparams are the fixed (non-swept) DeployConfig fields.
+        self.model = SCDModel(MaskRCNN_model_state=model,
+                            dem_path=dem_path,
+                            device=device,
+                            resolutions=resolutions,
+                            out_path=out_path,
+                            veto_model_state=veto_model_state,
+                            hyperparams=hyperparams,
+                            run_name=run_name,
+                            to_veto=to_veto)
 
     def run(self, params):
 
-        self.model.deployer.score_threshold = params['score_thresh']
-        self.model.deployer.mask_threshold = params['mask_thresh']
-        self.model.deployer.detect_threshold = params['detect_thresh']
-        self.model.deployer.veto_threshold = params['veto_thresh']
+        # rebuilds the Deployer, so score/mask thresholds reach the model wrapper too
+        self.model.set_params(**params)
+        deployer = self.model.deployer
 
-        results = self.model.predict()
-        predictions = self.model.deployer.merge_predictions(results['predictions'], results['transform'], results['crs'])
+        results = deployer.sweep()
+        trial_path = self.out_path / "trial.shp"
 
         # predictions as gdf
-        return predictions
+        return deployer.merge_predictions(results['predictions'], results['transform'], results['crs'], trial_path)
 
     def evaluate_results(self, preds):
-        """Return object metrics followed by scene-wide pixel metrics.
-
-        The returned values are object precision, recall, and F1, followed by
-        pixel IoU, precision, recall, F1, and accuracy. Pixel metrics are
+        """Return a dict of object precision, recall and F1, followed by
+        scene-wide pixel IoU, precision, recall, F1 and accuracy. Pixel metrics are
         computed on valid DEM pixels after rasterizing the prediction and
         label polygons onto the DEM grid.
         """
@@ -194,27 +184,21 @@ class Tuner():
         best_params = None
         best_results = None
 
-        for score_thresh in param_grid['score_thresh']:
-            for mask_thresh in param_grid['mask_thresh']:
-                for veto_thresh in param_grid['veto_thresh']:
-                    for detect_thresh in param_grid['detect_thresh']:
-                        params = {
-                            'score_thresh': score_thresh,
-                            'mask_thresh': mask_thresh,
-                            'veto_thresh': veto_thresh,
-                            'detect_thresh': detect_thresh
-                        }
-                        print(f"Evaluating params: {params}")
-                        preds = self.run(params)
-                        metrics = self.evaluate_results(preds)
-                        f1 = metrics[2]  # object-level F1
+        keys = list(param_grid)
 
-                        print(f"Params: {params}, Object F1: {f1:.4f}")
+        for values in itertools.product(*param_grid.values()):
+            params = dict(zip(keys, values))
+            print(f"Evaluating params: {params}")
+            preds = self.run(params)
+            metrics = self.evaluate_results(preds)
+            f1 = metrics['object_f1']
 
-                        if f1 > best_f1:
-                            best_f1 = f1
-                            best_params = params
-                            best_results = metrics
+            print(f"Params: {params}, Object F1: {f1:.4f}")
+
+            if f1 > best_f1:
+                best_f1 = f1
+                best_params = params
+                best_results = metrics
 
         print(f"Best params: {best_params}, Best Object F1: {best_f1:.4f}")
         return best_params, best_results

@@ -1,10 +1,9 @@
-from turtle import fd
-
 from tqdm.auto import tqdm
 from scipy.ndimage import label as ndi_label
 from skimage.measure import regionprops
 import numpy as np
 import torch
+import config
 from rasterio.enums import Resampling
 from rasterio.transform import from_bounds
 from helpers.VetoHelpers import build_dem_context, normalise_dem_context
@@ -17,61 +16,37 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 class PostProcessor:
     """
     A class to handle post-processing of predictions, including vetoing false positives.
+    Parameters (device, DEM path, thresholds, context sizes...) come from config.DeployConfig.
+
+    Parameters
+    ----------
+    model: torch.nn.Module
+        Trained Veto classifier.
     """
 
-    def __init__(
-        self,
-        context_tile_size,
-        device,
-        model,
-        dem_path,
-        batch_size=32,
-        rgb_path=None,
-        rgb_tile_size=94,
-        detect_threshold=0.40,
-        veto_threshold=0.60,
-        min_crop_pixels=64,
-        object_fraction=0.5,
-        context_scale=5.0,
-        min_context_width_m=750.0,
-        max_context_width_m=4000.0,
-        norm_stats=None,
-        rgb=False):
+    def __init__(self, model):
 
-        self.tile_size = rgb_tile_size if rgb else None
-        self.context_tile_size = context_tile_size
+        cfg = config.get()
 
         # veto model setup
-        self.device = device
-        self.model = model.to(device)
+        self.device = cfg.device
+        self.model = model.to(self.device)
         self.model.eval()
 
         # data origins
-        self.rgb_path = rgb_path
-        self.dem_path = dem_path
-        self.rgb = rgb
-
-        # data source objects
-        if self.rgb:
-            self.rgb_source = WindowedDataSource.from_tiff_utm(rgb_path, native_res=3, type="RGB")
-            self.rgb_res = self.rgb_source.res
-        else:
-            self.rgb_res = 3 # planet labs backup
-
-        self.dem_source = WindowedDataSource.from_tiff(dem_path, type="DEM")
+        self.dem_path = cfg.dem_path
+        self.dem_source = WindowedDataSource.from_tiff_utm(self.dem_path, type="DEM")
 
         # hyperparameters
-        self.batch_size = batch_size
-        self.detect_threshold = detect_threshold
-        self.veto_threshold = veto_threshold
-        self.min_crop_pixels = min_crop_pixels
-        self.object_fraction = object_fraction
-        self.context_scale = context_scale
-        self.min_context_width_m = min_context_width_m
-        self.max_context_width_m = max_context_width_m
+        self.context_tile_size = cfg.veto_context_tile_size
+        self.batch_size = cfg.veto_batch_size
+        self.detect_threshold = cfg.detect_threshold
+        self.veto_threshold = cfg.veto_threshold
+        self.object_fraction = cfg.veto_object_fraction
+        self.context_scale = cfg.context_scale
+        self.min_context_width_m = cfg.min_context_width_m
+        self.max_context_width_m = cfg.max_context_width_m
 
-    # finds the mask of an object to overlay onto the rgb/dem context images
-    # static method -> doesnt need self
     @staticmethod
     def _object_mask_for_bounds(obj, source_transform, bounds, output_size):
 
@@ -124,30 +99,6 @@ class PostProcessor:
 
         return mask
 
-    @staticmethod
-    def _prepare_rgb(rgb, mask):
-        """
-        Return local RGB + candidate mask in [C, H, W] form.
-        """
-
-        # set up vars
-        rgb = np.asarray(rgb,dtype=np.float32)
-        mask = np.asarray(mask, dtype=np.float32)
-
-        # Convert bands-first RGB to channels-last.
-        if (rgb.ndim == 3 and rgb.shape[0] == 3):
-            rgb = np.moveaxis(rgb, 0, -1)
-
-        if mask.ndim == 3:
-            mask = np.squeeze(mask)
-
-        # clean and order channels correctly (ChatGPT help with dims)
-        mask = (mask > 0).astype(np.float32)
-        rgb_mask = np.concatenate([rgb, mask[..., None],], axis=-1)
-        rgb_mask = np.moveaxis(rgb_mask,-1, 0)
-
-        return np.ascontiguousarray(rgb_mask, dtype=np.float32)
-
     def _make_tile(
         self,
         obj,
@@ -163,57 +114,11 @@ class PostProcessor:
 
         # object size
         diameter_m = (obj.equivalent_diameter_area * prediction_pixel_res)
-        object_crop_width_m = (diameter_m / self.object_fraction)
-        min_crop_width_m = (self.min_crop_pixels * self.rgb_res)
-        local_crop_width_m = max(min_crop_width_m, object_crop_width_m)
-
-        if self.rgb:
-
-            # get tile crop width (rgb)
-
-            local_half_width = local_crop_width_m / 2.0
-
-            local_bounds = (
-                cx - local_half_width,
-                cy - local_half_width,
-                cx + local_half_width,
-                cy + local_half_width,
-            )
-
-            rgb = self.rgb_source.reproject_to_shape(
-                target_crs=crs,
-                tile_bounds=local_bounds,
-                out_width=self.tile_size,
-                out_height=self.tile_size,
-                resampling=Resampling.bilinear,
-            )
-
-            # handle objects outside of rgb scene
-            # these are just accepted later on!
-            if rgb is None:
-                return None
-
-            rgb = np.asarray(rgb)
-
-            if not np.isfinite(rgb).any():
-                return None
-
-            if np.all(rgb == 0):
-                return None
-            
-            
-            # get mask to overlay over rgb.
-            local_mask = self._object_mask_for_bounds(
-                obj=obj,
-                source_transform=transform,
-                bounds=local_bounds,
-                output_size=self.tile_size)
-
-            rgb_local = self._prepare_rgb(rgb, local_mask)
-
+        crop_width_m = (diameter_m / self.object_fraction)
+        
         # wider DEM context around the same candidate centre.
         # clip provides a minimum and maximum scene size to avoid tiny/massive context extents
-        context_width_m = np.clip(self.context_scale * local_crop_width_m, self.min_context_width_m, self.max_context_width_m)
+        context_width_m = np.clip(self.context_scale * crop_width_m, self.min_context_width_m, self.max_context_width_m)
 
         context_half_width = context_width_m / 2.0
 
@@ -271,7 +176,6 @@ class PostProcessor:
         dem_context = normalise_dem_context(dem_context)
 
         return {
-            "rgb_local": rgb_local if self.rgb else None,
             "dem_context": np.ascontiguousarray(
                 dem_context,
                 dtype=np.float32,
@@ -281,9 +185,8 @@ class PostProcessor:
                 dtype=np.float32,
             ),
             "obj": obj,
-            "local_bounds": local_bounds if self.rgb else None,
             "context_bounds": context_bounds,
-            "local_crop_width_m": local_crop_width_m,
+            "crop_width_m": crop_width_m,
             "context_width_m": context_width_m,
             "diameter_m": diameter_m,
         }
@@ -328,8 +231,6 @@ class PostProcessor:
         skipped = 0
         predicted = 0
 
-        if self.rgb:
-            batch_rgb = []
         batch_dem = []
         batch_scalars = []
         batch_objs = []
@@ -350,17 +251,13 @@ class PostProcessor:
                 return
 
             # make torch tensor from batch and send to device
-            if self.rgb:
-                rgb_tensor = torch.from_numpy(np.stack(batch_rgb, axis=0)).to(self.device,dtype=torch.float32)
             dem_tensor = torch.from_numpy(np.stack(batch_dem, axis=0)).to(self.device, dtype=torch.float32)
             scalar_tensor = torch.from_numpy(np.stack(batch_scalars, axis=0)).to(self.device, dtype=torch.float32)
 
             # predict
             with torch.inference_mode():
-                if self.rgb:
-                    logits = self.model(rgb_tensor, dem_tensor, scalar_tensor).view(-1)
-                else:
-                    logits = self.model(dem_tensor, scalar_tensor).view(-1)
+
+                logits = self.model(dem_tensor, scalar_tensor).view(-1)
 
                 # sigmoid for probs
                 probabilities = torch.sigmoid(logits).cpu().numpy()
@@ -382,8 +279,6 @@ class PostProcessor:
                 predicted += 1
 
             # empty batch lists
-            if self.rgb:
-                batch_rgb.clear()
             batch_dem.clear()
             batch_scalars.clear()
             batch_objs.clear()
@@ -410,8 +305,6 @@ class PostProcessor:
                 continue
 
             # if can build, add to batch lists
-            if self.rgb:
-                batch_rgb.append(tile["rgb_local"])
             batch_dem.append(tile["dem_context"])
             batch_scalars.append(tile["scalar_features"])
             batch_objs.append(obj)
