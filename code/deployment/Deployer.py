@@ -15,7 +15,7 @@ from rasterio.warp import reproject
 import os
 import numpy as np
 import torch
-import config
+import deployment.config as config
 from loaders.Tiler import OVERLAP_SIGMA_MULTIPLIER
 from rasterio.enums import Resampling
 from scipy.ndimage import sobel, gaussian_filter, laplace
@@ -24,7 +24,6 @@ from modelling.helpers import calculate_hillshade
 from tqdm.auto import tqdm
 from deployment.PostProcesser import PostProcessor
 from loaders.WindowedDataSource import WindowedDataSource
-from modelling.Veto import VetoClassifier
 import geopandas as gpd
 from rasterio.features import shapes, sieve
 from shapely.geometry import shape
@@ -32,7 +31,6 @@ from helpers.VetoHelpers import VETO_SCALAR_NAMES
 from modelling.DEMVeto import DEM_Based_Vetoer
 from scipy.ndimage import binary_dilation, label
 from affine import Affine
-from modelling.MaskRCNN import MaskRCNN
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TILE_ORDER = ['DEM', 'DEM_SLOPE', 'RR','LAPLACE']

@@ -3,7 +3,7 @@ from scipy.ndimage import label as ndi_label
 from skimage.measure import regionprops
 import numpy as np
 import torch
-import config
+import deployment.config as config
 from rasterio.enums import Resampling
 from rasterio.transform import from_bounds
 from helpers.VetoHelpers import build_dem_context, normalise_dem_context

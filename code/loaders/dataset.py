@@ -10,7 +10,6 @@ sys.path.insert(0, str(CODE_DIR))
 from modelling.MaskRCNN import MaskRCNNDataset
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
-from modelling.UNET import UNetNDataset
 
 class DatasetWrapper():
 
@@ -39,20 +38,6 @@ class DatasetWrapper():
         self._estimate_normalization_stats(self.train_paths)
         return MaskRCNNDataset(self.train_paths, self.normalization_stats, augment=True), MaskRCNNDataset(self.val_paths, self.normalization_stats, augment=False)
 
-    
-
-    def generate_unet_dataset(self):
-        paths = list(self.root_dir.glob("*.npz"))
-
-        self.train_paths, self.val_paths = train_test_split(
-            paths,
-            test_size=0.2,
-            random_state=42)
-
-        self._analyze_dataset()
-        self._estimate_normalization_stats(self.train_paths)
-
-        return UNetNDataset(self.train_paths, self.normalization_stats, augment=True), UNetNDataset(self.val_paths, self.normalization_stats, augment=False)
 
     def generate_dataset(self, test_region=None):
 
