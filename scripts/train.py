@@ -10,45 +10,29 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 def main(args):
 
-    if args.model.upper() == "MASKRCNN":
-        # Initialize the Mask R-CNN model
+    trainer = Trainer(args.root, device="cuda" if torch.cuda.is_available() else "cpu")
 
-        trainer = Trainer(args.root, device="cuda" if torch.cuda.is_available() else "cpu")
+    out_path = REPO_ROOT / "results" / "training" / args.run
+    out_path.mkdir(parents=True, exist_ok=True)
 
-        out_path = REPO_ROOT / "results" / "training" / args.run
-        out_path.mkdir(parents=True, exist_ok=True)
+    if args.LORO_CV:
+        regions = args.folded_out_regions # Replace with actual region names
+        trainer.LORO_CV(regions, out_path, epochs = args.epochs, batch_size=args.batch_size)
 
-        if args.LORO_CV:
-            regions = args.folded_out_regions # Replace with actual region names
-            trainer.LORO_CV(regions, out_path, epochs = args.epochs, batch_size=args.batch_size)
-
-        elif args.random_split:
-            trainer.random_split(
-                out_path=out_path,
-                epochs=args.epochs,
-                batch_size=args.batch_size,
-                exclude_region=args.folded_out_regions[0] if args.folded_out_regions else None
-            )
-
-        else:
-            trainer.train_fold(
-                folded_out_region=args.folded_out_regions[0],
-                epochs=args.epochs,
-                batch_size=args.batch_ize,
-                out_path=out_path)
-
-    elif args.model.upper() == "UNET":
-        trainer = Trainer(args.root, device="cuda" if torch.cuda.is_available() else "cpu")
-
-        out_path = REPO_ROOT / "results" / "training" / args.run
-        out_path.mkdir(parents=True, exist_ok=True)
-
-        trainer.train_unet(epochs=args.epochs,
-                batch_size=args.batch_size,
-                out_path=out_path)
+    elif args.random_split:
+        trainer.random_split(
+            out_path=out_path,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            exclude_region=args.folded_out_regions[0] if args.folded_out_regions else None
+        )
 
     else:
-        raise ValueError(f"Unknown model type: {args.model}. Please choose 'MaskRCNN' or 'UNET'.")
+        trainer.train_fold(
+            folded_out_region=args.folded_out_regions[0],
+            epochs=args.epochs,
+            batch_size=args.batch_ize,
+            out_path=out_path)
         
 
 if __name__ == "__main__":
