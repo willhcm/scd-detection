@@ -14,6 +14,7 @@ import torch
 from torch.utils.data import Dataset
 import random
 import numpy as np
+from scipy.ndimage import label, find_objects
 import cv2
 from tqdm.auto import tqdm
 from modelling.helpers import calculate_hillshade
