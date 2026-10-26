@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 CODE_DIR = Path("../../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
-import config
+import deployment.config as config
 from deployment.Deployer import Deployer
 import numpy as np
 import rasterio as rio

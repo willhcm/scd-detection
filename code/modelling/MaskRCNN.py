@@ -14,10 +14,6 @@ import torch
 from torch.utils.data import Dataset
 import random
 import numpy as np
-from scipy.ndimage import label, find_objects, gaussian_filter
-from torchvision.models.detection.rpn import RPNHead
-from torchvision.models.detection.anchor_utils import AnchorGenerator
-import copy
 import cv2
 from tqdm.auto import tqdm
 from modelling.helpers import calculate_hillshade
@@ -423,7 +419,6 @@ class MaskRCNNDataset(Dataset):
         self.object_sizes.extend(areas)
         real_object_diameter = np.sqrt(areas) * res 
         self.real_object_diameters.append(real_object_diameter)
-
 
         image = torch.from_numpy(image)
 
