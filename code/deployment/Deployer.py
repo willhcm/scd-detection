@@ -147,6 +147,9 @@ class Deployer:
             np.asarray(labels).ravel(),
             minlength=n_objects + 1)
 
+        areas = counts[1:] * (base_res ** 2)
+        sizes = np.sqrt(areas) # eq diameter in metres
+
         # Resolution weights for each object size.
         resolutions = np.array(sorted(preds), dtype=np.float64)
 
@@ -155,24 +158,25 @@ class Deployer:
 
         log_res = np.log(resolutions)
 
-        # Object characteristic size in base-grid pixels.
-        object_size = np.sqrt(np.maximum(counts, 1))
-
         # Preferred resolution increases with object size.
         # size_scale controls how quickly the preference shifts.
-        target_res = np.clip(
-            base_res * cfg.size_scale * object_size,
-            resolutions.min(),
-            resolutions.max(),
-        )
 
-        # Rows are objects; columns are resolutions.
+        # map object size to a target resolution, then compute weights based on distance from that target
+        target_res = np.clip(
+            (sizes * (1 / cfg.object_fraction)) / cfg.tile_size, 
+            resolutions.min(),
+            resolutions.max())
+
+        # logits matrix. [i, j] is how far layer j is from the preferred resolution for object i, in log space.
         logits = -(
             log_res[None, :]
             - np.log(target_res[:, None])
         ) ** 2 / (2 * cfg.size_sigma**2)
 
+        # subtract each row by its max, so that the best fit (max) is always exp(0) = 1, and the others are < 1.
         logits -= logits.max(axis=1, keepdims=True)
+
+        # exp and normalise (divide weights by their row sum, so it sums to 1) to get weights for each object across resolutions.
         weights = np.exp(logits)
         weights /= weights.sum(axis=1, keepdims=True)
 
