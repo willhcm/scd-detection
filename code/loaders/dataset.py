@@ -10,6 +10,7 @@ sys.path.insert(0, str(CODE_DIR))
 from modelling.MaskRCNN import MaskRCNNDataset
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
+import pandas as pd
 
 class DatasetWrapper():
 
@@ -80,7 +81,7 @@ class DatasetWrapper():
 
         # plot the distribution of resolutions and geographies in the training set
         # color parts of each hist bar for positive and negative samples in the geography distribution
-        fig, axs = plt.subplots(1, 3, figsize=(15, 5))
+        fig, axs = plt.subplots(1, 3, figsize=(25, 10))
         bins = np.arange(0, 30, 2.5)
         axs[0].hist(list(self.train_resolution_distribution.keys()), bins=bins, weights=list(self.train_resolution_distribution.values()))
         axs[0].set_title("Resolution Distribution")
@@ -88,6 +89,8 @@ class DatasetWrapper():
         axs[0].set_ylabel("Count")
         # color parts of each hist bar for positive and negative samples in the geography distribution
         # with each resolution binned
+
+        resolution_bins = {bin: {'positive': 0, 'negative': 0} for bin in bins}
         for bin in bins:
             midpoint = (bin + bin + 2.5) / 2
             positive_count = 0
@@ -96,6 +99,9 @@ class DatasetWrapper():
                 if bin <= resolution < bin + 2.5:
                     positive_count += self.resolutions_positive_distribution.get(resolution, {}).get('positive', 0)
                     negative_count += self.resolutions_positive_distribution.get(resolution, {}).get('negative', 0)
+                    resolution_bins[bin]['positive'] += self.resolutions_positive_distribution.get(resolution, {}).get('positive', 0)
+                    resolution_bins[bin]['negative'] += self.resolutions_positive_distribution.get(resolution, {}).get('negative', 0)
+
             axs[0].bar(midpoint, positive_count, color='green', width=2.5, align='center')
             axs[0].bar(midpoint, negative_count, bottom=positive_count, color='red', width=2.5, align='center')
             axs[0].text(midpoint, positive_count + negative_count / 2, f'{(positive_count+0.0001) / (positive_count+negative_count + 0.0001):.2f}', ha='center', va='center')
@@ -115,7 +121,42 @@ class DatasetWrapper():
         axs[2].set_xlabel("Positive/Negative")
         axs[2].set_ylabel("Count") 
 
+        self.resolution_bins = resolution_bins
+
         plt.show()
+
+    def report_distribution(self):
+        # report the distribution of resolutions and geographies in the training set
+
+        res_bins = np.arange(0, 30, 2.5)
+
+        region_df = pd.DataFrame({
+            "Region": list(self.train_geography_distribution.keys()),
+            "Count": list(self.train_geography_distribution.values()),
+            "Positive": [self.geography_positives_distribution.get(region, {}).get('positive', 0) for region in self.train_geography_distribution.keys()],
+            "Negative": [self.geography_positives_distribution.get(region, {}).get('negative', 0) for region in self.train_geography_distribution.keys()],
+        })
+
+        resolution_df = pd.DataFrame({
+            "Resolution": list(self.train_resolution_distribution.keys()),
+            "Count": list(self.train_resolution_distribution.values()),
+            "Positive": [self.resolutions_positive_distribution.get(resolution, {}).get('positive', 0) for resolution in self.train_resolution_distribution.keys()],
+            "Negative": [self.resolutions_positive_distribution.get(resolution, {}).get('negative', 0) for resolution in self.train_resolution_distribution.keys()],
+        })
+
+        print("Region Distribution:")
+        print(region_df)
+
+        print("Resolution Distribution:")
+        print(resolution_df)
+
+        target_pos_neg_ratio = 0.3
+
+        print(f"Target positive/negative ratio: {target_pos_neg_ratio:.2f}")
+        for res, counts in self.resolution_bins.items():
+            pos = counts.get('positive', 0)
+            neg = counts.get('negative', 0)
+            print(f"resolution n{res} needs {(((1-target_pos_neg_ratio) / target_pos_neg_ratio) * pos) - neg:.0f} more negative tiles to reach target ratio of {target_pos_neg_ratio:.2f}")
 
     def _analyze_dataset(self):
         # analyze the metadata of the dataset to see distribution of resolutions and geographies

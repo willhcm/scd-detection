@@ -18,8 +18,6 @@ import copy
 from tqdm import tqdm
 REPO_ROOT = Path(__file__).resolve().parent.parent
 from scipy.ndimage import label
-
-from modelling.UNET import UNet, DiceLoss
     
 class Trainer():
 
@@ -189,7 +187,7 @@ class Trainer():
                    'bbox_ious': bbox_ious}
 
         np.savez_compressed(out_path / f"training_metrics_fold_{folded_out_region}.npz", **results)
-        np.savez_compressed(out_path / f"res_size_distributions.npz", seen_resolutions=self.train_loader.dataset.seen_resolutions, object_sizes=self.train_loader.dataset.object_sizes)
+        np.savez_compressed(out_path / f"res_size_distributions.npz", seen_resolutions=self.train_loader.dataset.seen_resolutions, object_sizes=self.train_loader.dataset.object_sizes, real_object_diameters=self.train_loader.dataset.real_object_diameters)
 
         return results, best_state 
 
