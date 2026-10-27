@@ -41,6 +41,12 @@ class TileGenerator():
             maxy + overlap_m,
         )
 
+        if self.labelled:
+           labels = self.labels.rasterise(tile_bounds, tile_size, self.target_crs)
+           if labels.sum() > 0:
+               print(f"Tile {tile_bounds} contains labels, skipping.")
+               return None
+
         # handles tile being on edge of DEM (bad as zero padding ruins SCD context)
         if not _bounds_inside(padded_bounds, self.dem.bounds):
             return None
@@ -70,10 +76,8 @@ class TileGenerator():
         ).astype(np.float32)
         available["DEM"] = dem_clean
 
-        if self.labelled:
-            available["LABELS"] = self.labels.rasterise(tile_bounds, tile_size, self.target_crs)
-        else:
-            available["LABELS"] = np.zeros((tile_size, tile_size))
+
+
 
         return np.stack([available[name] for name in self.layer_names], axis=0).astype(np.float32)
 

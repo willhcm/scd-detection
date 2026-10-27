@@ -328,7 +328,12 @@ class MaskRCNNDataset(Dataset):
         for band in ['DEM', 'DEM_SLOPE', 'RR', 'LAPLACE']:
             band_index = band_indices.index(li[band])
             band_data = image[band_index]
+            valid = np.isfinite(band_data)
+            if not valid.any():
+                raise ValueError(f"{band} contains no finite pixels")
 
+            fill_value = np.median(band_data[valid])
+            band_data = np.where(valid, band_data, fill_value)
             lower_bound = np.percentile(band_data, 0.5)
             upper_bound = np.percentile(band_data, 99.5)
 
@@ -355,9 +360,11 @@ class MaskRCNNDataset(Dataset):
         dem = image[band_indices.index(li["DEM"])]
 
         valid = np.isfinite(dem)
+        if not valid.any():
+            raise ValueError("DEM contains no finite pixels")
 
         dem_median = np.median(dem[valid])
-        dem_rel = dem - dem_median
+        dem_rel = np.where(valid, dem, dem_median) - dem_median
 
         # slope log scaled, then Robust scaling
         slope = image[band_indices.index(li["DEM_SLOPE"])]
@@ -385,7 +392,10 @@ class MaskRCNNDataset(Dataset):
     def __getitem__(self, idx):
         path = self.paths[idx]
         d = np.load(path, allow_pickle=True)
-        res = d['res']
+        res = float(d['res'])
+        
+        if not np.isfinite(res) or res <= -1:
+            raise ValueError(f"Invalid resolution in {path}: {res}")
 
         layer_names = list(d["layer_names"])
         li = {name: i for i, name in enumerate(layer_names)}
@@ -403,6 +413,8 @@ class MaskRCNNDataset(Dataset):
         image = self.handle_outliers(image, li, band_indices)
         image = self._normalise(image, li, band_indices)
         res_value = self._augment_resolution(res_value)
+        if not np.isfinite(image).all() or not np.isfinite(res_value):
+            raise ValueError(f"Non-finite model input after preprocessing: {path}")
 
         boxes, labels, masks, areas, iscrowd = self._mask_to_instances(mask)
 

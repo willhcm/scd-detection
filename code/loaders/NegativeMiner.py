@@ -3,7 +3,7 @@ from pathlib import Path
 import sys
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
-from loaders.Tiler import DataSource
+from loaders.Tiler import DataSource, ShapeLabels
 from loaders.Generator import TileGenerator
 from dataclasses import dataclass
 
@@ -17,11 +17,11 @@ class NegativeMiner:
 
     LAYER_NAMES = ["DEM", "DEM_SLOPE", "HILLSHADE", "RR", "LAPLACE", "LABELS"]
 
-    def __init__(self, dem: DataSource, resolutions: list[float], NODATA=0, region=None):
+    def __init__(self, dem: DataSource, label_path: Path, resolutions: list[float], NODATA=0, region=None):
         self.dem = dem
         self.resolutions = resolutions
         self.coverage = np.zeros(dem.data.shape, dtype=np.float32)
-        self.generator = TileGenerator(dem=dem)
+        self.generator = TileGenerator(dem=dem, label_path=label_path)
         self.layer_index = {name: i for i, name in enumerate(self.LAYER_NAMES)}
         self.report_capacity()
         self.NODATA = NODATA
