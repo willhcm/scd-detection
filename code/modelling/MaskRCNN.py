@@ -418,8 +418,6 @@ class MaskRCNNDataset(Dataset):
         if not np.isfinite(image).all() or not np.isfinite(res_value):
             raise ValueError(f"Non-finite model input after preprocessing: {path}")
 
-        mask = self.clean_mask(mask)
-
         boxes, labels, masks, areas, iscrowd = self._mask_to_instances(mask)
 
         target = {
