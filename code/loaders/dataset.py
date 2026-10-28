@@ -35,7 +35,6 @@ class DatasetWrapper():
         sampler = self._diameter_weighted_sampler(train_set.paths, alpha=0.5)
 
         train_loader = DataLoader(train_set,
-                    shuffle=True,
                     num_workers=0,
                     batch_size=batch_size,
                     collate_fn=collate_fn,
@@ -224,7 +223,7 @@ class DatasetWrapper():
 
         self.max_res = max(self.train_resolution_distribution.keys())
 
-    def _diameter_weighted_sampler(self, paths, alpha=0.5):
+    def _diameter_weighted_sampler(self, paths, alpha=0.5, neg_frac=0.7):
         max_d = np.zeros(len(paths))
         for i, path in enumerate(paths):
             with np.load(path, allow_pickle=True) as tile:
@@ -237,14 +236,16 @@ class DatasetWrapper():
 
         pos = max_d > 0
         edges = np.logspace(np.log10(max_d[pos].min()), np.log10(max_d[pos].max()), 20)
-        b = np.digitize(max_d, edges)           # empty tiles land in bin 0
-        counts = np.bincount(b, minlength=len(edges) + 1)
+        b = np.digitize(max_d[pos], edges)
+        counts = np.bincount(b)
 
-        w = (1.0 / counts[b]) ** alpha
-        w = np.minimum(w, np.percentile(w, 99))
+        w = np.zeros(len(paths))
+        wp = (1.0 / counts[b]) ** alpha
+        wp = np.minimum(wp, np.percentile(wp, 99))
+        w[pos] = wp * (1 - neg_frac) / wp.sum()
+        w[~pos] = neg_frac / (~pos).sum()
 
         return WeightedRandomSampler(w, num_samples=len(paths), replacement=True)
-
 
     def _get_resolution(self, path):
         # extract resolution from metadata of the image at path

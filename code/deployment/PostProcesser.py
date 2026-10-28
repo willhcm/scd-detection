@@ -35,7 +35,7 @@ class PostProcessor:
 
         # data origins
         self.dem_path = cfg.dem_path
-        self.dem_source = WindowedDataSource.from_tiff_utm(self.dem_path, type="DEM")
+        self.dem_source = WindowedDataSource.from_tiff_utm(self.dem_path, type="DEM", resolution=cfg.native_res)
 
         # hyperparameters
         self.context_tile_size = cfg.veto_context_tile_size
