@@ -371,7 +371,7 @@ class Deployer:
 
         predictions = self.predict()
 
-        (merged, transform, crs, support, coverage) = self.merge_predictions_pyramid(predictions)
+        merged, transform, crs= self.new_voting_scheme(predictions)
 
         if self.cfg.to_veto:
             accepted, rejected, veto_probability_map, out_transform, out_crs = self.veto(merged, transform, crs)
