@@ -383,8 +383,6 @@ class Deployer:
                 "veto_probability_map": veto_probability_map,
                 "transform": out_transform,
                 "crs": out_crs,
-                "support": support,
-                "coverage": coverage
             }
 
         else:
@@ -393,8 +391,6 @@ class Deployer:
                 "predictions": merged,
                 "transform": transform,
                 "crs": crs,
-                "support": support,
-                "coverage": coverage
             }
 
         return out
