@@ -11,6 +11,9 @@ from modelling.MaskRCNN import MaskRCNNDataset
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 import pandas as pd
+from scipy.ndimage import label, find_objects
+from torch.utils.data import WeightedRandomSampler, DataLoader
+from helpers.MaskRCNNFunctions import collate_fn
 
 class DatasetWrapper():
 
@@ -22,6 +25,29 @@ class DatasetWrapper():
         self.geography_positives_distribution = {}
         self.resolutions_positive_distribution = {}
         self.normalization_stats = {}
+
+    def get_loaders(self, folded_out_region, batch_size, random_train=False):
+        if random_train:
+            train_set, val_set = self.generate_random_split(train_ratio=0.8, exclude_region=folded_out_region)
+        else:
+            train_set, val_set = self.generate_dataset(folded_out_region)
+
+        sampler = self._diameter_weighted_sampler(train_set.paths, alpha=0.5)
+
+        train_loader = DataLoader(train_set,
+                    shuffle=True,
+                    num_workers=0,
+                    batch_size=batch_size,
+                    collate_fn=collate_fn,
+                    sampler=sampler)
+
+        val_loader = DataLoader(val_set,
+                    shuffle=False,
+                    num_workers=0,
+                    batch_size=batch_size,
+                    collate_fn=collate_fn)
+
+        return train_loader, val_loader
 
     def generate_random_split(self, train_ratio=0.8, exclude_region=None):
         self.all_paths = list(self.root_dir.glob("*.npz"))
@@ -196,6 +222,30 @@ class DatasetWrapper():
                     self.resolutions_positive_distribution[resolution] = {'positive': 0, 'negative': 0}
                 self.resolutions_positive_distribution[resolution]['negative'] += 1
 
+        self.max_res = max(self.train_resolution_distribution.keys())
+
+    def _diameter_weighted_sampler(self, paths, alpha=0.5):
+        max_d = np.zeros(len(paths))
+        for i, path in enumerate(paths):
+            with np.load(path, allow_pickle=True) as tile:
+                labels = tile["labels"]
+            if not labels.any():
+                continue
+            labelled, _ = label(labels)
+            areas = np.bincount(labelled.ravel())[1:]
+            max_d[i] = np.sqrt(areas.max()) * self._get_resolution(path)
+
+        pos = max_d > 0
+        edges = np.logspace(np.log10(max_d[pos].min()), np.log10(max_d[pos].max()), 20)
+        b = np.digitize(max_d, edges)           # empty tiles land in bin 0
+        counts = np.bincount(b, minlength=len(edges) + 1)
+
+        w = (1.0 / counts[b]) ** alpha
+        w = np.minimum(w, np.percentile(w, 99))
+
+        return WeightedRandomSampler(w, num_samples=len(paths), replacement=True)
+
+
     def _get_resolution(self, path):
         # extract resolution from metadata of the image at path
         with np.load(path) as tile:
@@ -316,6 +366,7 @@ class DatasetWrapper():
             }
 
         self.normalization_stats = stats
+        self.normalization_stats['max_res'] = self.max_res
 
         return stats
 

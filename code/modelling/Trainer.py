@@ -34,29 +34,8 @@ class Trainer():
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
 
-    def _get_MaskRCNN_loaders(self, folded_out_region, batch_size, random_train=False):
-
-        if random_train:
-            train_set, val_set = self.dset.generate_random_split(train_ratio=0.8, exclude_region=folded_out_region)
-        else:
-            train_set, val_set = self.dset.generate_dataset(folded_out_region)
-
-        train_loader = DataLoader(train_set,
-                            shuffle=True,
-                            num_workers=0,
-                            batch_size=batch_size,
-                            collate_fn=collate_fn)
-
-        val_loader = DataLoader(val_set,
-                        shuffle=False,
-                        num_workers=0,
-                        batch_size=batch_size,
-                        collate_fn=collate_fn)
-        
-        return train_loader, val_loader
-
     def train_fold(self, folded_out_region, epochs=50, batch_size=8, out_path=None, random_train=False, exclude_region=None):
-        train_loader, val_loader = self._get_MaskRCNN_loaders(folded_out_region, batch_size, random_train=random_train)
+        train_loader, val_loader = self.dset.get_loaders(folded_out_region, batch_size, random_train=random_train)
         model = MaskRCNN()
 
         print(f"Training on {len(train_loader.dataset)} samples, validating on {len(val_loader.dataset)} samples.")

@@ -213,7 +213,7 @@ class MaskRCNNDataset(Dataset):
     The target dictionary contains bounding boxes, labels, masks, and other relevant information."""
 
     # remove path checking for time optimisation
-    def __init__(self, all_paths, norm_stats, augment=True, min_instance_area=10,):
+    def __init__(self, all_paths, norm_stats, augment=True, min_instance_area=25,):
 
         self.augment = augment
         self.paths = all_paths
@@ -409,7 +409,7 @@ class MaskRCNNDataset(Dataset):
             # rotate / flip
             image, mask, res = self._spatial_augment(image, mask, res)
 
-        res_value = np.log1p(res)  / np.log1p(15)
+        res_value = np.log1p(res)  / np.log1p(self.norm_stats['max_res'])  # log scale and normalize to [0, 1]
 
         image = self.handle_outliers(image, li, band_indices)
         image = self._normalise(image, li, band_indices)
@@ -417,6 +417,8 @@ class MaskRCNNDataset(Dataset):
         
         if not np.isfinite(image).all() or not np.isfinite(res_value):
             raise ValueError(f"Non-finite model input after preprocessing: {path}")
+
+        mask = self.clean_mask(mask)
 
         boxes, labels, masks, areas, iscrowd = self._mask_to_instances(mask)
 
@@ -430,7 +432,7 @@ class MaskRCNNDataset(Dataset):
             "resolution": torch.tensor([res_value], dtype=torch.float32)}
         
         self.seen_resolutions.append(res_value)
-        self.object_sizes.extend(areas)
+        self.object_sizes.extend(np.sqrt(areas))
         real_object_diameter = np.sqrt(areas) * res 
         self.real_object_diameters.append(real_object_diameter)
 
