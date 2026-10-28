@@ -15,10 +15,10 @@ from torchvision.ops import box_iou
 ## Displayed in Table 1 of the report.
 STAGE_LRS = {
     1: {
-        "rpn": 1e-3,
-        "roi_heads": 1e-3,
-        "film": 1e-3,
-        "conv1": 1e-3,
+        "rpn": 2.5e-4,
+        "roi_heads": 2.5e-4,
+        "film": 2.5e-3,
+        "conv1": 2.5e-3,
         "fpn": 0.0,
         "layer4": 0.0,
         "layer3": 0.0,
