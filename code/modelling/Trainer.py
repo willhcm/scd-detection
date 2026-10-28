@@ -187,7 +187,13 @@ class Trainer():
                    'bbox_ious': bbox_ious}
 
         np.savez_compressed(out_path / f"training_metrics_fold_{folded_out_region}.npz", **results)
-        np.savez_compressed(out_path / f"res_size_distributions.npz", seen_resolutions=train_loader.dataset.seen_resolutions, object_sizes=train_loader.dataset.object_sizes, real_object_diameters=train_loader.dataset.real_object_diameters)
+        ds = train_loader.dataset
+        np.savez_compressed(
+            out_path / "res_size_distributions.npz",
+            seen_resolutions=np.concatenate([np.ravel(r) for r in ds.seen_resolutions]),
+            object_sizes=np.concatenate([np.ravel(s) for s in ds.object_sizes]),
+            real_object_diameters=np.concatenate([np.ravel(d) for d in ds.real_object_diameters]),
+        )
 
         self.save_model(best_state, out_path, folded_out_region)
 
@@ -208,6 +214,7 @@ class Trainer():
         fold_out_path.mkdir(parents=True, exist_ok=True)
 
         results, state = self.train_fold(folded_out_region=exclude_region, epochs=epochs, batch_size=batch_size, out_path=fold_out_path, random_train=True)
+
         np.savez_compressed(fold_out_path / "random_split_results.npz", **results)
 
     def save_model(self, state, out_path, folded_out_region):
