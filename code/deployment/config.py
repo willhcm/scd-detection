@@ -28,7 +28,8 @@ class DeployConfig:
     object_threshold: float = 0.50
     size_scale: float = 1.0
     size_sigma: float = 0.8
-
+    object_fraction: float = 0.225 # midpoint of 0.1 and 0.35, which are used as object fractions in making the dataset. relativelty arbitrary, just roughly the object:image fraction that model is trained to detect.
+ 
     # veto
     to_veto: bool = True
     veto_threshold: float = 0.6  # tune
