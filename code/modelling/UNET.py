@@ -68,6 +68,8 @@ class UNet(nn.Module):
         widen_conv1(net, in_channels)
         c = list(net.children())
 
+        self.in_channels = in_channels
+
         self.enc1 = Down(nn.Sequential(*c[:3]), 64)
         self.enc2 = Down(nn.Sequential(*c[3:5]), 64)
         self.enc3 = Down(c[5], 128)
