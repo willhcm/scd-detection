@@ -93,8 +93,3 @@ class Cop30Loader:
             ],
         )
         return out_path
-
-loader = Cop30Loader("dem30/tiles")
-
-for zone in range(38, 45):
-    loader.warp_zone(f"EPSG:326{zone}", f"zones/z{zone}.tif", res=30, lat_range=(35, 56))
