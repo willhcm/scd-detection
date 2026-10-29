@@ -225,8 +225,8 @@ class Trainer():
         val_recalls = []
         val_f1s = []
 
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True)
+        optimizer = torch.optim.AdamW(model.param_groups(lr=1e-3, enc_lr=1e-4, film_lr=5e-4))
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
         criterion = nn.BCELoss()
 
         best_f1 = -1.0

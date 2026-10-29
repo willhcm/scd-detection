@@ -7,10 +7,10 @@ import numpy as np
 import random
 from torch.utils.data import Dataset
 import cv2
-from scipy.ndimage import label, find_objects
-from torchvision.ops import box_iou
+from scipy.ndimage import label
 
 _BANDS_TO_LOAD = ['DEM', 'DEM_SLOPE', 'RR', 'LAPLACE']
+
 
 class ResFiLM(nn.Module):
     def __init__(self, cin, cout):
@@ -29,27 +29,6 @@ class ResFiLM(nn.Module):
         x = F.relu(self.bn2(self.conv2(x)))
         return (1 + gamma[:, :, None, None]) * x + beta[:, :, None, None]
 
-class Down(nn.Module):
-    def __init__(self, body, ch):
-        super().__init__()
-        self.body = body
-        self.film = ResFiLM(ch, ch)
-
-    def forward(self, x, res):
-        return self.film(self.body(x), res)
-
-class Up(nn.Module):
-    def __init__(self, cin, cout):
-        super().__init__()
-        self.up = nn.ConvTranspose2d(cin, cout, 2, stride=2)
-        self.film = ResFiLM(cout, cout)
-
-    def forward(self, x, skip, res):
-        x = self.up(x)
-        if x.shape[-2:] != skip.shape[-2:]:
-            x = F.interpolate(x, size=skip.shape[-2:], mode="bilinear", align_corners=False)
-        return self.film(x + skip, res)
-
 
 def widen_conv1(net, n):
     old = net.conv1.weight.data
@@ -61,6 +40,11 @@ def widen_conv1(net, n):
     net.conv1 = conv
 
 
+def up_cat(x, skip):
+    x = F.interpolate(x, size=skip.shape[-2:], mode="bilinear", align_corners=False)
+    return torch.cat([x, skip], dim=1)
+
+
 class UNet(nn.Module):
     def __init__(self, in_channels=4, out_channels=1):
         super().__init__()
@@ -68,31 +52,55 @@ class UNet(nn.Module):
         widen_conv1(net, in_channels)
         c = list(net.children())
 
-        self.in_channels = in_channels
+        self.encoder = nn.ModuleList([
+            nn.Sequential(*c[:3]),   # /2,  64
+            nn.Sequential(*c[3:5]),  # /4,  64
+            c[5],                    # /8,  128
+            c[6],                    # /16, 256
+            c[7],                    # /32, 512
+        ])
+        self.early_film = ResFiLM(64, 64)
 
-        self.enc1 = Down(nn.Sequential(*c[:3]), 64)
-        self.enc2 = Down(nn.Sequential(*c[3:5]), 64)
-        self.enc3 = Down(c[5], 128)
-        self.enc4 = Down(c[6], 256)
-        self.enc5 = Down(c[7], 512)
+        self.bott = nn.Sequential(nn.Conv2d(512, 512, 3, padding=1), nn.ReLU(inplace=True))
+        self.bott_film = ResFiLM(512, 512)
 
-        self.dec4 = Up(512, 256)
-        self.dec3 = Up(256, 128)
-        self.dec2 = Up(128, 64)
-        self.dec1 = Up(64, 64)
+        self.dec4 = nn.Sequential(nn.Conv2d(512 + 256, 256, 3, padding=1), nn.ReLU(inplace=True))
+        self.dec3 = nn.Sequential(nn.Conv2d(256 + 128, 128, 3, padding=1), nn.ReLU(inplace=True))
+        self.dec2 = nn.Sequential(nn.Conv2d(128 + 64, 64, 3, padding=1), nn.ReLU(inplace=True))
+        self.dec1 = nn.Sequential(nn.Conv2d(64 + 64, 64, 3, padding=1), nn.ReLU(inplace=True))
+
+        self.late_film = ResFiLM(64, 64)
         self.head = nn.Conv2d(64, out_channels, 1)
 
-    def forward(self, x, res):
-        e1 = self.enc1(x, res)
-        e2 = self.enc2(e1, res)
-        e3 = self.enc3(e2, res)
-        e4 = self.enc4(e3, res)
-        e5 = self.enc5(e4, res)
+    def param_groups(self, lr, enc_lr, film_lr):
+        films = [self.early_film, self.bott_film, self.late_film]
+        groups = {
+            "enc": list(self.encoder.parameters()),
+            "film": [p for m in films for p in m.parameters()],
+        }
+        seen = {id(p) for g in groups.values() for p in g}
+        groups["rest"] = [p for p in self.parameters() if id(p) not in seen]
 
-        d = self.dec4(e5, e4, res)
-        d = self.dec3(d, e3, res)
-        d = self.dec2(d, e2, res)
-        d = self.dec1(d, e1, res)
+        lrs = {"enc": enc_lr, "film": film_lr, "rest": lr}
+        return [{"params": groups[k], "lr": lrs[k]} for k in groups]
+    
+    def forward(self, x, res):
+        enc1, enc2, enc3, enc4, enc5 = self.encoder
+
+        e1 = self.early_film(enc1(x), res)
+        e2 = enc2(e1)
+        e3 = enc3(e2)
+        e4 = enc4(e3)
+        e5 = enc5(e4)
+
+        b = self.bott(e5)
+        b = self.bott_film(self.bott(b), res)
+
+        d = self.dec4(up_cat(b, e4))
+        d = self.dec3(up_cat(d, e3))
+        d = self.dec2(up_cat(d, e2))
+        d = self.dec1(up_cat(d, e1))
+        d = self.late_film(d, res)
 
         out = self.head(d)
         out = F.interpolate(out, size=x.shape[-2:], mode="bilinear", align_corners=False)
@@ -254,3 +262,4 @@ def evaluate_preds(preds, labels, min_area=25, thr=0.5, iou_thr=0.5):
     obj_fn = n_gt - obj_tp
 
     return precision, recall, f1, obj_tp, obj_fp, obj_fn
+
