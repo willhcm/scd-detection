@@ -14,6 +14,7 @@ import pandas as pd
 from scipy.ndimage import label, find_objects
 from torch.utils.data import WeightedRandomSampler, DataLoader
 from helpers.MaskRCNNFunctions import collate_fn
+from modelling.UNET import UNETDataset
 
 class DatasetWrapper():
 
@@ -26,13 +27,24 @@ class DatasetWrapper():
         self.resolutions_positive_distribution = {}
         self.normalization_stats = {}
 
+    def get_unet_loaders(self, batch_size, random_train=False, folded_out_region=None):
+        self.all_paths = list(self.root_dir.glob("*.npz"))
+
+        train_set, val_set = self._unet_dataset(self.all_paths, augment=True, random_train=random_train, folded_out_region=folded_out_region)
+
+        sampler = self._diameter_weighted_sampler(train_set.paths, alpha=0.4)
+        train_loader = DataLoader(train_set, sampler=sampler, num_workers=0, batch_size=batch_size)
+        val_loader = DataLoader(val_set, shuffle=False, num_workers=0, batch_size=batch_size)
+
+        return train_loader, val_loader
+
     def get_loaders(self, folded_out_region, batch_size, random_train=False):
         if random_train:
             train_set, val_set = self.generate_random_split(train_ratio=0.8, exclude_region=folded_out_region)
         else:
             train_set, val_set = self.generate_dataset(folded_out_region)
 
-        sampler = self._diameter_weighted_sampler(train_set.paths, alpha=0.5)
+        sampler = self._diameter_weighted_sampler(train_set.paths, alpha=0.4)
 
         train_loader = DataLoader(train_set,
                     num_workers=0,
@@ -101,6 +113,18 @@ class DatasetWrapper():
                 MaskRCNNDataset(self.train_paths, self.normalization_stats, augment=True),
                 MaskRCNNDataset(self.test_paths, self.normalization_stats, augment=False)
             )
+    def _unet_dataset(self, paths, augment=False, random_train=False, folded_out_region=None):
+
+        if random_train:
+            self.train_paths, self.val_paths = train_test_split(paths, test_size=0.2, random_state=42)
+        else:
+            self.train_paths = [p for p in paths if np.load(p, allow_pickle=True)['region'] != folded_out_region]
+            self.val_paths = [p for p in paths if np.load(p, allow_pickle=True)['region'] == folded_out_region]
+
+        train_set = UNETDataset(self.train_paths, self.normalization_stats, augment=augment)
+        val_set = UNETDataset(self.val_paths, self.normalization_stats, augment=False)
+
+        return train_set, val_set
 
     def plot_distribution(self):
 

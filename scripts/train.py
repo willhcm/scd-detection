@@ -11,9 +11,17 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 def main(args):
 
     trainer = Trainer(args.root, device="cuda" if torch.cuda.is_available() else "cpu")
-
     out_path = REPO_ROOT / "results" / "training" / args.run
     out_path.mkdir(parents=True, exist_ok=True)
+
+    if args.model.upper() != "MASKRCNN":
+        trainer.train_unet_fold(
+            folded_out_region=args.folded_out_regions[0] if args.folded_out_regions else None,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            out_path=out_path,
+            random_train=args.random_split)
+        return
 
     if args.LORO_CV:
         regions = args.folded_out_regions # Replace with actual region names
