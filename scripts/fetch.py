@@ -1,9 +1,12 @@
 #!/usr/bin/env python
 import argparse
 import os
+from pathlib import Path
+import sys
 
-from cop30 import Cop30Loader
-
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT / "code"))
+from loaders.CopernicusLoader import Cop30Loader
 
 def parse_zones(text):
     zones = []
