@@ -60,6 +60,7 @@ class Trainer():
         stage_start = {1: 0, 2: 50, 3: 70, 4: 90}
         stage_end = {1: 50, 2: 70, 3: 90, 4: epochs}
 
+        patience = 20
         bad_epochs = 0
         optimizer = build_staged_optimizer(model, weight_decay=1e-4)
 
@@ -155,6 +156,10 @@ class Trainer():
                 bad_epochs = 0
             else:
                 bad_epochs += 1
+
+            if bad_epochs >= patience:
+                print(f"Early stopping at epoch {epoch + 1}")
+                break
 
         results = {'train_losses': train_losses,
                    'val_losses': val_losses,
