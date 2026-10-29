@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import boto3
 from botocore import UNSIGNED
 from botocore.config import Config
-import gdal
+from osgeo import gdal
 from pyproj import CRS
 
 gdal.UseExceptions()
