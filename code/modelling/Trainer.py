@@ -227,7 +227,7 @@ class Trainer():
 
         optimizer = torch.optim.AdamW(model.param_groups(lr=1e-3, enc_lr=1e-4, film_lr=5e-4))
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
-        criterion = nn.BCELoss()
+        criterion = nn.BCELoss(pos_weight=torch.tensor([5.0], device=device))
 
         best_f1 = -1.0
         best_state = None
