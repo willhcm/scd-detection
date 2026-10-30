@@ -247,7 +247,7 @@ class Trainer():
                 resolutions = resolutions.to(device)
 
                 optimizer.zero_grad()
-                outputs = model(images)
+                outputs = model(images, resolutions)
                 loss = criterion(outputs, masks)
                 loss.backward()
                 optimizer.step()
@@ -269,7 +269,7 @@ class Trainer():
                     masks = masks.to(device)
                     resolutions = resolutions.to(device)
 
-                    outputs = model(images)
+                    outputs = model(images, resolutions)
                     loss = criterion(outputs, masks)
                     val_loss += loss.item()
                     pixel_precision, pixel_recall, pixel_f1, object_precision, object_recall, object_f1 = evaluate_preds(outputs, masks)
