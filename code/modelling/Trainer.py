@@ -225,7 +225,7 @@ class Trainer():
         val_recalls = []
         val_f1s = []
 
-        optimizer = torch.optim.AdamW(model.param_groups(lr=1e-3, enc_lr=1e-4, film_lr=5e-4))
+        optimizer = torch.optim.AdamW(model.param_groups(lr=1e-4, enc_lr=5e-6, film_lr=1e-4), weight_decay=1e-4)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
         criterion = CombinedLoss(bce_weight=1.0, dice_weight=1.0)
 

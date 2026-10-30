@@ -7,7 +7,7 @@ import torch
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = REPO_ROOT / "results"
 sys.path.insert(0, str(REPO_ROOT / "code"))
-from config import DeployConfig
+from deployment.config import DeployConfig
 from modelling.Tuner import Tuner
 
 # keys must be DeployConfig field names

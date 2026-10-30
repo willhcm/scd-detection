@@ -17,8 +17,6 @@ class ResFiLM(nn.Module):
         super().__init__()
         self.conv1 = nn.Conv2d(cin, cout, 3, padding=1)
         self.bn1 = nn.BatchNorm2d(cout)
-        self.conv2 = nn.Conv2d(cout, cout, 3, padding=1)
-        self.bn2 = nn.BatchNorm2d(cout)
         self.film = nn.Linear(1, cout * 2)
         nn.init.zeros_(self.film.weight)
         nn.init.zeros_(self.film.bias)
@@ -63,13 +61,13 @@ class UNet(nn.Module):
         ])
         self.early_film = ResFiLM(64, 64)
 
-        self.bott = nn.Sequential(nn.Conv2d(512, 512, 3, padding=1), nn.ReLU(inplace=True))
+        self.bott = nn.Sequential(nn.Conv2d(512, 512, 3, padding=1), nn.BatchNorm2d(512), nn.ReLU(inplace=True))
         self.bott_film = ResFiLM(512, 512)
 
-        self.dec4 = nn.Sequential(nn.Conv2d(512 + 256, 256, 3, padding=1), nn.ReLU(inplace=True))
-        self.dec3 = nn.Sequential(nn.Conv2d(256 + 128, 128, 3, padding=1), nn.ReLU(inplace=True))
-        self.dec2 = nn.Sequential(nn.Conv2d(128 + 64, 64, 3, padding=1), nn.ReLU(inplace=True))
-        self.dec1 = nn.Sequential(nn.Conv2d(64 + 64, 64, 3, padding=1), nn.ReLU(inplace=True))
+        self.dec4 = nn.Sequential(nn.Conv2d(512 + 256, 256, 3, padding=1), nn.BatchNorm2d(256), nn.ReLU(inplace=True))
+        self.dec3 = nn.Sequential(nn.Conv2d(256 + 128, 128, 3, padding=1), nn.BatchNorm2d(128), nn.ReLU(inplace=True))
+        self.dec2 = nn.Sequential(nn.Conv2d(128 + 64, 64, 3, padding=1), nn.BatchNorm2d(64), nn.ReLU(inplace=True))
+        self.dec1 = nn.Sequential(nn.Conv2d(64 + 64, 64, 3, padding=1), nn.BatchNorm2d(64), nn.ReLU(inplace=True))
 
         self.late_film = ResFiLM(64, 64)
         self.head = nn.Conv2d(64, out_channels, 1)
