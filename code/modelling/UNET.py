@@ -153,6 +153,24 @@ class UNETDataset(Dataset):
 
         return image, mask, res * s
 
+    def pad_to_size(self, image, mask, target_size):
+        h, w = mask.shape
+        th, tw = target_size
+        if h >= th and w >= tw:
+            return image, mask
+
+        pad_h = max(0, th - h)
+        pad_w = max(0, tw - w)
+        pad_top = pad_h // 2
+        pad_bottom = pad_h - pad_top
+        pad_left = pad_w // 2
+        pad_right = pad_w - pad_left
+
+        image = np.pad(image, ((0, 0), (pad_top, pad_bottom), (pad_left, pad_right)), mode='constant', constant_values=0)
+        mask = np.pad(mask, ((pad_top, pad_bottom), (pad_left, pad_right)), mode='constant', constant_values=0)
+
+        return image, mask
+
     def spatial_augment(self, image, mask, res):
 
         if random.random() > 0.5:
@@ -221,6 +239,10 @@ class UNETDataset(Dataset):
         if self.augment:
             image, mask, res = self.spatial_augment(image, mask, res)
         image = self._normalise(image, li, band_indices)
+        image, mask = self.pad_to_size(image, mask, target_size=(512, 512))
+
+        image = np.ascontiguousarray(image, dtype=np.float32)
+        mask = np.ascontiguousarray(mask, dtype=np.float32)
 
         res_value = np.float32(np.log1p(res) / np.log1p(self.norm_stats["max_res"]))
         return image, mask[None], res_value
