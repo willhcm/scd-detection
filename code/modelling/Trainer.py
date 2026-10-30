@@ -272,6 +272,9 @@ class Trainer():
                     outputs = model(images, resolutions)
                     loss = criterion(outputs, masks)
                     val_loss += loss.item()
+
+                    outputs = outputs.detach().cpu().numpy()
+                    masks = masks.detach().cpu().numpy()
                     pixel_precision, pixel_recall, pixel_f1, object_precision, object_recall, object_f1 = evaluate_preds(outputs, masks)
             
 
