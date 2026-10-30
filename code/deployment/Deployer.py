@@ -179,6 +179,8 @@ class Deployer:
         # exp and normalise (divide weights by their row sum, so it sums to 1) to get weights for each object across resolutions.
         weights = np.exp(logits)
         weights /= weights.sum(axis=1, keepdims=True)
+        bg = np.full((1, len(resolutions)), 1 / len(resolutions))
+        weights = np.vstack([bg, weights])      
 
         # Pass 2: weighted merge, processed in bands.
         merged = np.lib.format.open_memmap(
@@ -231,10 +233,7 @@ class Deployer:
                 best = np.fmax(best, cur)
 
                 # Object-specific weight for this resolution.
-                pixel_weights = weights[
-                    np.clip(band_labels, 0, n_objects),
-                    j,
-                ].astype(np.float32, copy=False)
+                pixel_weights = weights[band_labels, j].astype(np.float32, copy=False)
 
                 effective_weights = pixel_weights * valid
 
