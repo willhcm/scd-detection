@@ -18,7 +18,7 @@ import copy
 from tqdm import tqdm
 REPO_ROOT = Path(__file__).resolve().parent.parent
 from scipy.ndimage import label
-from modelling.UNET import UNet, evaluate_preds
+from modelling.UNET import UNet, evaluate_preds, CombinedLoss
 
 class Trainer():
 
@@ -227,7 +227,7 @@ class Trainer():
 
         optimizer = torch.optim.AdamW(model.param_groups(lr=1e-3, enc_lr=1e-4, film_lr=5e-4))
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
-        criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([5.0], device=device))
+        criterion = CombinedLoss(bce_weight=1.0, dice_weight=1.0)
 
         best_f1 = -1.0
         best_state = None

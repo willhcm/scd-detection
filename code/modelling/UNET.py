@@ -283,3 +283,16 @@ def evaluate_preds(preds, labels, min_area=25, thr=0.5, iou_thr=0.5):
     obj_fn = n_gt - obj_tp
 
     return {'tp': tp, 'fp': fp, 'fn': fn, 'obj_tp': obj_tp, 'obj_fp': obj_fp, 'obj_fn': obj_fn}
+
+class CombinedLoss(nn.Module):
+    def __init__(self, bce_weight=1.0, dice_weight=1.0):
+        super().__init__()
+        self.bce_weight = bce_weight
+        self.dice_weight = dice_weight
+
+    def forward(self, preds, targets):
+        bce_loss = F.binary_cross_entropy(preds, targets)
+        smooth = 1e-6
+        intersection = (preds * targets).sum()
+        dice_loss = 1 - (2. * intersection + smooth) / (preds.sum() + targets.sum() + smooth)
+        return self.bce_weight * bce_loss + self.dice_weight * dice_loss
