@@ -53,7 +53,7 @@ class UNet(nn.Module):
         c = list(net.children())
 
         self.in_channels = in_channels
-        
+
         self.encoder = nn.ModuleList([
             nn.Sequential(*c[:3]),   # /2,  64
             nn.Sequential(*c[3:5]),  # /4,  64
@@ -208,7 +208,7 @@ class UNETDataset(Dataset):
 
     def __getitem__(self, idx):
         d = np.load(self.paths[idx], allow_pickle=True)
-        res = float(d["resolution"])
+        res = float(d["res"])
         if not np.isfinite(res) or res <= 0:
             raise ValueError(f"bad resolution in {self.paths[idx]}: {res}")
 
