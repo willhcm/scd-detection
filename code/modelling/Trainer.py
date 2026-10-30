@@ -277,7 +277,14 @@ class Trainer():
 
                     outputs = outputs.detach().cpu().numpy()
                     masks = masks.detach().cpu().numpy()
-                    tp, fp, fn, obj_tp, obj_fp, obj_fn += evaluate_preds(outputs, masks)
+                    metrics = evaluate_preds(outputs, masks)
+
+                    tp += metrics['tp']
+                    fp += metrics['fp']
+                    fn += metrics['fn']
+                    obj_tp += metrics['obj_tp']
+                    obj_fp += metrics['obj_fp']
+                    obj_fn += metrics['obj_fn']
             
             pixel_precision = tp / (tp + fp + eps)
             pixel_recall = tp / (tp + fn + eps)

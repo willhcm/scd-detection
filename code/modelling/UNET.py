@@ -261,10 +261,6 @@ def evaluate_preds(preds, labels, min_area=25, thr=0.5, iou_thr=0.5):
     tp = (preds & labels).sum()
     fp = (preds & ~labels).sum()
     fn = (~preds & labels).sum()
-    eps = 1e-8
-    precision = tp / (tp + fp + eps)
-    recall = tp / (tp + fn + eps)
-    f1 = 2 * precision * recall / (precision + recall + eps)
 
     gt_lab, n_gt = label(labels)
     used, obj_tp = set(), 0
@@ -285,9 +281,7 @@ def evaluate_preds(preds, labels, min_area=25, thr=0.5, iou_thr=0.5):
     obj_fp = n_pred - obj_tp
     obj_fn = n_gt - obj_tp
 
-    object_precision = obj_tp / (obj_tp + obj_fp + eps)
-    object_recall = obj_tp / (obj_tp + obj_fn + eps)
-    object_f1 = 2 * object_precision * object_recall / (object_precision + object_recall + eps)
+    out = {'tp': tp, 'fp': fp, 'fn': fn, 'obj_tp': obj_tp, 'obj_fp': obj_fp, 'obj_fn': obj_fn}
 
-    return tp, fp, fn, obj_tp, obj_fp, obj_fn
+    return out
 
