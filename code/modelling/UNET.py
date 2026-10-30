@@ -249,6 +249,7 @@ class UNETDataset(Dataset):
 
 def evaluate_preds(preds, labels, min_area=25, thr=0.5, iou_thr=0.5):
     preds = preds > thr
+    labels = labels > 0.5
 
     pred_lab, n = label(preds)
     areas = np.bincount(pred_lab.ravel(), minlength=n + 1)
@@ -281,7 +282,4 @@ def evaluate_preds(preds, labels, min_area=25, thr=0.5, iou_thr=0.5):
     obj_fp = n_pred - obj_tp
     obj_fn = n_gt - obj_tp
 
-    out = {'tp': tp, 'fp': fp, 'fn': fn, 'obj_tp': obj_tp, 'obj_fp': obj_fp, 'obj_fn': obj_fn}
-
-    return out
-
+    return {'tp': tp, 'fp': fp, 'fn': fn, 'obj_tp': obj_tp, 'obj_fp': obj_fp, 'obj_fn': obj_fn}
