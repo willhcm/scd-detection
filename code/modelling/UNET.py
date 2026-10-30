@@ -52,6 +52,8 @@ class UNet(nn.Module):
         widen_conv1(net, in_channels)
         c = list(net.children())
 
+        self.in_channels = in_channels
+        
         self.encoder = nn.ModuleList([
             nn.Sequential(*c[:3]),   # /2,  64
             nn.Sequential(*c[3:5]),  # /4,  64
