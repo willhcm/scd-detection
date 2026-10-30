@@ -248,7 +248,7 @@ class UNETDataset(Dataset):
         return image, mask[None], res_value
 
 def evaluate_preds(preds, labels, min_area=25, thr=0.5, iou_thr=0.5):
-    preds, labels = preds > thr, labels > thr
+    preds = preds > thr
 
     pred_lab, n = label(preds)
     areas = np.bincount(pred_lab.ravel(), minlength=n + 1)
@@ -285,5 +285,9 @@ def evaluate_preds(preds, labels, min_area=25, thr=0.5, iou_thr=0.5):
     obj_fp = n_pred - obj_tp
     obj_fn = n_gt - obj_tp
 
-    return precision, recall, f1, obj_tp, obj_fp, obj_fn
+    object_precision = obj_tp / (obj_tp + obj_fp + eps)
+    object_recall = obj_tp / (obj_tp + obj_fn + eps)
+    object_f1 = 2 * object_precision * object_recall / (object_precision + object_recall + eps)
+
+    return tp, fp, fn, obj_tp, obj_fp, obj_fn
 

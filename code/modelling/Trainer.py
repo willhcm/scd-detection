@@ -263,6 +263,8 @@ class Trainer():
             # Validation
             model.eval()
             val_loss = 0.0
+            tp, fp, fn, obj_tp, obj_fp, obj_fn = 0, 0, 0, 0, 0, 0
+            eps = 1e-8
             with torch.no_grad():
                 for images, masks, resolutions in val_loader:
                     images = images.to(device)
@@ -275,8 +277,15 @@ class Trainer():
 
                     outputs = outputs.detach().cpu().numpy()
                     masks = masks.detach().cpu().numpy()
-                    pixel_precision, pixel_recall, pixel_f1, object_precision, object_recall, object_f1 = evaluate_preds(outputs, masks)
+                    tp, fp, fn, obj_tp, obj_fp, obj_fn += evaluate_preds(outputs, masks)
             
+            pixel_precision = tp / (tp + fp + eps)
+            pixel_recall = tp / (tp + fn + eps)
+            pixel_f1 = 2 * pixel_precision * pixel_recall / (pixel_precision + pixel_recall + eps)
+            object_precision = obj_tp / (obj_tp + obj_fp + eps)
+            object_recall = obj_tp / (obj_tp + obj_fn + eps)
+            object_f1 = 2 * object_precision * object_recall / (object_precision + object_recall + eps) if (object_precision + object_recall) > 0 else 0
+
 
             val_loss /= len(val_loader)
             val_losses.append(val_loss)
