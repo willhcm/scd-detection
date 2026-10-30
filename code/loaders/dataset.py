@@ -121,6 +121,8 @@ class DatasetWrapper():
             self.train_paths = [p for p in paths if np.load(p, allow_pickle=True)['region'] != folded_out_region]
             self.val_paths = [p for p in paths if np.load(p, allow_pickle=True)['region'] == folded_out_region]
 
+        self._analyze_dataset()
+        self._estimate_normalization_stats(self.train_paths)
         train_set = UNETDataset(self.train_paths, self.normalization_stats, augment=augment)
         val_set = UNETDataset(self.val_paths, self.normalization_stats, augment=False)
 
