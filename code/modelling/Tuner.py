@@ -180,7 +180,7 @@ class Tuner():
         return out
 
     def tune(self, param_grid):
-        best_f1 = -1
+        best_iou = -1
         best_params = None
         best_results = None
 
@@ -191,14 +191,14 @@ class Tuner():
             print(f"Evaluating params: {params}")
             preds = self.run(params)
             metrics = self.evaluate_results(preds)
-            f1 = metrics['object_f1']
+            iou = metrics['pixel_iou']
 
-            print(f"Params: {params}, Object F1: {f1:.4f}")
+            print(f"Params: {params}, Pixel IoU: {iou:.4f}")
 
-            if f1 > best_f1:
-                best_f1 = f1
+            if iou > best_iou:
+                best_iou = iou
                 best_params = params
                 best_results = metrics
 
-        print(f"Best params: {best_params}, Best Object F1: {best_f1:.4f}")
+        print(f"Best params: {best_params}, Best Pixel IoU: {best_iou:.4f}")
         return best_params, best_results
