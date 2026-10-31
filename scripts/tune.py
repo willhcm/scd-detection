@@ -12,10 +12,9 @@ from modelling.Tuner import Tuner
 
 # keys must be DeployConfig field names
 PARAM_GRID = {
-    'score_threshold': [0.5, 0.6, 0.7, 0.8],
-    'mask_threshold': [0.5, 0.6, 0.7, 0.8],
-    'veto_threshold': [0.5, 0.6, 0.7, 0.8],
-    'detect_threshold': [0.5, 0.6, 0.7, 0.8]
+    'score_threshold': [0.6, 0.7, 0.8, 0.9],
+    'mask_threshold': [0.4, 0.5, 0.6, 0.7],
+    'veto_threshold': [0.6, 0.7, 0.8, 0.9],
 }
 
 # only used by the veto stage, pointless to sweep with --no_veto
@@ -29,7 +28,7 @@ DEPLOYER_PARAMS = {
     "veto_threshold": 0.60, # tune on larger train set
     "score_threshold": 0.60, # to tune
     "mask_threshold": 0.55, # to tune
-    "detect_threshold": 0.6, # to tune
+    "detect_threshold": 0.4, # to tune
     "context_scale": 5.0,
     "min_context_width_m": 750.0,
     "max_context_width_m": 4000.0,

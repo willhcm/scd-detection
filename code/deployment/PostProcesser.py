@@ -209,6 +209,7 @@ class PostProcessor:
                 > self.detect_threshold
             )
         )
+        print(f' min: {np.min(prob_raster)}, max: {np.max(prob_raster)}')
 
         # ndimage label
         labeled, n_objects = ndi_label(binary)

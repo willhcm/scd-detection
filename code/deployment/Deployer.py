@@ -614,7 +614,6 @@ class ResPredictor():
             # calculate tile positions (using stride and res)
             minx, miny, maxx, maxy = dem_source.bounds
 
-            print(f"bounds: {minx:g}, {miny:g}, {maxx:g}, {maxy:g}, tile size: {tile_w_m:g} m, stride: {stride_m:g} m, overlap: {self.overlap_m:g} m")
             x_positions = self._axis_positions(
                             minx,
                             maxx,
@@ -722,8 +721,6 @@ class ResPredictor():
                 p[~ok] = np.nan
             prob_map.flush()
             del weight_map
-
-            print(f"Completed {resolution:g} m inference: {predicted_tiles}/{total_tiles} tiles predicted, {skipped_tiles} skipped.")
 
         finally:
             if progress is not None:
