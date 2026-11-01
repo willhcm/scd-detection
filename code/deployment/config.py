@@ -1,4 +1,4 @@
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, replace, field
 
 
 @dataclass(frozen=True)
@@ -16,9 +16,9 @@ class DeployConfig:
     batch_size: int = 16
 
     # detection
-    score_threshold: float = 0.65  # tune
-    mask_threshold: float = 0.50  # tune
-    detect_threshold: float = 0.6  # tune
+    score_threshold: float = 0.60  # tuned
+    mask_threshold: float = 0.40  # tuned
+    detect_threshold: float = 0.2
 
     # merging across resolutions
     support_threshold: float = 0.65
@@ -32,7 +32,7 @@ class DeployConfig:
  
     # veto
     to_veto: bool = True
-    veto_threshold: float = 0.6  # tune
+    veto_threshold: float = 0.9  # tuned
     veto_batch_size: int = 16
     veto_context_tile_size: int = 224
     veto_object_fraction: float = 0.5
@@ -44,7 +44,7 @@ class DeployConfig:
     export_threshold: float = 0.40
     min_object_m2: float = 400.0  # 20m x 20m
     min_native_pixels: int = 25
-    requested_params: set = {'predictions', 'transform', 'crs'}
+    requested_params: set = field(default_factory=lambda: {"predictions", "transform", "crs"})
 
 _cfg = None
 
