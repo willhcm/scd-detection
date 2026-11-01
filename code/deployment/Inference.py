@@ -44,7 +44,7 @@ class SCDModel():
                 hyperparams=None,
                 run_name=None,
                 to_veto=True, 
-                requested_params=None):
+                requested_returns=None):
 
         if to_veto and veto_model_state is None:
             raise ValueError("to_veto is True but no veto_model_state was given.")
@@ -60,7 +60,7 @@ class SCDModel():
         # config needs the resolved DEM path and its nodata value, so it is
         # initialised after the DEM has been found/merged.
         self.dem_path = self._resolve_data_source(dem_path)
-        self.deployer = self._create_deployer(hyperparams, requested_params)
+        self.deployer = self._create_deployer(hyperparams, requested_returns)
 
     # PUBLIC METHODS
     def set_params(self, **params):
