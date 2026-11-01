@@ -237,9 +237,7 @@ class Deployer:
 
                 effective_weights = pixel_weights * valid
 
-                numerator += np.nan_to_num(cur, nan=0.0) * (
-                    effective_weights
-                )
+                numerator += np.nan_to_num(cur, nan=0.0) * (effective_weights)
                 denominator += effective_weights
 
             result = np.full(shape, np.nan, dtype=np.float32)
@@ -370,33 +368,30 @@ class Deployer:
 
         predictions = self.predict()
 
-        merged, transform, crs= self.new_voting_scheme(predictions)
+        merged, transform, crs, _, _ = self.merge_predictions_pyramid(predictions)
+        available = {
+                    "raw": predictions,
+                    "predictions": merged,
+                    "transform": transform,
+                    "crs": crs}
+
+        requested_params = self.cfg.requested_params
 
         if self.cfg.to_veto:
-            accepted, rejected, veto_probability_map, out_transform, out_crs = self.veto(merged, transform, crs)
+            accepted, rejected, veto_probability_map, transform, crs = self.veto(merged, transform, crs)
+            available.update({"accepted": accepted,
+                              "rejected": rejected,
+                              "veto_probability_map": veto_probability_map,
+                              "transform": transform,
+                              "crs": crs})
 
-            out = {
-                "raw": predictions,
-                "predictions": accepted,
-                "rejected": rejected,
-                "veto_probability_map": veto_probability_map,
-                "transform": out_transform,
-                "crs": out_crs,
-            }
-
-        else:
-            out = {
-                "raw": predictions,
-                "predictions": merged,
-                "transform": transform,
-                "crs": crs,
-            }
+        out = tuple(available[k] for k in requested_params) if requested_params else available
 
         return out
 
     # merges all veto-cleaned predictions and then sieves remaining predictions
     # which are too physically small to be reasonably resolvable given the native DEM. 
-    def merge_predictions(self, cleaned, transform, crs, output_path):
+    def save_predictions(self, cleaned, transform, crs, output_path):
         """
 
         Merges the Veto-cleaned predictions into a single shapefile, sieving out predictions that are too small to be reasonably resolvable given the native DEM resolution.

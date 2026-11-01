@@ -19,6 +19,12 @@ def main(args):
 
     names = {f.name for f in fields(DeployConfig)} - NOT_OVERRIDABLE
     overrides = {k: v for k, v in vars(args).items() if k in names}
+    requested_returns = {k.split("_")[1]: True for k in vars(args) if k.startswith("return_") and getattr(args, k)}
+    
+    requested_returns["predictions"] = True
+    requested_returns['transform'] = True
+    requested_returns['crs'] = True
+    requested_returns = set(k for k, v in requested_returns.items() if v)
 
     out_path = RESULTS_DIR / args.run_name
     if out_path.exists():
@@ -45,19 +51,18 @@ def main(args):
         out_path=out_path,
         hyperparams=overrides,
         run_name=args.run_name,
-        to_veto=not args.no_veto)
+        to_veto=not args.no_veto,
+        requested_returns=requested_returns)
 
     print("effective config:")
     for k, v in asdict(config.get()).items():
         print(f"  {k} = {v}")
 
-    predictions, transform, crs, coverage, support = scd_model.predict(
+    results = scd_model.predict(
         return_coverage=True,
         return_support=True)
 
-    if args.return_all:
-        return predictions, transform, crs, coverage, support
-
+    return results
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Deploy SCD model on DEM data.")
@@ -67,7 +72,6 @@ if __name__ == "__main__":
     parser.add_argument("--veto_model_state_path", type=Path, required=False, help="Path to the veto model state dictionary.")
     parser.add_argument("--device", type=str, default="cuda", help="Device to run the model on (e.g., 'cuda' or 'cpu').")
     parser.add_argument("--resolutions", type=float, nargs='+', default=[1.0], help="List of resolutions to process.")
-    parser.add_argument("--return_all", action="store_true", help="Return coverage and support as well (only useful when calling main() from a notebook).")
     parser.add_argument("--no_veto", action="store_true", help="dont veto")
 
     # one flag per DeployConfig field; only flags actually passed end up in args
@@ -81,5 +85,12 @@ if __name__ == "__main__":
             cfg_args.add_argument(flag, action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help=help_text)
         else:
             cfg_args.add_argument(flag, type=f.type, default=argparse.SUPPRESS, help=help_text)
+
+    request_arggs = parser.add_argument_group("requested outputs")
+    request_arggs.add_argument("--return_all", action="store_true")
+    request_arggs.add_argument("--return_coverage", action="store_true")
+    request_arggs.add_argument("--return_support", action="store_true")
+    request_arggs.add_argument("--return_accepted", action="store_true")
+    request_arggs.add_argument("--return_rejected", action="store_true")
 
     main(parser.parse_args())

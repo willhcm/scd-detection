@@ -44,6 +44,7 @@ class DeployConfig:
     export_threshold: float = 0.40
     min_object_m2: float = 400.0  # 20m x 20m
     min_native_pixels: int = 25
+    requested_params: set = {'predictions', 'transform', 'crs'}
 
 _cfg = None
 

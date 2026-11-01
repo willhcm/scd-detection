@@ -43,7 +43,8 @@ class SCDModel():
                 veto_model_state=None, 
                 hyperparams=None,
                 run_name=None,
-                to_veto=True):
+                to_veto=True, 
+                requested_params=None):
 
         if to_veto and veto_model_state is None:
             raise ValueError("to_veto is True but no veto_model_state was given.")
@@ -59,7 +60,7 @@ class SCDModel():
         # config needs the resolved DEM path and its nodata value, so it is
         # initialised after the DEM has been found/merged.
         self.dem_path = self._resolve_data_source(dem_path)
-        self.deployer = self._create_deployer(hyperparams)
+        self.deployer = self._create_deployer(hyperparams, requested_params)
 
     # PUBLIC METHODS
     def set_params(self, **params):
@@ -67,10 +68,7 @@ class SCDModel():
         config.update(**params)
         self.deployer = Deployer(self.MaskRCNN_model_state, self.veto_model_state)
 
-    def predict(self,
-                return_coverage=False,
-                return_support=False,
-                return_centroids=False):
+    def predict(self):
 
         print('Running SCD model prediction...')
 
@@ -78,14 +76,7 @@ class SCDModel():
 
         out_path = self.out_path / "predictions.shp"
 
-        requested = {
-            "predictions": True,
-            "transform": True,
-            "crs": True,
-            "coverage": return_coverage,
-            "support": return_support}
-
-        self.deployer.merge_predictions(results['predictions'], results['transform'], results['crs'], out_path)
+        self.deployer.save_predictions(results['predictions'], results['transform'], results['crs'], out_path)
 
         # write bounds of DEM to a text file for reference
         with open(self.out_path / "covered_bounds.txt", "a") as f:
@@ -93,10 +84,10 @@ class SCDModel():
             f.write(f"Bounds of DEM: {self.DEM_bounds}\n")
             f.write(f"CRS of DEM: {self.DEM_crs}\n")
 
-        return tuple(results[key] for key, include in requested.items() if include)
+        return results
 
     # Private
-    def _create_deployer(self, hyperparams):
+    def _create_deployer(self, hyperparams, requested_returns):
 
         config.init(
             dem_path=self.dem_path,
@@ -105,6 +96,7 @@ class SCDModel():
             nodata=self.NODATA if self.NODATA is not None else -9999,
             to_veto=self.to_veto,
             **(hyperparams or {}),
+            requested_returns=requested_returns or None,
         )
 
         return Deployer(self.MaskRCNN_model_state, self.veto_model_state)
