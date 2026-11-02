@@ -347,7 +347,7 @@ class Deployer:
         merged, objects, transform, crs, obj_score, provisional = self.weighted_vote(predictions)
         available = {
             "raw": predictions,
-            "pre_veto": merged,
+            "unvetoed": merged,
             "predictions": objects,
             "obj_score": obj_score,
             "provisional": provisional,
@@ -419,7 +419,7 @@ class Deployer:
         output_path = Path(output_path)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        NPYS = ["raw", "provisional", "obj_score"]
+        NPYS = ["raw", "provisional", "obj_score", 'unvetoed']
         saved = {}
 
         for req in requested_returns:

@@ -2,15 +2,10 @@ from scipy.ndimage import distance_transform_edt
 import numpy as np
 
 VETO_SCALAR_NAMES = (
-    "candidate_mean_minus_annulus_mean_m",
-    "candidate_median_minus_annulus_median_m",
-    "candidate_p10_minus_annulus_median_m",
-    "context_relief_p95_p05_m",
     "candidate_mean_slope",
     "annulus_mean_slope",
-    "diameter_context_ratio",
     "log_context_width_m",
-)
+    'depth_width_ratio')
 
 # ChatGPT assistance with _make_annulus and dem context functions
 def _make_annulus(candidate_mask):
@@ -27,7 +22,7 @@ def _make_annulus(candidate_mask):
         cx = candidate_mask.shape[1] // 2
         candidate_mask[cy, cx] = True
 
-    # scd approx siz
+    # scd approx size
     equivalent_radius_px = max(
         np.sqrt(candidate_mask.sum() / np.pi),
         1.0)
@@ -90,18 +85,18 @@ def build_dem_context(
 
     context_p05, context_p95 = np.percentile(
         context_values,
-        [5, 95],
-    )
+        [5, 95])
 
     context_relief = max(float(context_p95 - context_p05), 1e-3)
 
-    # Relative DEM preserves whether the candidate lies above or below
-    # its immediate surroundings.
-    relative_dem = dem - annulus_median
+    # relative DEM scaling same as in MaskRCNN model, just larger context.
+    # normalisations stats needed.
+    relative_dem = dem - np.median(dem)
+    # robust scale DEM.
 
-    relative_dem_scaled = np.clip(relative_dem / context_relief, -5.0, 5.0)
+    # repeat for slope
 
-    height, width = dem.shape
+    h, width = dem.shape
     pixel_size_m = float(context_width_m) / float(width)
 
     grad_y, grad_x = np.gradient(dem, pixel_size_m, pixel_size_m)
@@ -115,27 +110,17 @@ def build_dem_context(
     candidate_slope = slope[candidate_valid]
     annulus_slope = slope[annulus_valid]
 
-    scalar_features = np.asarray(
-        [float(np.mean(candidate_values) - annulus_mean), # relative height
-            float(np.median(candidate_values) - annulus_median), # relative height 2
-            float(np.percentile(candidate_values, 10) - annulus_median), # relative height 3
-            context_relief, 
+    depth = np.median(candidate_values) - annulus_mean
+    depth_width_ratio = depth / candidate_diameter_m 
+
+    scalar_features = np.asarray([
             float(np.mean(candidate_slope)), # avg slope in SCD
             float(np.mean(annulus_slope)), # avg slope in surrounding ring
-            float(candidate_diameter_m / context_width_m), # size of SCD vs tile size
-            float(np.log1p(context_width_m))], # context of tile width
+            float(np.log1p(context_width_m)),
+            float(depth_width_ratio)], # context of tile width
               dtype=np.float32)
 
     # return dem, slope (stacked) and scalsrs
-    dem_context = np.stack([relative_dem_scaled, slope_scaled, candidate_mask.astype(np.float32)], axis=0).astype(np.float32)
+    dem_context = np.stack([relative_dem, slope_scaled, candidate_mask.astype(np.float32)], axis=0).astype(np.float32)
 
     return dem_context, scalar_features
-
-def normalise_dem_context(dem_context):
-    # dem context is a 3-channel array: [relative_dem_scaled, slope_scaled, candidate_mask]
-    # We will normalise the first two channels (relative_dem_scaled and slope_scaled) but leave mask unchanged.
-
-    mean = np.mean(dem_context[:2], axis=(1, 2), keepdims=True)
-    std = np.std(dem_context[:2], axis=(1, 2), keepdims=True)
-    dem_context[:2] = (dem_context[:2] - mean) / (std + 1e-6)
-    return dem_context

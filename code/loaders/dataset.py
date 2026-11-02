@@ -627,5 +627,3 @@ class DatasetRefiner():
                     tiles.append(path)
 
         return tiles
-
-    

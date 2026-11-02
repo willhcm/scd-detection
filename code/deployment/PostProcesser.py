@@ -172,8 +172,6 @@ class PostProcessor:
 
         scalar_features = np.asarray(scalar_features, dtype=np.float32).reshape(-1)
 
-        dem_context = normalise_dem_context(dem_context)
-
         return {
             "dem_context": np.ascontiguousarray(
                 dem_context,

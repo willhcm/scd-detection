@@ -89,6 +89,6 @@ if __name__ == "__main__":
     request_arggs.add_argument("--return_raw", action="store_true")
     request_arggs.add_argument("--return_provisional", action="store_true")
     request_arggs.add_argument("--return_provisional_objects", action="store_true")
-    request_arggs.add_argument("--return_pre-veto", action="store_true")
+    request_arggs.add_argument("--return_unvetoed", action="store_true")
 
     main(parser.parse_args())

@@ -16,8 +16,8 @@ class DeployConfig:
     batch_size: int = 16
 
     # Mask-RCNN detection
-    score_threshold: float = 0.60
-    mask_threshold: float = 0.40  # low, keep candidates for postproc to filter
+    score_threshold: float = 0.60 # tuned
+    mask_threshold: float = 0.40  # tuned
 
     # merging across resolutions
     merge_band: int = 1024

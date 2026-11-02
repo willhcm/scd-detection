@@ -17,7 +17,7 @@ import sys
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 
-from VetoHelpers import build_dem_context, VETO_SCALAR_NAMES
+from helpers.VetoHelpers import build_dem_context, VETO_SCALAR_NAMES
 
 class DEMVetoLoader:
 
@@ -27,14 +27,15 @@ class DEMVetoLoader:
         dem_path,
         target_crs = None,
         context_scale=4.0,
-        min_width_m=750.0,
-        max_width_m=4000.0,
-        tile_size=224):
+        min_width_m=400.0,
+        max_width_m=10000.0,
+        tile_size=400):
 
         self.predictions = ShapeLabels(shp_path)
         self.dem_source = DataSource.from_tiff(
             dem_path,
             type="DEM")
+        
         self.dem_res = self.dem_source.res
         self.target_crs = target_crs
         self.tiles = []
@@ -43,7 +44,7 @@ class DEMVetoLoader:
         self.min_width_m = min_width_m
         self.max_width_m = max_width_m
 
-    # build tile from candidate object, including local RGB and DEM context
+    # build tile from candidate object, including DEM context
     def _make_tile(self, obj, object_fraction=0.5):
 
         # centroid 
@@ -51,7 +52,7 @@ class DEMVetoLoader:
         cy = obj["cy"]
 
         # object size
-        diameter_m = (obj["diameter"] * self.dem_source.res)
+        diameter_m = obj['diameter']
         object_crop_width_m = (diameter_m / object_fraction)
 
         # DEM crop width
@@ -60,9 +61,7 @@ class DEMVetoLoader:
             np.clip(
                 self.context_scale * object_crop_width_m,
                 self.min_width_m,
-                self.max_width_m,
-            )
-        )
+                self.max_width_m))
 
         # build bbox around centre
         context_half_width = context_width_m / 2.0
@@ -70,8 +69,7 @@ class DEMVetoLoader:
             cx - context_half_width,
             cy - context_half_width,
             cx + context_half_width,
-            cy + context_half_width,
-        )
+            cy + context_half_width)
 
         dem = self.dem_source.reproject_to_shape(
             target_crs=self.target_crs,
@@ -110,8 +108,7 @@ class DEMVetoLoader:
             dem=dem,
             candidate_mask=context_mask,
             context_width_m=context_width_m,
-            candidate_diameter_m=diameter_m,
-        )
+            candidate_diameter_m=diameter_m)
 
         if dem_context is None:
             return None
@@ -250,8 +247,7 @@ class DEMVetoLoader:
                     f"Local width: {tile['local_crop_width_m']:.1f} m\n"
                     f"Context width: {tile['context_width_m']:.1f} m\n\n"
                     f"Candidate {state['index'] + 1} / {len(candidates)}\n"
-                    f'Depth: {tile["scalar_features"][0]:.1f} m\n'
-                )
+                    f'Depth_width_ratio: {tile["scalar_features"][-1]:.1f} m\n')
 
         # ------------------------------------------------------------------
         # Label callback
