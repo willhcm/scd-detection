@@ -416,7 +416,7 @@ class Deployer:
 
     # merges all veto-cleaned predictions and then sieves remaining predictions
     # which are too physically small to be reasonably resolvable given the native DEM. 
-    def save_predictions(self, results, transform, crs, output_path):
+    def save_predictions(self, results, output_path):
         """
 
         Merges the Veto-cleaned predictions into a single shapefile, sieving out predictions that are too small to be reasonably resolvable given the native DEM resolution.
@@ -425,14 +425,10 @@ class Deployer:
         Parameters
         ----------
 
-        cleaned: np.ndarray
-            Veto-cleaned probability map.
-        transform: affine.Affine
-            Affine transform of the Veto-cleaned probability map.
-        crs: rasterio.crs.CRS
-            Coordinate reference system of the Veto-cleaned probability map.
-        output_path: str    
-            Path to save the merged shapefile.
+        results: dict
+            Dictionary containing the results from the sweep method, including merged predictions, transform, and CRS.
+        output_path: str or Path
+            Path to save the merged predictions shapefile.
 
         Returns
         -------
@@ -447,6 +443,8 @@ class Deployer:
         min_m2 = (cfg.native_res ** 2) * cfg.min_native_pixels # resolution constrain, an area.
         min_pixels = int(np.ceil(max(min_m2, cfg.min_object_m2) / (self.base_res ** 2)))
 
+        transform = results['transform']
+        crs = results['crs']
         preds = results['predictions']
 
         binary = (
