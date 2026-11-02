@@ -396,7 +396,7 @@ class Deployer:
                     "transform": transform,
                     "crs": crs,
                     'provisional': provisional,
-                    'objects': objects}
+                    'provisional_objects': objects}
 
         requested_params = self.cfg.requested_params
 
@@ -478,7 +478,7 @@ class Deployer:
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         TIFS = ["rejected", "veto_probability_map"]
-        NPYS = ['raw', 'provisional']
+        NPYS = ['raw', 'provisional', 'provisional_objects']
         saved = {}
 
         for req in requested_returns:

@@ -20,7 +20,7 @@ def main(args):
     names = {f.name for f in fields(DeployConfig)} - NOT_OVERRIDABLE
     overrides = {k: v for k, v in vars(args).items() if k in names}
     requested_returns = {k.split("_")[1]: True for k in vars(args) if k.startswith("return_") and getattr(args, k)}
-    
+
     requested_returns["predictions"] = True
     requested_returns['transform'] = True
     requested_returns['crs'] = True
@@ -88,9 +88,10 @@ if __name__ == "__main__":
 
     request_arggs = parser.add_argument_group("requested outputs")
     request_arggs.add_argument("--return_all", action="store_true")
-    request_arggs.add_argument("--return_coverage", action="store_true")
-    request_arggs.add_argument("--return_support", action="store_true")
-    request_arggs.add_argument("--return_accepted", action="store_true")
     request_arggs.add_argument("--return_rejected", action="store_true")
+    request_arggs.add_argument("--return_veto_probability_map", action="store_true")
+    request_arggs.add_argument("--return_raw", action="store_true")
+    request_arggs.add_argument("--return_provisional", action="store_true")
+    request_arggs.add_argument("--return_provisional_objects", action="store_true")
 
     main(parser.parse_args())
