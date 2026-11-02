@@ -31,6 +31,7 @@ from helpers.VetoHelpers import VETO_SCALAR_NAMES
 from modelling.DEMVeto import DEM_Based_Vetoer
 from scipy.ndimage import binary_dilation, label
 from affine import Affine
+import rasterio
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TILE_ORDER = ['DEM', 'DEM_SLOPE', 'RR','LAPLACE']
@@ -93,7 +94,7 @@ class Deployer:
         return preds   
 
 
-    def new_voting_scheme(self, preds):
+    def weighted_vote(self, preds):
         """
         Object-aware weighted voting.
 
@@ -119,7 +120,7 @@ class Deployer:
         scratch_dir.mkdir(parents=True, exist_ok=True)
 
         # Pass 1: provisional predictions from the plain merge.
-        provisional, _, _, _, _ = self.merge_predictions_pyramid(preds)
+        provisional = self.max_prob(preds, base_res, transform, crs, (h, w), scratch_dir / "provisional.npy")
 
         labels_path = scratch_dir / "labels.npy"
         labels = np.lib.format.open_memmap(
@@ -131,8 +132,7 @@ class Deployer:
         # Threshold the provisional map to identify candidate objects.
         # For very large rasters, connected-component labeling may need
         # to be replaced with a tiled implementation.
-        mask = np.isfinite(provisional) & (
-            provisional >= cfg.object_threshold)
+        mask = np.isfinite(provisional) & (provisional >= cfg.object_threshold)
 
         labels_array, n_objects = label(
             mask,
@@ -140,12 +140,12 @@ class Deployer:
         
         labels[:] = labels_array
         labels.flush()
-        del labels_array, mask
+        del labels_array, mask, provisional  # free memory
 
-        # Count pixels in each object.
-        counts = np.bincount(
-            np.asarray(labels).ravel(),
-            minlength=n_objects + 1)
+        # banded for RAM.
+        counts = np.zeros(n_objects + 1, dtype=np.int64)
+        for r0 in range(0, h, band):
+            counts += np.bincount(labels[r0:r0 + band].ravel(), minlength=n_objects + 1)
 
         areas = counts[1:] * (base_res ** 2)
         sizes = np.sqrt(areas) # eq diameter in metres
@@ -203,13 +203,13 @@ class Deployer:
             best = np.full(shape, np.nan, dtype=np.float32)
 
             for j, (res, pred) in enumerate(
-                sorted(preds.items())
-            ):
+                sorted(preds.items())):
+
                 if res == base_res:
                     cur = np.asarray(
                         pred["prob"][r0:r1],
-                        dtype=np.float32,
-                    )
+                        dtype=np.float32)
+                    
                 else:
                     cur = np.full(shape, np.nan, dtype=np.float32)
 
@@ -244,16 +244,7 @@ class Deployer:
             valid = denominator > 0
 
             result[valid] = (
-                numerator[valid] / denominator[valid]
-            )
-
-            # Preserve your existing weak-support filtering.
-            weak = (
-                (coverage > 0)
-                & (support < cfg.min_support)
-                & (best < cfg.single_scale_keep)
-            )
-            result[weak] = 0.0
+                numerator[valid] / denominator[valid])
 
             merged[r0:r1] = result
 
@@ -326,6 +317,36 @@ class Deployer:
             m.flush()
 
         return merged, transform, crs, support, coverage
+
+    def max_prob(self, preds, base_res, transform, crs, shape, path):
+        h, w = shape
+        band = self.cfg.merge_band
+        out = np.lib.format.open_memmap(
+            path, mode="w+", dtype=np.float32, shape=(h, w))
+
+        for r0 in range(0, h, band):
+            r1 = min(r0 + band, h)
+            band_shape = (r1 - r0, w)
+            band_tf = transform * Affine.translation(0, r0)
+            best = np.full(band_shape, np.nan, dtype=np.float32)
+
+            for res, pred in preds.items():
+                if res == base_res:
+                    cur = np.asarray(pred["prob"][r0:r1], dtype=np.float32)
+                else:
+                    cur = np.full(band_shape, np.nan, dtype=np.float32)
+                    reproject(
+                        source=pred["prob"], destination=cur,
+                        src_transform=pred["transform"], src_crs=pred["crs"],
+                        src_nodata=np.nan, dst_transform=band_tf, dst_crs=crs,
+                        dst_nodata=np.nan, resampling=Resampling.nearest,
+                        init_dest_nodata=True)
+                best = np.fmax(best, cur)
+
+            out[r0:r1] = best
+
+        out.flush()
+        return out
     
     def veto(self, merged, transform, crs):
         """
@@ -368,7 +389,7 @@ class Deployer:
 
         predictions = self.predict()
 
-        merged, transform, crs, _, _ = self.merge_predictions_pyramid(predictions)
+        merged, transform, crs = self.weighted_vote(predictions)
         available = {
                     "raw": predictions,
                     "predictions": merged,
@@ -379,7 +400,7 @@ class Deployer:
 
         if self.cfg.to_veto:
             accepted, rejected, veto_probability_map, transform, crs = self.veto(merged, transform, crs)
-            available.update({"accepted": accepted,
+            available.update({"predictions": accepted,
                               "rejected": rejected,
                               "veto_probability_map": veto_probability_map,
                               "transform": transform,
@@ -391,7 +412,7 @@ class Deployer:
 
     # merges all veto-cleaned predictions and then sieves remaining predictions
     # which are too physically small to be reasonably resolvable given the native DEM. 
-    def save_predictions(self, cleaned, transform, crs, output_path):
+    def save_predictions(self, results, transform, crs, output_path):
         """
 
         Merges the Veto-cleaned predictions into a single shapefile, sieving out predictions that are too small to be reasonably resolvable given the native DEM resolution.
@@ -416,20 +437,22 @@ class Deployer:
         """
 
         cfg = self.cfg
+        requested_returns = cfg.requested_returns
 
         # native res should determine smallest resolvable objects.
         min_m2 = (cfg.native_res ** 2) * cfg.min_native_pixels # resolution constrain, an area.
         min_pixels = int(np.ceil(max(min_m2, cfg.min_object_m2) / (self.base_res ** 2)))
 
+        preds = results['predictions']
+
         binary = (
-            np.isfinite(cleaned)
-            & (cleaned >= cfg.export_threshold)).astype(np.uint8)
+            np.isfinite(preds)
+            & (preds >= cfg.export_threshold)).astype(np.uint8)
         
         binary = sieve(
                 binary,
                 size=min_pixels,
-                connectivity=8,
-            )
+                connectivity=8)
 
         polygons = [shape(geometry) for geometry, value in shapes(binary,
                                                                 mask=binary.astype(bool),
@@ -452,14 +475,39 @@ class Deployer:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # export
-        gdf.to_file(
-            output_path,
-            driver="ESRI Shapefile",
-            index=False,
-        )
+        TIFS = ["rejected", "veto_probability_map"]
+        NPYS = ['raw']
+        saved = {}
 
-        print(f"Saved {len(gdf)} objects to {output_path}")
+        for req in requested_returns:
+            out_path = output_path.with_name(f"{output_path.stem}_{req}{output_path.suffix}")
+            if req == "predictions":
+                gdf.to_file(out_path, driver="ESRI Shapefile")
+                saved["predictions"] = out_path
+
+            elif req in TIFS:
+                tif = results[req]
+                with rasterio.open(
+                    out_path,
+                    "w",
+                    driver="GTiff",
+                    height=tif.shape[0],
+                    width=tif.shape[1],
+                    count=1,
+                    dtype=tif.dtype,
+                    crs=crs,
+                    transform=transform,) as dst:
+
+                    dst.write(tif, 1)
+                    saved[req] = out_path
+            elif req in NPYS:
+                npy = results[req]
+                np.save(out_path, npy)
+                saved[req] = out_path
+
+        print("Saved outputs:")
+        for k, v in saved.items():
+            print(f" {k} saved to: {v}")
 
         return gdf
 

@@ -74,9 +74,7 @@ class SCDModel():
 
         results = self.deployer.sweep()
 
-        out_path = self.out_path / "predictions.shp"
-
-        self.deployer.save_predictions(results['predictions'], results['transform'], results['crs'], out_path)
+        self.deployer.save_predictions(results['predictions'], results['transform'], results['crs'], self.out_path)
 
         # write bounds of DEM to a text file for reference
         with open(self.out_path / "covered_bounds.txt", "a") as f:

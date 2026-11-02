@@ -44,7 +44,7 @@ class DeployConfig:
     export_threshold: float = 0.40
     min_object_m2: float = 400.0  # 20m x 20m
     min_native_pixels: int = 25
-    requested_returns: set = field(default_factory=lambda: {"predictions", "transform", "crs"})
+    requested_returns: set = None
 
 _cfg = None
 
