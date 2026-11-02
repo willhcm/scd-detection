@@ -58,9 +58,7 @@ def main(args):
     for k, v in asdict(config.get()).items():
         print(f"  {k} = {v}")
 
-    results = scd_model.predict(
-        return_coverage=True,
-        return_support=True)
+    results = scd_model.predict()
 
     return results
 
