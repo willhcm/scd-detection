@@ -32,6 +32,7 @@ from modelling.DEMVeto import DEM_Based_Vetoer
 from scipy.ndimage import binary_dilation, label
 from affine import Affine
 import rasterio
+import ndimage
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TILE_ORDER = ['DEM', 'DEM_SLOPE', 'RR','LAPLACE']
@@ -93,6 +94,37 @@ class Deployer:
 
         return preds   
 
+    def object_scores(self, preds, labels, n_objects, base_res, transform, crs):
+        """ Creates a matrix of object scores for each resolution, where each row corresponds to an object and each column corresponds to a resolution. The score is the maximum probability value for that object at that resolution. """
+        h, w = labels.shape
+        band = self.cfg.merge_band
+        items = sorted(preds.items())
+        stats = np.zeros((n_objects + 1, len(items)), dtype=np.float32)
+
+        for r0 in range(0, h, band):
+            r1 = min(r0 + band, h)
+            lab = np.asarray(labels[r0:r1])
+            ids = np.unique(lab)
+            ids = ids[ids > 0]
+            if ids.size == 0:
+                continue
+            band_tf = transform * Affine.translation(0, r0)
+
+            for j, (res, pred) in enumerate(items):
+                if res == base_res:
+                    cur = np.asarray(pred["prob"][r0:r1], dtype=np.float32)
+                else:
+                    cur = np.full(lab.shape, np.nan, dtype=np.float32)
+                    reproject(
+                        source=pred["prob"], destination=cur,
+                        src_transform=pred["transform"], src_crs=pred["crs"],
+                        src_nodata=np.nan, dst_transform=band_tf, dst_crs=crs,
+                        dst_nodata=np.nan, resampling=Resampling.nearest,
+                        init_dest_nodata=True)
+                vals = ndimage.maximum(np.nan_to_num(cur, nan=0.0), lab, ids)
+                stats[ids, j] = np.maximum(stats[ids, j], vals)
+
+        return stats
 
     def weighted_vote(self, preds):
         """
@@ -150,110 +182,38 @@ class Deployer:
         areas = counts[1:] * (base_res ** 2)
         sizes = np.sqrt(areas) # eq diameter in metres
 
-        # Resolution weights for each object size.
-        resolutions = np.array(sorted(preds), dtype=np.float64)
-
+        resolutions = np.array(sorted(preds), dtype=np.float64) # preds is a dict of {res: {prob, transform, crs}}
         if np.any(resolutions <= 0):
             raise ValueError("Resolution values must be positive.")
-
         log_res = np.log(resolutions)
 
-        # Preferred resolution increases with object size.
-        # size_scale controls how quickly the preference shifts.
+        # interval of resolutions an object of this size was trained to be seen at ([0.1, 0.35] object fractions)
+        lo = np.log(sizes / (0.1 * cfg.tile_size))[:, None]
+        hi = np.log(sizes / (0.35 * cfg.tile_size))[:, None]
 
-        # map object size to a target resolution, then compute weights based on distance from that target
-        target_res = np.clip(
-            (sizes * (1 / cfg.object_fraction)) / cfg.tile_size, 
-            resolutions.min(),
-            resolutions.max())
+        off = np.maximum(lo - log_res[None, :], 0) + np.maximum(log_res[None, :] - hi, 0) # offset of each resolution from the interval for each object
+        weights = np.exp(-off ** 2 / (2 * cfg.size_sigma ** 2))   # 1 inside the interval 
 
-        # logits matrix. [i, j] is how far layer j is from the preferred resolution for object i, in log space.
-        logits = -(
-            log_res[None, :]
-            - np.log(target_res[:, None])
-        ) ** 2 / (2 * cfg.size_sigma**2)
+        stats = self.object_scores(preds, labels, n_objects, base_res, transform, crs)
+        obj_score = (stats[1:] * weights).max(axis=1)
 
-        # subtract each row by its max, so that the best fit (max) is always exp(0) = 1, and the others are < 1.
-        logits -= logits.max(axis=1, keepdims=True)
+        keep = np.zeros(n_objects + 1, dtype=bool)
+        keep[1:] = obj_score >= cfg.keep_threshold
 
-        # exp and normalise (divide weights by their row sum, so it sums to 1) to get weights for each object across resolutions.
-        weights = np.exp(logits)
-        weights /= weights.sum(axis=1, keepdims=True)
-        bg = np.full((1, len(resolutions)), 1 / len(resolutions))
-        weights = np.vstack([bg, weights])      
-
-        # Pass 2: weighted merge, processed in bands.
         merged = np.lib.format.open_memmap(
             scratch_dir / "weighted_merged.npy",
-            mode="w+",
-            dtype=np.float32,
-            shape=(h, w))
+            mode="w+", dtype=np.float32, shape=(h, w))
 
         for r0 in range(0, h, band):
             r1 = min(r0 + band, h)
-            shape = (r1 - r0, w)
-            band_transform = transform * Affine.translation(0, r0)
-
-            band_labels = np.asarray(labels[r0:r1])
-
-            numerator = np.zeros(shape, dtype=np.float32)
-            denominator = np.zeros(shape, dtype=np.float32)
-            coverage = np.zeros(shape, dtype=np.uint8)
-            support = np.zeros(shape, dtype=np.uint8)
-            best = np.full(shape, np.nan, dtype=np.float32)
-
-            for j, (res, pred) in enumerate(
-                sorted(preds.items())):
-
-                if res == base_res:
-                    cur = np.asarray(
-                        pred["prob"][r0:r1],
-                        dtype=np.float32)
-                    
-                else:
-                    cur = np.full(shape, np.nan, dtype=np.float32)
-
-                    reproject(
-                        source=pred["prob"],
-                        destination=cur,
-                        src_transform=pred["transform"],
-                        src_crs=pred["crs"],
-                        src_nodata=np.nan,
-                        dst_transform=band_transform,
-                        dst_crs=crs,
-                        dst_nodata=np.nan,
-                        resampling=Resampling.nearest,
-                        init_dest_nodata=True,
-                    )
-
-                valid = np.isfinite(cur)
-
-                coverage += valid
-                support += valid & (cur >= cfg.support_threshold)
-                best = np.fmax(best, cur)
-
-                # Object-specific weight for this resolution.
-                pixel_weights = weights[band_labels, j].astype(np.float32, copy=False)
-
-                effective_weights = pixel_weights * valid
-
-                numerator += np.nan_to_num(cur, nan=0.0) * (effective_weights)
-                denominator += effective_weights
-
-            result = np.full(shape, np.nan, dtype=np.float32)
-            valid = denominator > 0
-
-            result[valid] = (
-                numerator[valid] / denominator[valid])
-
-            merged[r0:r1] = result
+            prov = np.asarray(provisional[r0:r1])
+            kept = keep[np.asarray(labels[r0:r1])]
+            merged[r0:r1] = np.where(kept, prov, np.where(np.isnan(prov), np.nan, 0.0))
 
         merged.flush()
-        labels.flush()
-
+        
         return merged, transform, crs, provisional, labels
         
-
     def merge_predictions_pyramid(self, preds):
 
         cfg = self.cfg
@@ -482,7 +442,7 @@ class Deployer:
         saved = {}
 
         for req in requested_returns:
-            out_path = output_path.with_name(f"{output_path.stem}_{req}{output_path.suffix}")
+            out_path = output_path / f"{req}.{'shp' if req == 'predictions' else 'tif' if req in TIFS else 'npy'}"
             if req == "predictions":
                 gdf.to_file(out_path, driver="ESRI Shapefile")
                 saved["predictions"] = out_path
