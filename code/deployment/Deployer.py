@@ -410,7 +410,7 @@ class Deployer:
 
 
         requested_returns = self.cfg.requested_returns
-        out = tuple(available[k] for k in requested_returns) if requested_returns else available
+        out = {key: available[key] for key in requested_returns if key in available}
 
         return out
 
