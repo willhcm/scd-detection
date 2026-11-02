@@ -398,7 +398,6 @@ class Deployer:
                     'provisional': provisional,
                     'provisional_objects': objects}
 
-        requested_params = self.cfg.requested_params
 
         if self.cfg.to_veto:
             accepted, rejected, veto_probability_map, transform, crs = self.veto(merged, transform, crs)
@@ -408,7 +407,10 @@ class Deployer:
                               "transform": transform,
                               "crs": crs})
 
-        out = tuple(available[k] for k in requested_params) if requested_params else available
+
+
+        requested_returns = self.cfg.requested_returns
+        out = tuple(available[k] for k in requested_returns) if requested_returns else available
 
         return out
 
