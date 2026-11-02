@@ -140,7 +140,7 @@ class Deployer:
         
         labels[:] = labels_array
         labels.flush()
-        del labels_array, mask, provisional  # free memory
+        del labels_array, mask # free memory
 
         # banded for RAM.
         counts = np.zeros(n_objects + 1, dtype=np.int64)
@@ -251,7 +251,7 @@ class Deployer:
         merged.flush()
         labels.flush()
 
-        return merged, transform, crs
+        return merged, transform, crs, provisional, labels
         
 
     def merge_predictions_pyramid(self, preds):
@@ -389,12 +389,14 @@ class Deployer:
 
         predictions = self.predict()
 
-        merged, transform, crs = self.weighted_vote(predictions)
+        merged, transform, crs, provisional, objects = self.weighted_vote(predictions)
         available = {
                     "raw": predictions,
                     "predictions": merged,
                     "transform": transform,
-                    "crs": crs}
+                    "crs": crs,
+                    'provisional': provisional,
+                    'objects': objects}
 
         requested_params = self.cfg.requested_params
 
@@ -476,7 +478,7 @@ class Deployer:
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         TIFS = ["rejected", "veto_probability_map"]
-        NPYS = ['raw']
+        NPYS = ['raw', 'provisional']
         saved = {}
 
         for req in requested_returns:
