@@ -32,7 +32,7 @@ from modelling.DEMVeto import DEM_Based_Vetoer
 from scipy.ndimage import binary_dilation, label
 from affine import Affine
 import rasterio
-import ndimage
+from scipy import ndimage
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TILE_ORDER = ['DEM', 'DEM_SLOPE', 'RR','LAPLACE']
@@ -183,13 +183,14 @@ class Deployer:
         sizes = np.sqrt(areas) # eq diameter in metres
 
         resolutions = np.array(sorted(preds), dtype=np.float64) # preds is a dict of {res: {prob, transform, crs}}
+
         if np.any(resolutions <= 0):
             raise ValueError("Resolution values must be positive.")
         log_res = np.log(resolutions)
 
         # interval of resolutions an object of this size was trained to be seen at ([0.1, 0.35] object fractions)
-        lo = np.log(sizes / (0.1 * cfg.tile_size))[:, None]
-        hi = np.log(sizes / (0.35 * cfg.tile_size))[:, None]
+        lo = np.log(sizes / (0.35 * cfg.tile_size))[:, None]
+        hi = np.log(sizes / (0.10 * cfg.tile_size))[:, None]
 
         off = np.maximum(lo - log_res[None, :], 0) + np.maximum(log_res[None, :] - hi, 0) # offset of each resolution from the interval for each object
         weights = np.exp(-off ** 2 / (2 * cfg.size_sigma ** 2))   # 1 inside the interval 
@@ -207,12 +208,14 @@ class Deployer:
         for r0 in range(0, h, band):
             r1 = min(r0 + band, h)
             prov = np.asarray(provisional[r0:r1])
-            kept = keep[np.asarray(labels[r0:r1])]
+            lab = np.asarray(labels[r0:r1])
+            kept = keep[lab]
             merged[r0:r1] = np.where(kept, prov, np.where(np.isnan(prov), np.nan, 0.0))
+            labels[r0:r1] = np.where(kept, lab, 0)
 
         merged.flush()
-        
-        return merged, transform, crs, provisional, labels
+        labels.flush()
+        return merged, labels, transform, crs, obj_score, provisional
         
     def merge_predictions_pyramid(self, preds):
 
@@ -308,17 +311,8 @@ class Deployer:
         out.flush()
         return out
     
-    def veto(self, merged, transform, crs):
-        """
-        Applies the Veto classifier to the merged predictions to filter out false positives."""
-
-        postproc = PostProcessor(self.veto_model)
-
-        (stitched, rejected, veto_probability_map, out_transform, out_crs) = postproc.predict(merged,
-                                                                                             transform,
-                                                                                             crs)
-
-        return (stitched, rejected, veto_probability_map, out_transform, out_crs)
+    def veto(self, merged, labels, transform, crs):
+        return PostProcessor(self.veto_model).predict(merged, labels, transform, crs)
 
     def sweep(self):
 
@@ -347,40 +341,36 @@ class Deployer:
                 Probability map from the Veto classifier.
         """
 
+        requested_returns = self.cfg.requested_returns
         predictions = self.predict()
 
-        merged, transform, crs, provisional, objects = self.weighted_vote(predictions)
+        merged, objects, transform, crs, obj_score, provisional = self.weighted_vote(predictions)
         available = {
-                    "raw": predictions,
-                    "predictions": merged,
-                    "transform": transform,
-                    "crs": crs,
-                    'provisional': provisional,
-                    'provisional_objects': objects}
-
+            "raw": predictions,
+            "predictions": objects,
+            "obj_score": obj_score,
+            "provisional": provisional,
+            "transform": transform,
+            "crs": crs,
+        }
 
         if self.cfg.to_veto:
-            accepted, rejected, veto_probability_map, transform, crs = self.veto(merged, transform, crs)
-            available.update({"predictions": accepted,
-                              "rejected": rejected,
-                              "veto_probability_map": veto_probability_map,
-                              "transform": transform,
-                              "crs": crs})
+            objects, transform, crs = self.veto(merged, objects, transform, crs)
+            available.update({
+                "predictions": objects,
+                "transform": transform,
+                "crs": crs,
+            })
 
+        return {k: v for k, v in available.items() if k in requested_returns}
 
-
-        requested_returns = self.cfg.requested_returns
-        out = {key: available[key] for key in requested_returns if key in available}
-
-        return out
 
     # merges all veto-cleaned predictions and then sieves remaining predictions
     # which are too physically small to be reasonably resolvable given the native DEM. 
     def save_predictions(self, results, output_path):
         """
 
-        Merges the Veto-cleaned predictions into a single shapefile, sieving out predictions that are too small to be reasonably resolvable given the native DEM resolution.
-        Exports the merged predictions as a shapefile to the specified output path.
+        Saves the merged predictions to disk in the specified format (shapefile, GeoTIFF, or NumPy array) based on the requested returns in the configuration.
 
         Parameters
         ----------
@@ -388,7 +378,7 @@ class Deployer:
         results: dict
             Dictionary containing the results from the sweep method, including merged predictions, transform, and CRS.
         output_path: str or Path
-            Path to save the merged predictions shapefile.
+            Path to save the merged predictions.
 
         Returns
         -------
@@ -405,74 +395,48 @@ class Deployer:
 
         transform = results['transform']
         crs = results['crs']
-        preds = results['predictions']
+        lab = np.asarray(results['predictions']).astype(np.int32)
 
-        binary = (
-            np.isfinite(preds)
-            & (preds >= cfg.export_threshold)).astype(np.uint8)
-        
-        binary = sieve(
-                binary,
-                size=min_pixels,
-                connectivity=8)
+        # drop objects below the minimum size, keeping the original ids
+        counts = np.bincount(lab.ravel())
+        lab[(counts < min_pixels)[lab]] = 0
 
-        polygons = [shape(geometry) for geometry, value in shapes(binary,
-                                                                mask=binary.astype(bool),
-                                                                transform=transform,
-                                                                connectivity=8) if value == 1]
+        geoms, ids = [], []
+        for geom, v in shapes(lab, mask=lab > 0, transform=transform, connectivity=8):
+            geoms.append(shape(geom))
+            ids.append(int(v))
 
+        gdf = gpd.GeoDataFrame({"object_id": ids, "geometry": geoms}, crs=crs)
 
-        # to geodataframe for exporting
-        gdf = gpd.GeoDataFrame(
-            {
-                "object_id": np.arange(1, len(polygons) + 1),
-                "geometry": polygons,
-            },
-            crs=crs,
-        )
+        score = results.get("obj_score")
+        if score is not None and not gdf.empty:
+            gdf["score"] = score[gdf["object_id"].to_numpy() - 1]
 
         if not gdf.empty:
             gdf["area_m2"] = gdf.geometry.area
 
         output_path = Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.mkdir(parents=True, exist_ok=True)
 
-        TIFS = ["rejected", "veto_probability_map"]
-        NPYS = ['raw', 'provisional', 'provisional_objects']
+        NPYS = ["raw", "provisional", "obj_score"]
         saved = {}
 
         for req in requested_returns:
-            out_path = output_path / f"{req}.{'shp' if req == 'predictions' else 'tif' if req in TIFS else 'npy'}"
             if req == "predictions":
+                out_path = output_path / "predictions.shp"
                 gdf.to_file(out_path, driver="ESRI Shapefile")
-                saved["predictions"] = out_path
-
-            elif req in TIFS:
-                tif = results[req]
-                with rasterio.open(
-                    out_path,
-                    "w",
-                    driver="GTiff",
-                    height=tif.shape[0],
-                    width=tif.shape[1],
-                    count=1,
-                    dtype=tif.dtype,
-                    crs=crs,
-                    transform=transform,) as dst:
-
-                    dst.write(tif, 1)
-                    saved[req] = out_path
             elif req in NPYS:
-                npy = results[req]
-                np.save(out_path, npy)
-                saved[req] = out_path
+                out_path = output_path / f"{req}.npy"
+                np.save(out_path, results[req])
+            else:
+                continue
+            saved[req] = out_path
 
         print("Saved outputs:")
         for k, v in saved.items():
             print(f" {k} saved to: {v}")
 
         return gdf
-
 
 # self contained res predictor to decrease amount of calculations needed to be made repetitively!
 class ResPredictor():

@@ -16,19 +16,16 @@ class DeployConfig:
     batch_size: int = 16
 
     # detection
-    score_threshold: float = 0.60  # tuned
-    mask_threshold: float = 0.40  # tuned
-    detect_threshold: float = 0.2
+    score_threshold: float = 0.40  # low, keep candidates as possible for postproc to filter
+    mask_threshold: float = 0.40  # low, keep candidates for postproc to filter
+    detect_threshold: float = 0.2 
 
     # merging across resolutions
-    support_threshold: float = 0.65
-    min_support: int = 2
-    single_scale_keep: float = 0.90
     merge_band: int = 1024
-    object_threshold: float = 0.50
-    size_scale: float = 1.0
+    object_threshold: float = 0.50, # threshold for splitting max_prob map into objects for resolution-weighted max voting algorithm.
     size_sigma: float = 0.8
     object_fraction: float = 0.225 # midpoint of 0.1 and 0.35, which are used as object fractions in making the dataset. relativelty arbitrary, just roughly the object:image fraction that model is trained to detect.
+    keep_threshold : float = 0.5 # final threshold for keeping objects after resolution-weighted max voting algorithm.
  
     # veto
     to_veto: bool = True

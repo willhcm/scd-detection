@@ -40,10 +40,10 @@ class PostProcessor:
         # hyperparameters
         self.context_tile_size = cfg.veto_context_tile_size
         self.batch_size = cfg.veto_batch_size
-        self.detect_threshold = cfg.detect_threshold
         self.veto_threshold = cfg.veto_threshold
         self.object_fraction = cfg.veto_object_fraction
         self.context_scale = cfg.context_scale
+        self.detect_threshold = cfg.detect_threshold
         self.min_context_width_m = cfg.min_context_width_m
         self.max_context_width_m = cfg.max_context_width_m
 
@@ -199,22 +199,7 @@ class PostProcessor:
         # stamps in place
         canvas[rows, cols] = value
 
-    def predict(self, prob_raster, transform, crs,):
-
-        # thresholds excluding NaN
-        binary = (
-            np.isfinite(prob_raster)
-            & (
-                prob_raster
-                > self.detect_threshold
-            )
-        )
-        print(f' min: {np.nanmin(prob_raster)}, max: {np.nanmax(prob_raster)}')
-
-        # ndimage label
-        labeled, n_objects = ndi_label(binary)
-
-        del binary
+    def predict(self, prob_raster, labeled, transform, crs,):
 
         # gets region properties (i.e. area, centroid, bbox)
         objects = regionprops(labeled, intensity_image=prob_raster)
@@ -344,10 +329,5 @@ class PostProcessor:
             f"{skipped} objects could not be assessed."
         )
 
-        return (
-            stitched,
-            veto_map,
-            veto_probability_map,
-            transform,
-            crs,
-        )
+        accepted_labels = np.where(stitched > 0, labeled, 0).astype(np.int32)
+        return accepted_labels, transform, crs
