@@ -43,7 +43,6 @@ class PostProcessor:
         self.veto_threshold = cfg.veto_threshold
         self.object_fraction = cfg.veto_object_fraction
         self.context_scale = cfg.context_scale
-        self.detect_threshold = cfg.detect_threshold
         self.min_context_width_m = cfg.min_context_width_m
         self.max_context_width_m = cfg.max_context_width_m
 

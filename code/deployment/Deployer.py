@@ -347,6 +347,7 @@ class Deployer:
         merged, objects, transform, crs, obj_score, provisional = self.weighted_vote(predictions)
         available = {
             "raw": predictions,
+            "pre_veto": merged,
             "predictions": objects,
             "obj_score": obj_score,
             "provisional": provisional,

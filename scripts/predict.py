@@ -86,10 +86,9 @@ if __name__ == "__main__":
 
     request_arggs = parser.add_argument_group("requested outputs")
     request_arggs.add_argument("--return_all", action="store_true")
-    request_arggs.add_argument("--return_rejected", action="store_true")
-    request_arggs.add_argument("--return_veto_probability_map", action="store_true")
     request_arggs.add_argument("--return_raw", action="store_true")
     request_arggs.add_argument("--return_provisional", action="store_true")
     request_arggs.add_argument("--return_provisional_objects", action="store_true")
+    request_arggs.add_argument("--pre_veto", action="store_true")
 
     main(parser.parse_args())
