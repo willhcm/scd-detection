@@ -7,7 +7,7 @@ CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 
 from modelling.MaskRCNN import MaskRCNN
-from loaders.dataset import DatasetWrapper
+from loaders.DatasetTools import DatasetWrapper, VetoDatasetWrapper
 from helpers.MaskRCNNFunctions import evaluate_maskrcnn_metrics, build_staged_optimizer, apply_training_stage, collate_fn, set_stage_progress, val_loss
 import torch
 import torch.nn as nn
@@ -17,8 +17,6 @@ import numpy as np
 import copy
 from tqdm import tqdm
 REPO_ROOT = Path(__file__).resolve().parent.parent
-from scipy.ndimage import label
-from modelling.UNET import UNet, evaluate_preds, CombinedLoss
 
 class Trainer():
 
@@ -208,132 +206,27 @@ class Trainer():
 
         torch.save(out, out_path / f"MaskRCNN.pt")
 
-    def train_unet_fold(self, folded_out_region, epochs=50, batch_size=8, out_path=None, random_train=False):
-        train_loader, val_loader = self.dset.get_unet_loaders(batch_size, random_train=random_train, folded_out_region=folded_out_region)
-        model = UNet(in_channels=4, out_channels=1)
+class VetoTrainer():
 
-        print(f"Training on {len(train_loader.dataset)} samples, validating on {len(val_loader.dataset)} samples.")
-        print(f"Training with {len(train_loader)} batches of size {batch_size}.")
-        print(f'Input channels: {model.in_channels}.')
+    def __init__(self, root, device):
 
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model.to(device)
+        self.root = root
+        self.dset = VetoDatasetWrapper(root)
+        self.device = device
+        self.set_seed(42)
 
-        train_losses = []
-        val_losses = []
-        val_precisions = []
-        val_recalls = []
-        val_f1s = []
+    @staticmethod
+    def set_seed(seed):
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
 
-        optimizer = torch.optim.AdamW(model.param_groups(lr=1e-4, enc_lr=5e-6, film_lr=1e-4), weight_decay=1e-4)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
-        criterion = CombinedLoss(bce_weight=1.0, dice_weight=1.0)
+    def train(self, folded_out_region, epochs, batch_size, out_path):
+        ...
 
-        best_f1 = -1.0
-        best_state = None
-        best_epoch = -1
-        patience = 20
-        bad_epochs = 0
-
-        for epoch in range(epochs):
-            model.train()
-            train_loss = 0.0
-
-            pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}")
-
-            for images, masks, resolutions in pbar:
-                images = images.to(device)
-                masks = masks.to(device)
-                resolutions = resolutions.to(device)
-
-                optimizer.zero_grad()
-                outputs = model(images, resolutions)
-                loss = criterion(outputs, masks)
-                loss.backward()
-                optimizer.step()
-
-                train_loss += loss.item()
-
-                pbar.set_postfix({
-                    "loss": float(loss.detach().cpu())})
-
-            train_loss /= len(train_loader)
-            train_losses.append(train_loss)
-
-            # Validation
-            model.eval()
-            val_loss = 0.0
-            tp, fp, fn, obj_tp, obj_fp, obj_fn = 0, 0, 0, 0, 0, 0
-            eps = 1e-8
-            with torch.no_grad():
-                for images, masks, resolutions in val_loader:
-                    images = images.to(device)
-                    masks = masks.to(device)
-                    resolutions = resolutions.to(device)
-
-                    outputs = model(images, resolutions)
-                    loss = criterion(outputs, masks)
-                    val_loss += loss.item()
-
-                    outputs = outputs.detach().cpu().numpy()
-                    masks = masks.detach().cpu().numpy()
-                    metrics = evaluate_preds(outputs, masks)
-
-                    tp += metrics['tp']
-                    fp += metrics['fp']
-                    fn += metrics['fn']
-                    obj_tp += metrics['obj_tp']
-                    obj_fp += metrics['obj_fp']
-                    obj_fn += metrics['obj_fn']
-            
-            pixel_precision = tp / (tp + fp + eps)
-            pixel_recall = tp / (tp + fn + eps)
-            pixel_f1 = 2 * pixel_precision * pixel_recall / (pixel_precision + pixel_recall + eps)
-            object_precision = obj_tp / (obj_tp + obj_fp + eps)
-            object_recall = obj_tp / (obj_tp + obj_fn + eps)
-            object_f1 = 2 * object_precision * object_recall / (object_precision + object_recall + eps) if (object_precision + object_recall) > 0 else 0
+    def save_model(self):
+        ...
 
 
-            val_loss /= len(val_loader)
-            val_losses.append(val_loss)
-            val_precisions.append(object_precision)
-            val_recalls.append(object_recall)
-            val_f1s.append(object_f1)
-
-            scheduler.step(val_loss)
-
-            if object_f1 > best_f1:
-                best_f1 = object_f1
-                best_epoch = epoch + 1
-                best_state = copy.deepcopy(model.state_dict())
-
-                print(f"Saved new best model at epoch {best_epoch} with F1={best_f1:.4f}")
-                bad_epochs = 0
-            else:
-                bad_epochs += 1
-
-            if bad_epochs >= patience:
-                print(f"Early stopping at epoch {epoch + 1}")
-                break
-
-            print(
-                f"Epoch {epoch+1:03d} | "
-                f"Train Loss: {train_loss:.4f} | "
-                f"Val Loss: {val_loss:.4f} | "
-                f"Pixel P: {pixel_precision:.4f} | "
-                f"Pixel R: {pixel_recall:.4f} | "
-                f"Pixel F1: {pixel_f1:.4f} | "
-                f"Object P: {object_precision:.4f} | "
-                f"Object R: {object_recall:.4f} | "
-                f"Object F1: {object_f1:.4f} | ")
-
-
-        results = {'train_losses': train_losses,
-                   'val_losses': val_losses,
-                   'val_recalls': val_recalls,
-                   'val_precisions': val_precisions}
-
-        np.savez_compressed(out_path / f"training_metrics_fold_{folded_out_region}.npz", **results)
-        self.save_model(best_state, out_path, folded_out_region)
-
-        return results, best_state 
+    

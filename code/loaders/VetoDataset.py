@@ -4,7 +4,7 @@ from pathlib import Path
 from rasterio.enums import Resampling
 from rasterio.features import rasterize
 from rasterio.transform import from_bounds
-from ScaleNormalisedDataStack import ShapeLabels, DataSource
+from loaders.Cogs import ShapeLabels, WindowedDataSource
 from IPython.display import clear_output
 import ipywidgets as widgets
 from IPython.display import display, clear_output
@@ -19,7 +19,7 @@ sys.path.insert(0, str(CODE_DIR))
 
 from helpers.VetoHelpers import build_dem_context, VETO_SCALAR_NAMES
 
-class DEMVetoLoader:
+class DEMVetoLabeller:
 
     def __init__(
         self,
@@ -28,11 +28,11 @@ class DEMVetoLoader:
         target_crs = None,
         context_scale=4.0,
         min_width_m=400.0,
-        max_width_m=10000.0,
+        max_width_m=20000.0,
         tile_size=400):
 
         self.predictions = ShapeLabels(shp_path)
-        self.dem_source = DataSource.from_tiff(
+        self.dem_source = WindowedDataSource.from_tiff(
             dem_path,
             type="DEM")
         
@@ -45,7 +45,7 @@ class DEMVetoLoader:
         self.max_width_m = max_width_m
 
     # build tile from candidate object, including DEM context
-    def _make_tile(self, obj, object_fraction=0.5):
+    def _make_tile(self, obj, object_fraction=0.25):
 
         # centroid 
         cx = obj["cx"]
@@ -53,6 +53,7 @@ class DEMVetoLoader:
 
         # object size
         diameter_m = obj['diameter']
+        print(diameter_m)
         object_crop_width_m = (diameter_m / object_fraction)
 
         # DEM crop width
@@ -104,19 +105,23 @@ class DEMVetoLoader:
             dtype=np.uint8,
         )
 
-        dem_context, scalar_features = build_dem_context(
+        image, scalar_features = build_dem_context(
             dem=dem,
             candidate_mask=context_mask,
             context_width_m=context_width_m,
             candidate_diameter_m=diameter_m)
 
-        if dem_context is None:
+        geo_centre = (cx, cy) * context_bounds # centre in self.target_crs
+        dms_centre = ... # centre in dms 
+
+        if image is None:
             return None
 
         return {
-            "dem_context": dem_context,
+            "image": image,
             "scalar_features": scalar_features,
             "id": obj["id"],
+            'centre_dms': ...,
             "area": obj["area"],
             "diameter_m": diameter_m,
             "bounds": context_bounds,
@@ -129,8 +134,8 @@ class DEMVetoLoader:
     def _show_tile(self, tile):
 
 
-        relative_dem = tile["dem_context"][0]
-        context_mask = tile["dem_context"][2]
+        relative_dem = tile["image"][0]
+        context_mask = tile["image"][2]
 
         fig, ax = plt.subplots(1, 1, figsize=(10, 5))
 
@@ -247,7 +252,8 @@ class DEMVetoLoader:
                     f"Local width: {tile['local_crop_width_m']:.1f} m\n"
                     f"Context width: {tile['context_width_m']:.1f} m\n\n"
                     f"Candidate {state['index'] + 1} / {len(candidates)}\n"
-                    f'Depth_width_ratio: {tile["scalar_features"][-1]:.1f} m\n')
+                    f'Depth: {tile["scalar_features"][0]:.1f} m\n'
+                )
 
         # ------------------------------------------------------------------
         # Label callback
@@ -325,16 +331,17 @@ class DEMVetoLoader:
 
             np.savez_compressed(
                 output_path,
-                mask = tile["dem_context"][2],
-                dem_context=tile["dem_context"],
+                mask = tile["image"][2],
+                image=tile["image"],
                 scalar_features=tile["scalar_features"],
                 scalar_names=np.asarray(VETO_SCALAR_NAMES),
                 label=np.int64(tile["label"]),
-                candidate_id=np.int64(tile["id"]),
+                centre_in_dms=...,
                 bounds=np.asarray(tile["bounds"], dtype=np.float64),
                 context_bounds=np.asarray(tile["context_bounds"], dtype=np.float64),
                 diameter_m=np.float32(tile["diameter_m"]),
                 local_crop_width_m=np.float32(tile["local_crop_width_m"]),
-                context_width_m=np.float32(tile["context_width_m"]))
+                context_width_m=np.float32(tile["context_width_m"]),
+                crs=str(self.target_crs))
 
         print(f"Exported {len(self.tiles)} candidates.")

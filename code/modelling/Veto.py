@@ -1,52 +1,20 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision.models import resnet18, ResNet18_Weights
 import numpy as np
 from torch.utils.data import Dataset
 from pathlib import Path
 import sys
 import cv2 # computer vision, used for resizing images and masks.
+from torchvision.models import mobilenet_v3_small, MobileNet_V3_Small_Weights
+import random
 
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 
-from helpers.VetoHelpers import VETO_SCALAR_NAMES
+from helpers.VetoHelpers import VETO_SCALAR_NAMES, VETO_BAND_INDEX, normalise_veto_data
 
-def replace_first_conv(
-    model,
-    in_channels,
-    copy_pretrained=True):
-
-    old_conv = model.conv1
-
-    # replace conv (new inputs compared to pretrained model!)
-    new_conv = nn.Conv2d(
-        in_channels,
-        old_conv.out_channels,
-        kernel_size=old_conv.kernel_size,
-        stride=old_conv.stride,
-        padding=old_conv.padding,
-        bias=False)
-
-    # use mean weights for extra channels
-    if copy_pretrained:
-        with torch.no_grad():
-
-            channels_to_copy = min(3, in_channels)
-
-            new_conv.weight[:, :channels_to_copy,].copy_(old_conv.weight[:, :channels_to_copy,])
-
-            if in_channels > 3:
-                mean_weight = old_conv.weight.mean(dim=1, keepdim=True)
-
-                new_conv.weight[:, 3:].copy_(mean_weight.repeat(1, in_channels - 3, 1, 1))
-
-    model.conv1 = new_conv
-    return model
-
-
-class VetoClassifier(nn.Module):
+class Vetoer(nn.Module):
     """
     A neural network model to screen out false positives from Mask R-CNN predictions.
     """
@@ -54,54 +22,48 @@ class VetoClassifier(nn.Module):
     def __init__(self, scalar_dim=len(VETO_SCALAR_NAMES), dropout=0.3):
         super().__init__()
 
-        # Local Planet RGB + candidate mask.
-        self.rgb_encoder = resnet18(ResNet18_Weights.DEFAULT)
-        self.rgb_encoder = replace_first_conv(self.rgb_encoder, in_channels=4,copy_pretrained=True)
-        rgb_feature_dim = (self.rgb_encoder.fc.in_features)
-        self.rgb_encoder.fc = nn.Identity()
+        # Relative DEM + slope + candidate mask. 3 channels, no replace conv needed
+        self.dem_encoder = mobilenet_v3_small(weights=MobileNet_V3_Small_Weights.IMAGENET1K_V1)
 
-        # Relative DEM + slope + candidate mask.
-        self.dem_encoder = resnet18(weights=None)
-
-        dem_feature_dim = (self.dem_encoder.fc.in_features)
-        self.dem_encoder.fc = nn.Identity()
+        dem_feature_dim = self.dem_encoder.classifier[0].in_features
+        self.dem_encoder.classifier = nn.Identity()  # Remove the original classifier
 
         self.scalar_encoder = nn.Sequential(
             nn.Linear(scalar_dim, 32),
             nn.ReLU(inplace=True),
-            nn.Dropout(dropout * 0.5),
+            nn.Dropout(dropout),
             nn.Linear(32, 32),
-            nn.ReLU(inplace=True),
-        )
+            nn.ReLU(inplace=True))
 
-        # change to KNN?? see performance, will be quicker probs afeer encoder.
-        # shared after fusing
-        self.classifier = nn.Sequential(
-            nn.Linear(rgb_feature_dim + dem_feature_dim + 32,
-                      256),
+        # squeezed so the signal does not dominate the scalars. Final encodings are [64,] for image and [32,] for scalars.
+        self.image_squeezer = nn.Sequential(
+            nn.Linear(dem_feature_dim, 256),
             nn.ReLU(inplace=True),
             nn.Dropout(dropout),
             nn.Linear(256, 64),
+            nn.ReLU(inplace=True))  
+
+        # shared after fusing
+        self.classifier = nn.Sequential(
+            nn.Linear(96, 64),
             nn.ReLU(inplace=True),
             nn.Dropout(dropout),
             nn.Linear(64, 1))
-        
 
-    def forward(self, rgb_local, dem_context, scalar_features):
+    def forward(self, image, scalar_features):
 
         # get feature encodings
-        rgb_features = self.rgb_encoder(rgb_local)
-        dem_features = self.dem_encoder(dem_context)
+        image_features = self.dem_encoder(image)
 
-        # prep scalars, and get encodings
-        scalar_features = (scalar_features - self.scalar_mean) / self.scalar_std.clamp_min(1e-6)
+        # get encodings
         scalar_features = self.scalar_encoder(scalar_features)
+        image_features = self.image_squeezer(image_features)
 
         # concat encodings
-        fused = torch.cat([rgb_features, dem_features, scalar_features,], dim=1)
+        fused = torch.cat([image_features, scalar_features,], dim=1)
 
         # classify and return
-        return self.classifier(fused).squeeze(1)    
+        return self.classifier(fused).squeeze(1)     
 
 
 # AI assistance in handling shapes and channels for VetoDataset
@@ -114,43 +76,75 @@ class VetoDataset(Dataset):
         self,
         paths,
         norm_stats,
+        augment=False,
         dem_size=400):
 
         self.paths = list(paths)
         self.dem_size = dem_size
         self.norm_stats = norm_stats
+        self.augment = augment
 
     def __len__(self):
         return len(self.paths)
+    
+    def _augment(self, image, scalars, sigma=0.5):
+        """
+        Apply identical spatial transformations to DEM, Slope and Mask Channels. Add small guassian noise to scalars.
+        """
 
-    def normalise(self, dem_context):
+        image = image.copy()
+        scalars = scalars.copy()
 
-        dem_band = dem_context[0]
-        slope_band = dem_context[1]
+        # flip
+        if random.random() > 0.5:
+            image = image[:, :, ::-1]
 
-        dem_band = (dem_band - self.norm_stats['DEM']['median']) / self.norm_stats['DEM']['IQR']
-        slope_band = (slope_band - self.norm_stats['SLOPE']['median']) / self.norm_stats['SLOPE']['IQR']
-            
+        # flip
+        if random.random() > 0.5:
+            image = image[:, ::-1, :]
+
+        # rotate 0, 90, 180, 270.
+        k = random.choice([0, 1, 2, 3])
+        if k:
+            image = np.rot90(image, k, axes=(1, 2))
+
+        for i, s in enumerate(scalars):
+            noise = ...
+            s += noise
+            scalars[i] = s
+
+        return (np.ascontiguousarray(image), np.ascontiguousarray(mask), scalars)
+
     def __getitem__(self, idx):
 
         path = self.paths[idx]
 
+        # open path and fetch data for this sample
         with np.load(path) as data:
 
-            mask = data["mask"].astype(np.float32, copy=True)
-            dem_context = data["dem_context"].astype(np.float32, copy=True)
+            image = data["image"].astype(np.float32, copy=True)
             scalar_features = data["scalar_features"].astype(np.float32, copy=True)
-            label = float(data["label"])
+            label = float(data["label"])    
 
-        mask = (mask > 0.5).astype(np.float32)
+        # unpack image parts (DEM, SLOPE, Mask from Mask R-CNN proposal model)
+        mask = image[VETO_BAND_INDEX['MASK']] > 0.5 # threshold mask in place ...
+        slope = image[VETO_BAND_INDEX['SLOPE']]
+        dem = image[VETO_BAND_INDEX['DEM']] 
+
+        # reshape (why?)
         scalar_features = np.asarray(scalar_features, dtype=np.float32).reshape(-1)
 
-        # to tensors
-        dem_context = self.normalise(dem_context)
-        dem_context = torch.from_numpy(np.ascontiguousarray(dem_context, dtype=np.float32))
+        # handle outliers, before normalising
+        dem, slope, scalar_features = normalise_veto_data(dem, slope, scalar_features, norm_stats=self.norm_stats)
+        image = np.stack([dem, slope, mask.astype(np.float32)], axis=0).astype(np.float32)
+
+        # augment sample to increase training diversity and mitigate overfitting to small dataset.
+        if self.augment:
+            image, scalar_features = self._augment(image, scalar_features)
+
+        # to tensors for numpy
+        image = torch.from_numpy(np.ascontiguousarray(image, dtype=np.float32))
         scalar_features = torch.from_numpy(np.ascontiguousarray(scalar_features, dtype=np.float32))
+        label = torch.tensor(label, dtype=torch.float32) # 1 is accept, 0 is reject
 
-        # 1 is accept, 0 is reject
-        label = torch.tensor(label, dtype=torch.float32)
-
-        return (dem_context, scalar_features, label)
+        return (image, scalar_features, label)

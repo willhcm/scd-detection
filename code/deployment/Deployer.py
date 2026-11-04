@@ -16,19 +16,18 @@ import os
 import numpy as np
 import torch
 import deployment.config as config
-from loaders.Tiler import OVERLAP_SIGMA_MULTIPLIER
+from loaders.Cogs import OVERLAP_SIGMA_MULTIPLIER, WindowedDataSource
 from rasterio.enums import Resampling
 from scipy.ndimage import sobel, gaussian_filter, laplace
 from deployment.ModelWrapper import ModelWrapper
 from modelling.helpers import calculate_hillshade
 from tqdm.auto import tqdm
 from deployment.PostProcesser import PostProcessor
-from loaders.WindowedDataSource import WindowedDataSource
 import geopandas as gpd
 from rasterio.features import shapes, sieve
 from shapely.geometry import shape
 from helpers.VetoHelpers import VETO_SCALAR_NAMES
-from modelling.DEMVeto import DEM_Based_Vetoer
+from modelling.Veto import Vetoer
 from scipy.ndimage import binary_dilation, label
 from affine import Affine
 import rasterio
@@ -69,8 +68,9 @@ class Deployer:
 
         self.veto_model = None
         if self.cfg.to_veto:
-            self.veto_model = DEM_Based_Vetoer()
-            self.veto_model.load_state_dict(veto_model_dict)
+            self.veto_model = Vetoer()
+            self.veto_model.load_state_dict(veto_model_dict['state'])
+            self.veto_norm_stats = veto_model_dict['norm_stats']
             self.veto_model.to(self.cfg.device)
             self.veto_model.eval()
 
@@ -312,7 +312,7 @@ class Deployer:
         return out
     
     def veto(self, merged, labels, transform, crs):
-        return PostProcessor(self.veto_model).predict(merged, labels, transform, crs)
+        return PostProcessor(self.veto_model, self.veto_norm_stats).predict(merged, labels, transform, crs)
 
     def sweep(self):
 

@@ -1,17 +1,644 @@
+# creates a tile from centre coordinates (DMS) and inputted rasters (DEM, labels: optional)
+
+from __future__ import annotations
+
 import numpy as np
-import rasterio as rio
-import geopandas as gpd
+import os
+import sys
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
-from rasterio.warp import Resampling, calculate_default_transform, reproject
-from rasterio.crs import CRS
-from rasterio.transform import from_bounds, array_bounds 
-from shapely.geometry import box
-from scipy.ndimage import sobel, gaussian_filter, laplace
+
+import geopandas as gpd
+import rasterio as rio
 from pyproj import Transformer
+from rasterio.crs import CRS
 from rasterio.features import rasterize
+from rasterio.transform import array_bounds, from_bounds
+from rasterio.warp import Resampling, calculate_default_transform, reproject
+from scipy.ndimage import gaussian_filter, laplace, sobel
+from shapely.geometry import box
+import matplotlib.pyplot as plt
 
+CODE_DIR = Path("../../../code").resolve()
+REPO_ROOT = Path(__file__).resolve().parent.parent
 OVERLAP_SIGMA_MULTIPLIER = 3
+TILE_GENERATOR_LAYER_NAMES = (
+    "DEM",
+    "DEM_SLOPE",
+    "HILLSHADE",
+    "RR",
+    "LAPLACE",
+    "LABELS",
+)
+SCENE_DEFAULT_LAYERS = ("DEM", "DEM_SLOPE", "HILLSHADE", "RR", "LAPLACE")
+MAX_TILE_ATTEMPTS = 10
 
+sys.path.insert(0, str(CODE_DIR))
+
+
+class TileGenerator:
+
+    def __init__(self, dem, label_path=None):
+        self.dem = dem 
+        self.target_crs = self.dem.crs
+        self.sigma_px = 12
+        self.layer_names = ["DEM", "DEM_SLOPE", "HILLSHADE", "RR", "LAPLACE", 'LABELS']
+        self.layer_index = {name: i for i, name in enumerate(self.layer_names)}
+
+        if label_path is not None:
+            self.labelled = True
+            self.labels = ShapeLabels(label_path)
+        else:
+            self.labelled = False
+        
+        self.tiles = []
+
+    def _build_tile(self, tile_bounds, tile_size, target_res):
+        # Compute RR/slope/Laplace on a larger real-context window, then crop.
+        
+        overlap_px = max(4, int(round(OVERLAP_SIGMA_MULTIPLIER * self.sigma_px)))
+        padded_size = tile_size + 2 * overlap_px
+        overlap_m = overlap_px * target_res
+
+        minx, miny, maxx, maxy = tile_bounds
+        padded_bounds = (
+            minx - overlap_m,
+            miny - overlap_m,
+            maxx + overlap_m,
+            maxy + overlap_m,
+        )
+
+        if self.labelled:
+           labels = self.labels.rasterise(tile_bounds, tile_size, self.target_crs)
+           if labels.sum() > 0:
+               print(f"Tile {tile_bounds} contains labels, skipping.")
+               return None
+
+        # handles tile being on edge of DEM (bad as zero padding ruins SCD context)
+        if not _bounds_inside(padded_bounds, self.dem.bounds):
+            return None
+
+        # large DEM to reduce edge artefacts of the tile
+        dem_padded = self.dem.reproject_to_shape(
+            self.target_crs, padded_bounds, padded_size, padded_size, resampling=Resampling.cubic
+        ).astype(np.float32)
+
+        available = {"DEM": dem_padded}
+        registry = _build_feature_registry(sigma_px=self.sigma_px, cell_size=target_res, tile_res=target_res)
+
+        # build available from registry
+        for name in self.layer_names:
+            if name in available or name == 'LABELS':
+                continue
+            available[name] = registry[name]['fn'](available)
+
+        s = overlap_px
+        e = overlap_px + tile_size
+        available = {k: v[s:e, s:e] for k, v in available.items()}
+
+        # Clean DEM channel without overlap. This keeps DEM itself unfiltered while
+        # derived features benefited from context.
+        dem_clean = self.dem.reproject_to_shape(
+            self.target_crs, tile_bounds, tile_size, tile_size, resampling=Resampling.cubic
+        ).astype(np.float32)
+        available["DEM"] = dem_clean
+
+
+
+
+        return np.stack([available[name] for name in self.layer_names], axis=0).astype(np.float32)
+
+    @staticmethod
+    def _tile_name(tile_bounds, prefix="tile"):
+        minx, miny, maxx, maxy = tile_bounds
+        return f"{prefix}_{int(minx)}_{int(miny)}_{int(maxx)}_{int(maxy)}"
+
+
+    def export(self, out_path):
+
+        for tile in self.tiles:
+            labels = tile['data'][self.layer_index["LABELS"]].astype(np.uint8)
+            image = tile['data'][:self.layer_index["LABELS"]].astype(np.float32)
+
+            np.savez_compressed(str(Path(out_path) / tile['name']),
+                    image=image, 
+                    layer_names=np.array(self.layer_names),
+                    res=np.array(tile["res"], dtype=np.float32),
+                    layer_index = self.layer_names,
+                    labels=labels,
+                    scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)),
+                    bounds = tile['bounds'])
+
+
+    def generate_tile(self, centre, res):
+        x, y = centre
+        bounds = _centred_bounds(x, y, 512, res)
+        tile = self._build_tile(bounds, 512, res)
+
+        tile_dict = {'data': tile,
+                     'name': self._tile_name(bounds),
+                     'bounds': bounds,
+                     'positive': 0 if tile[self.layer_index["LABELS"]].sum() == 0 else 1,
+                     'res': res}
+        self.tiles.append(tile_dict)
+
+class WindowedDataSource:
+    """
+    A class to handle windowed reading and reprojection of raster data from a file.
+    """
+
+    def __init__(self, path, type="DEM", nominal_res=None, temp_path=None):
+        self.path = path
+        self.type = type
+
+        # seperate temp path for reprojected raster, to be deleted at the end of the run.
+        # will be the same as path when from_tiff class method is used, but saves deleting original raster if not.
+        self.temp_path = temp_path
+
+        # only read metadata here
+        with rio.open(path) as src:
+            self.crs = src.crs
+            self.bounds = src.bounds
+            self.width = src.width
+            self.height = src.height
+            self.transform = src.transform
+            self.count = src.count
+
+            # set res
+            if nominal_res is None:
+                self.res = float(abs(src.res[0]))
+            else:
+                self.res = float(nominal_res)
+
+    @classmethod
+    def from_tiff(cls, path, type="DEM"):
+        return cls(path=path, type=type)
+
+    @classmethod
+    def from_tiff_utm(cls, path, resolution, type="DEM"):
+
+        with rio.open(path) as src:
+            target_crs = CRS.from_epsg(_utm_epsg(src.crs, src.bounds))
+
+        temp_path = cls.reproject_raster(src_path=path, dst_crs=target_crs, resolution=resolution)
+        
+        return cls(path=temp_path, type=type, nominal_res=resolution, temp_path=temp_path)
+
+    # add to a helper .py later
+    @staticmethod
+    def reproject_raster(src_path, dst_crs, resolution=None):
+        """
+        Reproject a raster file to a new coordinate reference system (CRS).
+
+        Parameters:
+        - src_path: Path to the source raster file.
+        - dst_crs: Target CRS in the format "EPSG:XXXX".
+
+        Returns:
+        - None
+        """
+
+        (REPO_ROOT / "temp").mkdir(exist_ok=True)
+        fd, dst_path = tempfile.mkstemp(suffix=".tif", dir=REPO_ROOT / "temp")
+        os.close(fd)
+
+        with rio.open(src_path) as src:
+            
+            nodata = src.nodata if src.nodata is not None else -9999
+
+            transform, width, height = calculate_default_transform(
+                src.crs, dst_crs, src.width, src.height, *src.bounds,
+                resolution=resolution)
+
+            profile = src.profile.copy()
+            profile.update(
+                crs=dst_crs, transform=transform, width=width, height=height,
+                dtype="float32", nodata=nodata,
+                tiled=True, blockxsize=512, blockysize=512,
+                compress="deflate", BIGTIFF="IF_SAFER")
+
+            with rio.open(dst_path, "w", **profile) as dst:
+                for i in range(1, src.count + 1):
+                    reproject(
+                        source=rio.band(src, i),
+                        destination=rio.band(dst, i),
+                        src_nodata=nodata,
+                        dst_nodata=nodata,
+                        resampling=Resampling.cubic,
+                        num_threads=4,
+                    )
+
+        return dst_path
+
+    def reproject_to_shape(
+        self,
+        target_crs,
+        tile_bounds,
+        out_width,
+        out_height,
+        resampling=Resampling.cubic):
+
+        dst_transform = from_bounds(*tile_bounds, out_width, out_height)
+
+        with rio.open(self.path) as src:
+
+            if self.type == "RGB":
+
+                out = np.full((3, out_height, out_width), np.nan, dtype=np.float32)
+
+                for band_index in range(3):
+
+                    reproject(
+                        source=rio.band(src, band_index + 1),
+                        destination=out[band_index],
+                        src_transform=src.transform,
+                        src_crs=src.crs,
+                        dst_transform=dst_transform,
+                        dst_crs=target_crs,
+                        resampling=resampling,
+                        dst_nodata=np.nan)
+            
+            else:
+                out = np.full((out_height, out_width), np.nan, dtype=np.float32)
+
+                reproject(
+                    source=rio.band(src, 1),
+                    destination=out,
+                    src_transform=src.transform,
+                    src_crs=src.crs,
+                    dst_transform=dst_transform,
+                    dst_crs=target_crs,
+                    resampling=resampling,
+                    dst_nodata=np.nan)
+
+        return out
+
+@dataclass
+class ResBin:
+    name: str
+    res: float
+    count: int
+
+class NegativeMiner:
+
+    def __init__(self, dem: DataSource, label_path: Path, resolutions: list[float], NODATA=0, region=None):
+        self.dem = dem
+        self.resolutions = resolutions
+        self.coverage = np.zeros(dem.data.shape, dtype=np.float32)
+        self.generator = TileGenerator(dem=dem, label_path=label_path)
+        self.layer_index = {name: i for i, name in enumerate(TILE_GENERATOR_LAYER_NAMES)}
+        self.report_capacity()
+        self.NODATA = NODATA
+        self.region = region
+
+    def _pixel_window(self, tile_bounds):
+        minx, miny, maxx, maxy = tile_bounds
+        col0, row0 = ~self.dem.transform * (minx, maxy)
+        col1, row1 = ~self.dem.transform * (maxx, miny)
+        return int(row0), int(row1), int(col0), int(col1)
+
+    def _update_coverage(self, tile_bounds):
+        r0, r1, c0, c1 = self._pixel_window(tile_bounds)
+        self.coverage[r0:r1, c0:c1] += 1.0
+
+    def _is_tile_covered(self, tile_bounds):
+        r0, r1, c0, c1 = self._pixel_window(tile_bounds)
+        return np.any(self.coverage[r0:r1, c0:c1] > 0)
+
+    def report_capacity(self):
+
+        px_res = self.dem.res
+        free_px = self.coverage.size
+        free_area = free_px * px_res ** 2
+
+        print(f"free area: {free_area:,.0f} m^2 ({free_px:,} px, "
+            f"{100 * free_px / self.coverage.size:.1f}% of DEM)\n")
+
+        self.bins = []
+        for res in sorted(self.resolutions):
+            tile_area = (512 * res) ** 2
+            tile_count = int((free_area / tile_area) * 0.7)
+            print(f"res {res:>5.2f}m  tiles = {tile_count:.1f}")
+
+            self.bins.append(ResBin(name=f"{res:.2f}m", res=res, count=tile_count))
+
+    def _grid_candidates(self, tile_side, jitter=0.15):
+        minx, miny, maxx, maxy = self.dem.bounds
+        xs = np.arange(minx, maxx - tile_side, tile_side)
+        ys = np.arange(miny, maxy - tile_side, tile_side)
+        xx, yy = np.meshgrid(xs, ys)
+        coords = np.stack([xx.ravel(), yy.ravel()], axis=1)
+
+        # jitter off-grid so tiles aren't all perfectly aligned - keeps some
+        # placement diversity without falling back to pure random search
+        coords += np.random.uniform(-tile_side * jitter, tile_side * jitter, coords.shape)
+        np.random.shuffle(coords)
+        return coords
+
+    def _find_tile_positions(self, counts=None):
+        results = {}
+        count_ceiling = min([b.count for b in self.bins])
+        
+        for b in sorted(self.bins, key=lambda b: b.res):  # largest footprint first, least flexible
+            tile_side = 512 * b.res
+            placed = []
+            count = counts[b.res] if counts and b.res in counts else b.count
+
+            for x0, y0 in self._grid_candidates(tile_side):
+                if len(placed) >= count:
+                    break
+
+                bounds = (x0, y0, x0 + tile_side, y0 + tile_side)
+                if self._is_tile_covered(bounds):
+                    continue
+                self._update_coverage(bounds)
+                placed.append(bounds)
+
+            if len(placed) < b.count:
+                print(f"{b.name}: placed {len(placed)}/{b.count}, candidates exhausted")
+            results[b.res] = placed
+
+        return results
+
+    @staticmethod
+    def _tile_name(tile_bounds):
+        minx, miny, maxx, maxy = tile_bounds
+        return f"{int(minx)}_{int(miny)}_{int(maxx)}_{int(maxy)}"
+
+    def export(self, tile, out_path, bounds, name, res):
+
+        labels = tile[self.layer_index["LABELS"]].astype(np.uint8)
+        image = tile[:self.layer_index["LABELS"]].astype(np.float32)
+
+        np.savez_compressed(str(Path(out_path) / f'{self.region}_negative_{name}'),
+                image=image, 
+                layer_names=np.array(TILE_GENERATOR_LAYER_NAMES),
+                res=np.array(res, dtype=np.float32),
+                labels=labels,
+                scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)),
+                bounds=bounds, 
+                region=self.region,
+                positive=False)
+
+
+    def generate_tiles(self, out_dir: Path, counts=None):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        tile_positions = self._find_tile_positions(counts)
+
+        for res, bounds_list in tile_positions.items():
+
+            for i, bounds in enumerate(bounds_list):
+                tile = self.generator._build_tile(bounds, 512, res)
+
+                if tile is None:
+                    continue
+                # empty check 
+
+                invalid = np.isclose(tile[self.layer_index['DEM']], -9999.0) | ~np.isfinite(tile[self.layer_index['DEM']])
+                if invalid.any():
+                    continue
+                
+                name = self._tile_name(bounds)
+                print(f"exporting {name} at {res:.2f}m")
+                self.export(tile, out_dir, bounds, name, res)
+
+        self.report_statistics(tile_positions)
+
+    def report_statistics(self, tile_positions):
+        for res_name, bounds_list in tile_positions.items():
+            print(f"{res_name}: {len(bounds_list)} tiles placed")
+
+class DatasetRefiner():
+
+    def __init__(self, dir, region=None):
+        self.dir = Path(dir)
+        self.region = region
+        self.tiles = self._get_region_tiles()
+
+    def _find_duplicates(self, tile_path):
+        # find all duplicate tiles based on overlap
+        with np.load(tile_path, allow_pickle=True) as tile:
+            minx, miny, maxx, maxy = tile["bounds"]
+
+        duplicates = []
+
+        for other_path in self.tiles:
+
+            if other_path == tile_path:
+                continue
+
+            if not other_path.exists():
+                continue
+
+            with np.load(other_path, allow_pickle=True) as other_tile:
+                other_minx, other_miny, other_maxx, other_maxy = other_tile["bounds"]
+
+            overlap_minx = max(minx, other_minx)
+            overlap_miny = max(miny, other_miny)
+            overlap_maxx = min(maxx, other_maxx)
+            overlap_maxy = min(maxy, other_maxy)
+
+            if overlap_minx < overlap_maxx and overlap_miny < overlap_maxy:
+
+                overlap_area = (
+                    (overlap_maxx - overlap_minx)
+                    * (overlap_maxy - overlap_miny)
+                )
+
+                tile_area = (maxx - minx) * (maxy - miny)
+
+                if overlap_area / tile_area > 0.5:
+                    duplicates.append(other_path)
+
+        return duplicates
+
+    def _resolve_duplicates(self, tile_path, duplicates=None):
+
+        if duplicates is None:
+            duplicates = self._find_duplicates(tile_path)
+
+        if not duplicates:
+            return
+
+        paths = [tile_path] + duplicates
+        n_tiles = len(paths)
+
+        plot_data = []
+
+        for path in paths:
+            with np.load(path, allow_pickle=True) as tile:
+                image = np.array(tile["image"][0])
+                res = tile["res"].item()
+
+            plot_data.append((image, res))
+
+        # if there are more than 5 tiles, plot them in one row
+        if n_tiles < 5:
+
+            fig, axs = plt.subplots(
+                1,
+                n_tiles,
+                figsize=(15, 10),
+                squeeze=False
+            )
+
+        else:
+
+            ncols = int(np.ceil(n_tiles / 2))
+
+            fig, axs = plt.subplots(
+                2,
+                ncols,
+                figsize=(15, 10),
+                squeeze=False
+            )
+
+        axs = axs.flatten()
+
+        for i, (image, res) in enumerate(plot_data):
+
+            axs[i].imshow(image, cmap='gray')
+
+            if i == 0:
+                axs[i].set_title(f"0: Original Tile, res={res:.2f}m")
+            else:
+                axs[i].set_title(f"{i}: Duplicate, res={res:.2f}m")
+
+        for i in range(n_tiles, len(axs)):
+            axs[i].axis("off")
+
+        plt.show()
+
+        choice = input(
+            f"Enter the number of the tile to keep (0-{n_tiles - 1}), "
+            "or 'd' to delete all: "
+        ).strip().lower()
+
+        if choice == 'd':
+
+            for path in paths:
+                if path.exists():
+                    path.unlink()
+
+            plt.close()
+            return
+
+        try:
+            choice = int(choice)
+
+            if choice < 0 or choice >= n_tiles:
+                print("Invalid input; duplicates not resolved.")
+                return
+
+            for i, path in enumerate(paths):
+
+                if i == choice:
+                    continue
+
+                if path.exists():
+                    path.unlink()
+
+            plt.close()
+
+        except ValueError:
+            print("Invalid input; duplicates not resolved.")
+            return
+
+    def _has_duplicates(self, tile_path):
+        return len(self._find_duplicates(tile_path)) > 0
+
+    def fix_duplicates(self):
+        # check for duplicates and resolve them
+        # refresh tiles after each deletion
+
+        while True:
+
+            self.tiles = self._get_region_tiles()
+            duplicate_found = False
+
+            for tile_path in self.tiles:
+
+                duplicates = self._find_duplicates(tile_path)
+
+                if duplicates:
+
+                    self._resolve_duplicates(
+                        tile_path,
+                        duplicates
+                    )
+
+                    duplicate_found = True
+                    break
+
+            if not duplicate_found:
+                break
+
+    def refine(self):
+        # refine dataset by manually accepting or rejecting tiles based on visual inspection
+        self.tiles = self._get_region_tiles()
+
+        for path in self.tiles:
+
+            if not path.exists():
+                continue
+
+            with np.load(path, allow_pickle=True) as tile:
+                self._view_tile(tile)
+
+            answer = input(
+                "r=RETAIN, x=REJECT, s=SKIP, q=QUIT: "
+            ).strip().lower()
+
+            if answer == "q":
+                break
+
+            if answer == "s":
+                continue
+
+            if answer == "r":
+                continue
+
+            elif answer == "x":
+
+                if path.exists():
+                    path.unlink()
+
+            else:
+                print("Invalid input; candidate skipped.")
+                continue
+
+    def _view_tile(self, tile):
+        # view a specific tile
+        image = tile['image']
+        labels = tile['labels']
+
+        fig, axs = plt.subplots(1, 6, figsize=(15, 10))
+
+        for i, band in enumerate(image):
+            axs[i].imshow(band, cmap='gray')
+            axs[i].set_title(f"Band {i}")
+
+        axs[5].imshow(labels, cmap='gray')
+        axs[5].set_title("Labels")
+
+        plt.show()
+
+    def _get_region_tiles(self):
+        # return a list of tiles in the directory that match the region
+        tiles = []
+
+        for path in self.dir.glob("*.npz"):
+
+            with np.load(path, allow_pickle=True) as f:
+
+                if self.region is None:
+                    tiles.append(path)
+
+                elif f["region"].item() == self.region:
+                    tiles.append(path)
+
+        return tiles
 
 # AI Statement:
 # I have used ChatGPT to help with portions of this code, specifically:
@@ -373,8 +1000,6 @@ class SceneTiler:
     Just for scale normalised (and when appropriate, grouped) tile exportation.
 
     """
-    DEFAULT_LAYERS = ["DEM", "DEM_SLOPE", "HILLSHADE", "RR", "LAPLACE"]
-
     # keep features functionality if want to change anything for experimentation.
     def __init__(self, dem_source: DataSource, label_shp: ShapeLabels = None,
                  features=None):
@@ -386,7 +1011,7 @@ class SceneTiler:
 
         self.rr_sigma_m = 12.0 * dem_source.res
 
-        self.layer_names = features or self.DEFAULT_LAYERS.copy()
+        self.layer_names = list(features or SCENE_DEFAULT_LAYERS)
 
         if self.label_shp is None:
             self.unlabelled = True
@@ -584,8 +1209,6 @@ class SceneTiler:
         exported_pos = skipped = 0
         positive_resolutions = []
 
-        MAX_ATTEMPTS = 10
-
         # for group in cluster, make request around bounds and export tile if valid (several validity params)
         for group_id, group in enumerate(groups):
 
@@ -594,7 +1217,7 @@ class SceneTiler:
             # initial request
             req = None
 
-            for attempt in range(MAX_ATTEMPTS):
+            for attempt in range(MAX_TILE_ATTEMPTS):
 
                 if req is None:
 

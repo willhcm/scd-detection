@@ -20,22 +20,6 @@ PARAM_GRID = {
 # only used by the veto stage, pointless to sweep with --no_veto
 VETO_ONLY = {'veto_threshold', 'detect_threshold'}
 
-# values for anything not being swept (also CLI-overridable)
-DEPLOYER_PARAMS = {
-    "tile_size": 512,
-    "veto_context_tile_size": 224,
-    "veto_batch_size": 16,
-    "veto_threshold": 0.60, # tune on larger train set
-    "score_threshold": 0.60, # to tune
-    "mask_threshold": 0.55, # to tune
-    "detect_threshold": 0.4, # to tune
-    "context_scale": 5.0,
-    "min_context_width_m": 750.0,
-    "max_context_width_m": 4000.0,
-    "native_res": 1.0,
-    "stride_frac": 0.75,
-}
-
 
 def main(args):
 

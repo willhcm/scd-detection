@@ -6,8 +6,8 @@ import torch
 import deployment.config as config
 from rasterio.enums import Resampling
 from rasterio.transform import from_bounds
-from helpers.VetoHelpers import build_dem_context, normalise_dem_context
-from loaders.WindowedDataSource import WindowedDataSource
+from helpers.VetoHelpers import build_dem_context, normalise_veto_data, VETO_BAND_INDEX
+from loaders.Cogs import WindowedDataSource
 import os
 from pathlib import Path
 
@@ -22,9 +22,11 @@ class PostProcessor:
     ----------
     model: torch.nn.Module
         Trained Veto classifier.
+    norm_stats: dict
+        Normalization statistics for the veto data.
     """
 
-    def __init__(self, model):
+    def __init__(self, model, norm_stats=None):
 
         cfg = config.get()
 
@@ -32,6 +34,7 @@ class PostProcessor:
         self.device = cfg.device
         self.model = model.to(self.device)
         self.model.eval()
+        self.norm_stats = norm_stats
 
         # data origins
         self.dem_path = cfg.dem_path
@@ -154,27 +157,28 @@ class PostProcessor:
         )
 
         # build scalar features (e.g. candidate - annulus elevation delta)
-        dem_context, scalar_features = build_dem_context(
+        image, scalar_features = build_dem_context(
             dem=dem,
             candidate_mask=context_mask,
             context_width_m=context_width_m,
-            candidate_diameter_m=diameter_m,
-        )
+            candidate_diameter_m=diameter_m)
+        
+        dem, slope, scalar_features = normalise_veto_data(dem=image[VETO_BAND_INDEX['DEM']], slope=image[VETO_BAND_INDEX['SLOPE']], scalars=scalar_features, norm_stats=self.norm_stats)
+        image = np.stack([dem, slope, context_mask.astype(np.float32)], axis=0).astype(np.float32)
 
         # handles empty scalar features in case some error in calculation 
-        if (dem_context is None or scalar_features is None):
+        if (image is None or scalar_features is None):
             return None
 
-        dem_context = np.asarray(
-            dem_context,
-            dtype=np.float32,
-        )
+        image = np.asarray(
+            image,
+            dtype=np.float32)
 
         scalar_features = np.asarray(scalar_features, dtype=np.float32).reshape(-1)
 
         return {
-            "dem_context": np.ascontiguousarray(
-                dem_context,
+            "image": np.ascontiguousarray(
+                image,
                 dtype=np.float32,
             ),
             "scalar_features": np.ascontiguousarray(

@@ -1,5 +1,6 @@
 # dataset wrapper for loading data from a directory of images, and analysing the metadata to see distribution of resolutions and geographies
 from os import name
+from random import random
 
 import numpy as np
 import glob
@@ -14,7 +15,8 @@ import pandas as pd
 from scipy.ndimage import label, find_objects
 from torch.utils.data import WeightedRandomSampler, DataLoader
 from helpers.MaskRCNNFunctions import collate_fn
-from modelling.UNET import UNETDataset
+from modelling.Veto import VetoDataset
+from helpers.VetoHelpers import VETO_BAND_INDEX, VETO_SCALAR_NAMES
 
 class DatasetWrapper():
 
@@ -26,17 +28,6 @@ class DatasetWrapper():
         self.geography_positives_distribution = {}
         self.resolutions_positive_distribution = {}
         self.normalization_stats = {}
-
-    def get_unet_loaders(self, batch_size, random_train=False, folded_out_region=None):
-        self.all_paths = list(self.root_dir.glob("*.npz"))
-
-        train_set, val_set = self._unet_dataset(self.all_paths, augment=True, random_train=random_train, folded_out_region=folded_out_region)
-
-        sampler = self._diameter_weighted_sampler(train_set.paths, alpha=0.4)
-        train_loader = DataLoader(train_set, sampler=sampler, num_workers=0, batch_size=batch_size)
-        val_loader = DataLoader(val_set, shuffle=False, num_workers=0, batch_size=batch_size)
-
-        return train_loader, val_loader
 
     def get_loaders(self, folded_out_region, batch_size, random_train=False):
         if random_train:
@@ -111,23 +102,8 @@ class DatasetWrapper():
 
             return (
                 MaskRCNNDataset(self.train_paths, self.normalization_stats, augment=True),
-                MaskRCNNDataset(self.test_paths, self.normalization_stats, augment=False)
-            )
-    def _unet_dataset(self, paths, augment=False, random_train=False, folded_out_region=None):
-
-        if random_train:
-            self.train_paths, self.val_paths = train_test_split(paths, test_size=0.2, random_state=42)
-        else:
-            self.train_paths = [p for p in paths if np.load(p, allow_pickle=True)['region'] != folded_out_region]
-            self.val_paths = [p for p in paths if np.load(p, allow_pickle=True)['region'] == folded_out_region]
-
-        self._analyze_dataset()
-        self._estimate_normalization_stats(self.train_paths)
-        train_set = UNETDataset(self.train_paths, self.normalization_stats, augment=augment)
-        val_set = UNETDataset(self.val_paths, self.normalization_stats, augment=False)
-
-        return train_set, val_set
-
+                MaskRCNNDataset(self.test_paths, self.normalization_stats, augment=False))
+        
     def plot_distribution(self):
 
         # plot the distribution of resolutions and geographies in the training set
@@ -397,233 +373,113 @@ class DatasetWrapper():
 
         return stats
 
-class DatasetRefiner():
 
-    def __init__(self, dir, region=None):
-        self.dir = Path(dir)
-        self.region = region
-        self.tiles = self._get_region_tiles()
 
-    def _find_duplicates(self, tile_path):
-        # find all duplicate tiles based on overlap
-        with np.load(tile_path, allow_pickle=True) as tile:
-            minx, miny, maxx, maxy = tile["bounds"]
+class VetoDatasetWrapper():
 
-        duplicates = []
+    def __init__(self, root):
+        self.root = Path(root)
+        self.normalization_stats = {}
 
-        for other_path in self.tiles:
+    def get_loaders(self, random_train=True, folded_out_region=None, batch_size=16):
 
-            if other_path == tile_path:
-                continue
+        all_paths = self.root.glob('*.npz')
+        if random_train:
+            self.train_paths, self.val_paths = train_test_split(all_paths, test_size=0.2, random_state=42)
+        elif not random_train and folded_out_region is not None:
+            self.train_paths = []
+            self.val_paths = []
 
-            if not other_path.exists():
-                continue
+            for p in all_paths:
+                if self._get_region(p) != folded_out_region:
+                    self.train_paths.append(p)
+                else:
+                    self.val_paths.append(p)
 
-            with np.load(other_path, allow_pickle=True) as other_tile:
-                other_minx, other_miny, other_maxx, other_maxy = other_tile["bounds"]
+        self.normalization_stats = self._estimate_normalisation_stats()
 
-            overlap_minx = max(minx, other_minx)
-            overlap_miny = max(miny, other_miny)
-            overlap_maxx = min(maxx, other_maxx)
-            overlap_maxy = min(maxy, other_maxy)
+        train_set, val_set = VetoDataset(self.train_paths, self.normalization_stats, augment=True), VetoDataset(self.val_paths, self.normalization_stats, augment=False)
 
-            if overlap_minx < overlap_maxx and overlap_miny < overlap_maxy:
+        train_loader = DataLoader(train_set, shuffle=True, batch_size=batch_size)
+        val_loader = DataLoader(val_set, shuffle=False, batch_size=batch_size)
 
-                overlap_area = (
-                    (overlap_maxx - overlap_minx)
-                    * (overlap_maxy - overlap_miny)
-                )
+        return train_loader, val_loader, self.normalization_stats
 
-                tile_area = (maxx - minx) * (maxy - miny)
+    def _get_region(self, path):
+        with np.load(path, allow_pickle=True) as tile:
+            return tile["region"].item()
 
-                if overlap_area / tile_area > 0.5:
-                    duplicates.append(other_path)
+    def _estimate_normalisation_stats(self, n_samples_per_tile=10000, seed=42):
 
-        return duplicates
+        channels = ['DEM', 'SLOPE', 'scalars']
+        channels[scalars] = {name: [] for name in VETO_SCALAR_NAMES}
 
-    def _resolve_duplicates(self, tile_path, duplicates=None):
+        rng = np.random.default_rng(seed)
 
-        if duplicates is None:
-            duplicates = self._find_duplicates(tile_path)
+        # instantiate samples dictionary with name of channel type and empty list, which will be populated by randomly samples values as a flat array.
+        samples = {name: [] for name in channels}
 
-        if not duplicates:
-            return
+        for p in self.train_paths:
+            with np.load(p, allow_pickle=True) as sample:
 
-        paths = [tile_path] + duplicates
-        n_tiles = len(paths)
-
-        plot_data = []
-
-        for path in paths:
-            with np.load(path, allow_pickle=True) as tile:
-                image = np.array(tile["image"][0])
-                res = tile["res"].item()
-
-            plot_data.append((image, res))
-
-        # if there are more than 5 tiles, plot them in one row
-        if n_tiles < 5:
-
-            fig, axs = plt.subplots(
-                1,
-                n_tiles,
-                figsize=(15, 10),
-                squeeze=False
-            )
-
-        else:
-
-            ncols = int(np.ceil(n_tiles / 2))
-
-            fig, axs = plt.subplots(
-                2,
-                ncols,
-                figsize=(15, 10),
-                squeeze=False
-            )
-
-        axs = axs.flatten()
-
-        for i, (image, res) in enumerate(plot_data):
-
-            axs[i].imshow(image, cmap='gray')
-
-            if i == 0:
-                axs[i].set_title(f"0: Original Tile, res={res:.2f}m")
-            else:
-                axs[i].set_title(f"{i}: Duplicate, res={res:.2f}m")
-
-        for i in range(n_tiles, len(axs)):
-            axs[i].axis("off")
-
-        plt.show()
-
-        choice = input(
-            f"Enter the number of the tile to keep (0-{n_tiles - 1}), "
-            "or 'd' to delete all: "
-        ).strip().lower()
-
-        if choice == 'd':
-
-            for path in paths:
-                if path.exists():
-                    path.unlink()
-
-            plt.close()
-            return
-
-        try:
-            choice = int(choice)
-
-            if choice < 0 or choice >= n_tiles:
-                print("Invalid input; duplicates not resolved.")
-                return
-
-            for i, path in enumerate(paths):
-
-                if i == choice:
+                img_data = {'DEM': sample['image'][VETO_BAND_INDEX['DEM']], 'SLOPE': sample['image'][VETO_BAND_INDEX['SLOPE']]}
+                scalar_data = sample['scalar_features']
+                scalars = {name: scalar_data[i] for i, name in enumerate(VETO_SCALAR_NAMES)}
+                
+                # validity check 
+                valid = np.isfinite(sample).all(axis=0).ravel()
+                idx = np.flatnonzero(valid)
+                if len(idx) == 0:
                     continue
 
-                if path.exists():
-                    path.unlink()
+                chosen = rng.choice(idx, size=min(n_samples_per_tile, len(idx)), replace=False)
+            
+                for name, data in img_data.items():
+                    vals = data.ravel()[chosen]
+                    samples[name].append(vals)
+                for name, value in scalars.items():
+                    samples['scalars'][name].append(value)
 
-            plt.close()
+        self.values = self.handle_outliers(samples)
+        
+        stats = {}
 
-        except ValueError:
-            print("Invalid input; duplicates not resolved.")
-            return
+        for channel_name, channel_samples in samples.items():
 
-    def _has_duplicates(self, tile_path):
-        return len(self._find_duplicates(tile_path)) > 0
+            if not channel_samples:
+                raise RuntimeError(
+                    f"No valid samples found for {channel_name}")
 
-    def fix_duplicates(self):
-        # check for duplicates and resolve them
-        # refresh tiles after each deletion
+            values = np.concatenate(channel_samples)
 
-        while True:
+            median = np.median(values)
+            q25, q75 = np.percentile(values, [25, 75])
+            iqr = q75 - q25
 
-            self.tiles = self._get_region_tiles()
-            duplicate_found = False
+            if iqr == 0:
+                raise RuntimeError(
+                    f"IQR is zero for {channel_name}"
+                )
 
-            for tile_path in self.tiles:
+            stats[channel_name] = {
+                "median": float(median),
+                "iqr": float(iqr),
+                "n_samples": int(len(values)),
+            }
 
-                duplicates = self._find_duplicates(tile_path)
+        self.normalization_stats = stats
 
-                if duplicates:
+        return stats
 
-                    self._resolve_duplicates(
-                        tile_path,
-                        duplicates
-                    )
+    def _handle_outliers(self, vals):
+        """
+        Handle outliers in the DEM and Slope bands by clipping to the 1st and 99th percentiles.
+        """
+        for channel in vals:
+            channel_vals = np.concatenate(vals[channel])
+            lower_bound = np.percentile(channel_vals, 0.5)
+            upper_bound = np.percentile(channel_vals, 99.5)
+            for i in range(len(vals[channel])):
+                vals[channel][i] = np.clip(vals[channel][i], lower_bound, upper_bound)
 
-                    duplicate_found = True
-                    break
-
-            if not duplicate_found:
-                break
-
-    def refine(self):
-        # refine dataset by manually accepting or rejecting tiles based on visual inspection
-        self.tiles = self._get_region_tiles()
-
-        for path in self.tiles:
-
-            if not path.exists():
-                continue
-
-            with np.load(path, allow_pickle=True) as tile:
-                self._view_tile(tile)
-
-            answer = input(
-                "r=RETAIN, x=REJECT, s=SKIP, q=QUIT: "
-            ).strip().lower()
-
-            if answer == "q":
-                break
-
-            if answer == "s":
-                continue
-
-            if answer == "r":
-                continue
-
-            elif answer == "x":
-
-                if path.exists():
-                    path.unlink()
-
-            else:
-                print("Invalid input; candidate skipped.")
-                continue
-
-    def _view_tile(self, tile):
-        # view a specific tile
-        image = tile['image']
-        labels = tile['labels']
-
-        fig, axs = plt.subplots(1, 6, figsize=(15, 10))
-
-        for i, band in enumerate(image):
-            axs[i].imshow(band, cmap='gray')
-            axs[i].set_title(f"Band {i}")
-
-        axs[5].imshow(labels, cmap='gray')
-        axs[5].set_title("Labels")
-
-        plt.show()
-
-    def _get_region_tiles(self):
-        # return a list of tiles in the directory that match the region
-        tiles = []
-
-        for path in self.dir.glob("*.npz"):
-
-            with np.load(path, allow_pickle=True) as f:
-
-                if self.region is None:
-                    tiles.append(path)
-
-                elif f["region"].item() == self.region:
-                    tiles.append(path)
-
-        return tiles
+        return vals

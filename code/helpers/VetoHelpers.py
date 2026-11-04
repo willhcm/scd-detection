@@ -7,6 +7,8 @@ VETO_SCALAR_NAMES = (
     "log_context_width_m",
     'depth_width_ratio')
 
+VETO_BAND_INDEX = {'DEM': 0, 'SLOPE': 1, 'MASK': 2} # index map of band names in veto dataset ([DEM Context, Slope Context, Mask from MaskR-CNN])
+
 # ChatGPT assistance with _make_annulus and dem context functions
 def _make_annulus(candidate_mask):
     """
@@ -49,6 +51,9 @@ def build_dem_context(
     candidate_mask,
     context_width_m,
     candidate_diameter_m):
+    """
+    Docstring
+    """
     
     candidate_mask = np.asarray(candidate_mask).astype(bool)
 
@@ -77,25 +82,11 @@ def build_dem_context(
     # get values from masks 
     candidate_values = dem[candidate_valid]
     annulus_values = dem[annulus_valid]
-    context_values = dem[valid]
 
     # calculate stats from these values.
     annulus_mean = float(np.mean(annulus_values))
-    annulus_median = float(np.median(annulus_values))
-
-    context_p05, context_p95 = np.percentile(
-        context_values,
-        [5, 95])
-
-    context_relief = max(float(context_p95 - context_p05), 1e-3)
-
-    # relative DEM scaling same as in MaskRCNN model, just larger context.
-    # normalisations stats needed.
-    relative_dem = dem - np.median(dem)
-    # robust scale DEM.
 
     # repeat for slope
-
     h, width = dem.shape
     pixel_size_m = float(context_width_m) / float(width)
 
@@ -103,16 +94,13 @@ def build_dem_context(
 
     slope = np.hypot(grad_x, grad_y).astype(np.float32)
 
-    # Robust image scaling while retaining the absolute slope in scalars.
-    slope_p95 = max(float(np.percentile(slope[valid], 95)), 1e-4)
-    slope_scaled = np.clip(slope / slope_p95, 0.0, 3.0) / 3.0
-
     candidate_slope = slope[candidate_valid]
     annulus_slope = slope[annulus_valid]
 
     depth = np.median(candidate_values) - annulus_mean
     depth_width_ratio = depth / candidate_diameter_m 
 
+    # same order as VETO_SCALAR_NAMES, used to reference indices throughout repo.
     scalar_features = np.asarray([
             float(np.mean(candidate_slope)), # avg slope in SCD
             float(np.mean(annulus_slope)), # avg slope in surrounding ring
@@ -121,6 +109,37 @@ def build_dem_context(
               dtype=np.float32)
 
     # return dem, slope (stacked) and scalsrs
-    dem_context = np.stack([relative_dem, slope_scaled, candidate_mask.astype(np.float32)], axis=0).astype(np.float32)
+    dem_context = np.stack([dem, slope, candidate_mask.astype(np.float32)], axis=0).astype(np.float32)
 
     return dem_context, scalar_features
+
+def normalise_veto_data(dem, slope, scalars, norm_stats):
+
+    dem, slope = _handle_outliers(dem, slope)
+
+    dem_rel = dem - np.median(dem)
+
+    scalars = (scalars - norm_stats['scalars'][VETO_SCALAR_NAMES]['median']) / norm_stats['scalars'][VETO_SCALAR_NAMES]['iqr']
+    dem_rel = (dem_rel - norm_stats['DEM']['median']) / norm_stats['DEM']['iqr']
+    slope = (slope - norm_stats['SLOPE']['median']) / norm_stats['SLOPE']['iqr']
+        
+    return dem_rel, slope, scalars
+
+def _handle_outliers(dem, slope):
+
+    out = []
+    for band in dem, slope:
+        valid = np.isfinite(band)
+
+        if not valid.any():
+            raise ValueError(f"Band contains no finite pixels")
+
+        fill_value = np.median(band[valid])
+        band = np.where(valid, band, fill_value)
+        lower_bound = np.percentile(band, 0.5)
+        upper_bound = np.percentile(band, 99.5)
+
+        band=  np.clip(band, lower_bound, upper_bound)
+        out.append(band)
+
+    return tuple(out)
