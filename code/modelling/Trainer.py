@@ -7,6 +7,7 @@ CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 
 from modelling.MaskRCNN import MaskRCNN
+from modelling.Veto import Vetoer
 from loaders.DatasetTools import DatasetWrapper, VetoDatasetWrapper
 from helpers.MaskRCNNFunctions import evaluate_maskrcnn_metrics, build_staged_optimizer, apply_training_stage, collate_fn, set_stage_progress, val_loss
 import torch
@@ -199,6 +200,8 @@ class Trainer():
 
         np.savez_compressed(fold_out_path / "random_split_results.npz", **results)
 
+        self.save_model(state, fold_out_path, exclude_region)
+
     def save_model(self, state, out_path, folded_out_region):
         out = {'model_state_dict': state, 
                'norm_stats': self.dset.normalization_stats,
@@ -222,11 +225,131 @@ class VetoTrainer():
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
 
-    def train(self, folded_out_region, epochs, batch_size, out_path):
-        ...
+    def train(self, folded_out_region, epochs, batch_size, out_path, veto_threshold=0.5):
+        train_loader, val_loader = self.dset.get_loaders(random_train=True, folded_out_region=folded_out_region, batch_size=batch_size)
+        if len(train_loader) == 0 or len(val_loader) == 0:
+            raise RuntimeError("Veto training requires non-empty train and validation loaders.")
+        if epochs < 1:
+            raise ValueError("epochs must be at least 1.")
+        print(f"Training on {len(train_loader.dataset)} samples, validating on {len(val_loader.dataset)} samples.")
 
-    def save_model(self):
-        ...
+        model = Vetoer()
+        criterion = nn.BCEWithLogitsLoss()
+
+        model.to(self.device)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
+
+        train_losses = []
+        val_losses = []
+        accuracies = []
+        precisions = []
+        recalls = []
+        f1s = []
+        best_f1 = -1.0
+        best_state = None
+        patience = 20
+        bad_epochs = 0
+
+        for epoch in range(epochs):
+
+            model.train()
+            train_loss = 0.0
+
+            for (images, scalars, labels) in train_loader:
+                images = images.to(self.device)
+                scalars = scalars.to(self.device)
+                labels = labels.to(self.device)
+
+                optimizer.zero_grad()
+                outputs = model(images, scalars)
+                loss = criterion(outputs.squeeze(), labels.float())
+                loss.backward()
+                optimizer.step()
+
+                train_loss += loss.item()
+
+            train_loss /= len(train_loader)
+            train_losses.append(train_loss)
+
+            model.eval()
+            val_loss = 0.0
+            all_labels = []
+            all_preds = []
+
+            with torch.no_grad():
+                for images, scalars, labels in val_loader:
+                    images = images.to(self.device)
+                    scalars = scalars.to(self.device)
+                    labels = labels.to(self.device)
+
+                    outputs = model(images, scalars)
+                    loss = criterion(outputs.squeeze(), labels.float())
+                    val_loss += loss.item()
+
+                    preds = torch.sigmoid(outputs).squeeze() > veto_threshold
+                    all_labels.extend(labels.cpu().numpy())
+                    all_preds.extend(preds.cpu().numpy())
+
+            scheduler.step()
+
+            val_loss /= len(val_loader)
+            val_losses.append(val_loss)
+
+            # Calculate metrics
+            all_labels = np.array(all_labels)
+            all_preds = np.array(all_preds)
+
+            accuracy = np.mean(all_labels == all_preds)
+            precision = np.sum((all_preds == 1) & (all_labels == 1)) / (np.sum(all_preds == 1) + 1e-8)
+            recall = np.sum((all_preds == 1) & (all_labels == 1)) / (np.sum(all_labels == 1) + 1e-8)
+            f1_score = 2 * (precision * recall) / (precision + recall + 1e-8)
+
+            accuracies.append(accuracy)
+            precisions.append(precision)
+            recalls.append(recall)
+            f1s.append(f1_score)
+
+            print(
+                f"Epoch {epoch+1:03d} | "
+                f"Train Loss: {train_loss:.4f} | "
+                f"Val Loss: {val_loss:.4f} | "
+                f"Accuracy: {accuracy:.4f} | "
+                f"Precision: {precision:.4f} | "
+                f"Recall: {recall:.4f} | "
+                f"F1 Score: {f1_score:.4f}")
+
+            if f1_score > best_f1:
+                best_f1 = f1_score
+                best_state = copy.deepcopy(model.state_dict()) # prevents accidental overwriting of best model state with more training epochs.
+                bad_epochs = 0
+            else:
+                bad_epochs += 1
+
+            if bad_epochs >= patience:
+                print(f"Early stopping at epoch {epoch+1}")
+                break
+
+        results = {
+            "train_losses": train_losses,
+            "val_losses": val_losses,
+            "accuracies": accuracies,
+            "precisions": precisions,
+            "recalls": recalls,
+            "f1s": f1s
+        }
+
+        np.savez_compressed(out_path / f"veto_training_metrics_fold_{folded_out_region}.npz", **results)
+        self.save_model(best_state, out_path, folded_out_region)
+        return results
+
+    def save_model(self, state, out_path, folded_out_region):
+        norm_stats = self.dset.normalization_stats
+        out = {'state': state,
+               'norm_stats': norm_stats,
+               'folded_out_region': folded_out_region}
+
+        torch.save(out, out_path / f"Vetoer.pt")
 
 
     

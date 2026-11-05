@@ -93,12 +93,6 @@ class PostProcessor:
         # where object is, stamp with 1
         mask[output_rows[valid], output_cols[valid]] = 1
 
-        # Ensure a very small candidate does not disappear when
-        # mapped into a large context tile.
-        if not mask.any():
-            centre = output_size // 2
-            mask[centre, centre] = 1
-
         return mask
 
     def _make_tile(
@@ -162,17 +156,20 @@ class PostProcessor:
             candidate_mask=context_mask,
             context_width_m=context_width_m,
             candidate_diameter_m=diameter_m)
-        
-        dem, slope, scalar_features = normalise_veto_data(dem=image[VETO_BAND_INDEX['DEM']], slope=image[VETO_BAND_INDEX['SLOPE']], scalars=scalar_features, norm_stats=self.norm_stats)
-        image = np.stack([dem, slope, context_mask.astype(np.float32)], axis=0).astype(np.float32)
 
         # handles empty scalar features in case some error in calculation 
         if (image is None or scalar_features is None):
             return None
 
-        image = np.asarray(
-            image,
-            dtype=np.float32)
+        to_normalize = {
+            'dem': image[VETO_BAND_INDEX['DEM']],
+            'slope': image[VETO_BAND_INDEX['SLOPE']],
+            'scalar_features': scalar_features}
+
+        dem, slope, scalar_features = normalise_veto_data(to_normalize, norm_stats=self.norm_stats)
+        image = np.stack([dem, slope, context_mask.astype(np.float32)], axis=0).astype(np.float32)
+
+        image = np.asarray(image, dtype=np.float32)
 
         scalar_features = np.asarray(scalar_features, dtype=np.float32).reshape(-1)
 
@@ -292,7 +289,7 @@ class PostProcessor:
                 continue
 
             # if can build, add to batch lists
-            batch_dem.append(tile["dem_context"])
+            batch_dem.append(tile["image"])
             batch_scalars.append(tile["scalar_features"])
             batch_objs.append(obj)
 
@@ -330,5 +327,19 @@ class PostProcessor:
             f"{skipped} objects could not be assessed."
         )
 
+        requested_returns = config.get().requested_returns
+        available_returns = {"predictions", "transform", "crs", "veto_probability_map", 'veto_map'}
+
+
         accepted_labels = np.where(stitched > 0, labeled, 0).astype(np.int32)
-        return accepted_labels, transform, crs
+        
+        out = {
+            "predictions": accepted_labels,
+            "transform": transform,
+            "crs": crs}
+
+        out.update({k: v for k, v in {
+            "veto_probability_map": veto_probability_map,
+            'rejected': veto_map}.items() if k in requested_returns and k in available_returns})
+
+        return out

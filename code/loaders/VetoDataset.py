@@ -17,7 +17,7 @@ import sys
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 
-from helpers.VetoHelpers import build_dem_context, VETO_SCALAR_NAMES
+from helpers.VetoHelpers import build_dem_context, VETO_SCALAR_NAMES, x_y_to_long_lat
 
 class DEMVetoLabeller:
 
@@ -50,6 +50,9 @@ class DEMVetoLabeller:
         # centroid 
         cx = obj["cx"]
         cy = obj["cy"]
+
+        # geographic centre of candidate object, in dms
+        dms_centre = x_y_to_long_lat(cx, cy, self.target_crs, "EPSG:4326")
 
         # object size
         diameter_m = obj['diameter']
@@ -111,8 +114,7 @@ class DEMVetoLabeller:
             context_width_m=context_width_m,
             candidate_diameter_m=diameter_m)
 
-        geo_centre = (cx, cy) * context_bounds # centre in self.target_crs
-        dms_centre = ... # centre in dms 
+
 
         if image is None:
             return None
@@ -121,7 +123,7 @@ class DEMVetoLabeller:
             "image": image,
             "scalar_features": scalar_features,
             "id": obj["id"],
-            'centre_dms': ...,
+            "centre_dms": dms_centre,
             "area": obj["area"],
             "diameter_m": diameter_m,
             "bounds": context_bounds,
@@ -336,7 +338,7 @@ class DEMVetoLabeller:
                 scalar_features=tile["scalar_features"],
                 scalar_names=np.asarray(VETO_SCALAR_NAMES),
                 label=np.int64(tile["label"]),
-                centre_in_dms=...,
+                centre_in_dms=tile["centre_dms"],
                 bounds=np.asarray(tile["bounds"], dtype=np.float64),
                 context_bounds=np.asarray(tile["context_bounds"], dtype=np.float64),
                 diameter_m=np.float32(tile["diameter_m"]),

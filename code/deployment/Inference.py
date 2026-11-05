@@ -95,8 +95,7 @@ class SCDModel():
             nodata=self.NODATA if self.NODATA is not None else -9999,
             to_veto=self.to_veto,
             **(hyperparams or {}),
-            requested_returns=requested_returns or None,
-        )
+            requested_returns=requested_returns)
 
         return Deployer(self.MaskRCNN_model_state, self.veto_model_state)
 

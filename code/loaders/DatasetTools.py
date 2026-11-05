@@ -16,7 +16,7 @@ from scipy.ndimage import label, find_objects
 from torch.utils.data import WeightedRandomSampler, DataLoader
 from helpers.MaskRCNNFunctions import collate_fn
 from modelling.Veto import VetoDataset
-from helpers.VetoHelpers import VETO_BAND_INDEX, VETO_SCALAR_NAMES
+from helpers.VetoHelpers import VETO_BAND_INDEX, VETO_SCALAR_NAMES, _handle_outliers
 
 class DatasetWrapper():
 
@@ -383,7 +383,7 @@ class VetoDatasetWrapper():
 
     def get_loaders(self, random_train=True, folded_out_region=None, batch_size=16):
 
-        all_paths = self.root.glob('*.npz')
+        all_paths = list(self.root.glob('*.npz'))
         if random_train:
             self.train_paths, self.val_paths = train_test_split(all_paths, test_size=0.2, random_state=42)
         elif not random_train and folded_out_region is not None:
@@ -395,6 +395,8 @@ class VetoDatasetWrapper():
                     self.train_paths.append(p)
                 else:
                     self.val_paths.append(p)
+        else:
+            raise ValueError("Either random_train must be True or folded_out_region must be specified.")
 
         self.normalization_stats = self._estimate_normalisation_stats()
 
@@ -403,7 +405,7 @@ class VetoDatasetWrapper():
         train_loader = DataLoader(train_set, shuffle=True, batch_size=batch_size)
         val_loader = DataLoader(val_set, shuffle=False, batch_size=batch_size)
 
-        return train_loader, val_loader, self.normalization_stats
+        return train_loader, val_loader
 
     def _get_region(self, path):
         with np.load(path, allow_pickle=True) as tile:
@@ -411,8 +413,9 @@ class VetoDatasetWrapper():
 
     def _estimate_normalisation_stats(self, n_samples_per_tile=10000, seed=42):
 
-        channels = ['DEM', 'SLOPE', 'scalars']
-        channels[scalars] = {name: [] for name in VETO_SCALAR_NAMES}
+        channels = ['DEM', 'SLOPE']
+        scalar_names = list(VETO_SCALAR_NAMES)
+        channels.extend(scalar_names)
 
         rng = np.random.default_rng(seed)
 
@@ -424,10 +427,11 @@ class VetoDatasetWrapper():
 
                 img_data = {'DEM': sample['image'][VETO_BAND_INDEX['DEM']], 'SLOPE': sample['image'][VETO_BAND_INDEX['SLOPE']]}
                 scalar_data = sample['scalar_features']
-                scalars = {name: scalar_data[i] for i, name in enumerate(VETO_SCALAR_NAMES)}
+                scalars = {name: scalar_data[i] for i, name in enumerate(scalar_names)}
                 
                 # validity check 
-                valid = np.isfinite(sample).all(axis=0).ravel()
+                img = np.stack(list(img_data.values()), axis=0) # to check validity it must be an np array of [channels, height, width]
+                valid = np.isfinite(img).all(axis=0).ravel()
                 idx = np.flatnonzero(valid)
                 if len(idx) == 0:
                     continue
@@ -436,12 +440,17 @@ class VetoDatasetWrapper():
             
                 for name, data in img_data.items():
                     vals = data.ravel()[chosen]
+                    # collect data on relative DEM.
+                    if name == 'DEM':
+                        tile_median = np.median(img_data['DEM'].ravel()[valid])
+                        vals = vals - tile_median
+
                     samples[name].append(vals)
                 for name, value in scalars.items():
-                    samples['scalars'][name].append(value)
+                    if np.isfinite(value):
+                        samples[name].append(value)
 
-        self.values = self.handle_outliers(samples)
-        
+        # calculate stats from sampled values.
         stats = {}
 
         for channel_name, channel_samples in samples.items():
@@ -450,7 +459,12 @@ class VetoDatasetWrapper():
                 raise RuntimeError(
                     f"No valid samples found for {channel_name}")
 
-            values = np.concatenate(channel_samples)
+            if channel_name in scalar_names:
+                values = np.array(channel_samples) # these are already flat
+            else:
+                values = np.concatenate(channel_samples)
+                lower_bound, upper_bound = np.percentile(values, [0.5, 99.5])
+                values = np.clip(values, lower_bound, upper_bound)
 
             median = np.median(values)
             q25, q75 = np.percentile(values, [25, 75])
@@ -458,28 +472,13 @@ class VetoDatasetWrapper():
 
             if iqr == 0:
                 raise RuntimeError(
-                    f"IQR is zero for {channel_name}"
-                )
+                    f"IQR is zero for {channel_name}")
 
             stats[channel_name] = {
                 "median": float(median),
                 "iqr": float(iqr),
-                "n_samples": int(len(values)),
-            }
+                "n_samples": int(len(values))}
 
         self.normalization_stats = stats
 
         return stats
-
-    def _handle_outliers(self, vals):
-        """
-        Handle outliers in the DEM and Slope bands by clipping to the 1st and 99th percentiles.
-        """
-        for channel in vals:
-            channel_vals = np.concatenate(vals[channel])
-            lower_bound = np.percentile(channel_vals, 0.5)
-            upper_bound = np.percentile(channel_vals, 99.5)
-            for i in range(len(vals[channel])):
-                vals[channel][i] = np.clip(vals[channel][i], lower_bound, upper_bound)
-
-        return vals

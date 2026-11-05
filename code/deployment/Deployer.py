@@ -356,12 +356,15 @@ class Deployer:
         }
 
         if self.cfg.to_veto:
-            objects, transform, crs = self.veto(merged, objects, transform, crs)
+            veto_results = self.veto(merged, objects, transform, crs)
             available.update({
-                "predictions": objects,
-                "transform": transform,
-                "crs": crs,
-            })
+                "predictions": veto_results['predictions'],
+                "transform": veto_results['transform'],
+                "crs": veto_results['crs']})
+
+            for k in ["rejected", "veto_probability_map"]:
+                if k in veto_results:
+                    available[k] = veto_results[k]
 
         return {k: v for k, v in available.items() if k in requested_returns}
 

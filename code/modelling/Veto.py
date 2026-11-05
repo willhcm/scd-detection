@@ -108,12 +108,12 @@ class VetoDataset(Dataset):
         if k:
             image = np.rot90(image, k, axes=(1, 2))
 
-        for i, s in enumerate(scalars):
-            noise = ...
-            s += noise
-            scalars[i] = s
+        # scale sigma to the range of the scalars, to avoid overwhelming the signal with noise.
+        for i, scalar in enumerate(scalars):
+            if np.isfinite(scalar):
+                scalars[i] += np.random.normal(0, sigma * abs(scalar) * 0.1)
 
-        return (np.ascontiguousarray(image), np.ascontiguousarray(mask), scalars)
+        return (np.ascontiguousarray(image), scalars)
 
     def __getitem__(self, idx):
 
@@ -134,8 +134,13 @@ class VetoDataset(Dataset):
         # reshape (why?)
         scalar_features = np.asarray(scalar_features, dtype=np.float32).reshape(-1)
 
+        to_normalize = {
+            'dem': dem,
+            'slope': slope,
+            'scalar_features': scalar_features}
+
         # handle outliers, before normalising
-        dem, slope, scalar_features = normalise_veto_data(dem, slope, scalar_features, norm_stats=self.norm_stats)
+        dem, slope, scalar_features = normalise_veto_data(to_normalize, norm_stats=self.norm_stats)
         image = np.stack([dem, slope, mask.astype(np.float32)], axis=0).astype(np.float32)
 
         # augment sample to increase training diversity and mitigate overfitting to small dataset.

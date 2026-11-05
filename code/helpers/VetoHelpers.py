@@ -1,5 +1,7 @@
 from scipy.ndimage import distance_transform_edt
 import numpy as np
+import pyproj
+
 
 VETO_SCALAR_NAMES = (
     "candidate_mean_slope",
@@ -113,22 +115,26 @@ def build_dem_context(
 
     return dem_context, scalar_features
 
-def normalise_veto_data(dem, slope, scalars, norm_stats):
+def normalise_veto_data(data, norm_stats):
 
-    dem, slope = _handle_outliers(dem, slope)
+    dem, slope, scalars = data['dem'], data['slope'], data['scalar_features']
+
+    dem, slope = _handle_outliers((dem, slope))
 
     dem_rel = dem - np.median(dem)
 
-    scalars = (scalars - norm_stats['scalars'][VETO_SCALAR_NAMES]['median']) / norm_stats['scalars'][VETO_SCALAR_NAMES]['iqr']
     dem_rel = (dem_rel - norm_stats['DEM']['median']) / norm_stats['DEM']['iqr']
     slope = (slope - norm_stats['SLOPE']['median']) / norm_stats['SLOPE']['iqr']
-        
+
+    for i, name in enumerate(VETO_SCALAR_NAMES):
+        scalars[i] = (scalars[i] - norm_stats[name]['median']) / norm_stats[name]['iqr']
+
     return dem_rel, slope, scalars
 
-def _handle_outliers(dem, slope):
+def _handle_outliers(bands):
 
     out = []
-    for band in dem, slope:
+    for band in bands:
         valid = np.isfinite(band)
 
         if not valid.any():
@@ -143,3 +149,12 @@ def _handle_outliers(dem, slope):
         out.append(band)
 
     return tuple(out)
+
+def x_y_to_long_lat(x, y, current_crs, target_crs="EPSG:4326"):
+    """
+    Convert x, y coordinates from current_crs to target_crs.
+    """
+
+    transformer = pyproj.Transformer.from_crs(current_crs, target_crs, always_xy=True)
+    lon, lat = transformer.transform(x, y)
+    return lon, lat

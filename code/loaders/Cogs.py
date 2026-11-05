@@ -43,14 +43,14 @@ class TileGenerator:
         self.dem = dem 
         self.target_crs = self.dem.crs
         self.sigma_px = 12
-        self.layer_names = ["DEM", "DEM_SLOPE", "HILLSHADE", "RR", "LAPLACE", 'LABELS']
+        self.labelled = label_path is not None
+        self.layer_names = list(TILE_GENERATOR_LAYER_NAMES[:-1])
+        if self.labelled:
+            self.layer_names.append("LABELS")
         self.layer_index = {name: i for i, name in enumerate(self.layer_names)}
 
-        if label_path is not None:
-            self.labelled = True
+        if self.labelled:
             self.labels = ShapeLabels(label_path)
-        else:
-            self.labelled = False
         
         self.tiles = []
 
@@ -104,8 +104,8 @@ class TileGenerator:
         ).astype(np.float32)
         available["DEM"] = dem_clean
 
-
-
+        if self.labelled:
+            available["LABELS"] = labels
 
         return np.stack([available[name] for name in self.layer_names], axis=0).astype(np.float32)
 
@@ -114,34 +114,44 @@ class TileGenerator:
         minx, miny, maxx, maxy = tile_bounds
         return f"{prefix}_{int(minx)}_{int(miny)}_{int(maxx)}_{int(maxy)}"
 
-
     def export(self, out_path):
 
         for tile in self.tiles:
-            labels = tile['data'][self.layer_index["LABELS"]].astype(np.uint8)
-            image = tile['data'][:self.layer_index["LABELS"]].astype(np.float32)
-
-            np.savez_compressed(str(Path(out_path) / tile['name']),
-                    image=image, 
-                    layer_names=np.array(self.layer_names),
-                    res=np.array(tile["res"], dtype=np.float32),
-                    layer_index = self.layer_names,
+            tile_data = tile['data']
+            image = tile_data.astype(np.float32)
+            export_data = {
+                "image": image,
+                "layer_names": np.array(self.layer_names),
+                "res": np.array(tile["res"], dtype=np.float32),
+                "layer_index": self.layer_names,
+                "bounds": tile["bounds"],
+            }
+            if self.labelled:
+                labels = tile_data[self.layer_index["LABELS"]].astype(np.uint8)
+                export_data.update(
                     labels=labels,
-                    scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)),
-                    bounds = tile['bounds'])
+                    scd_pixel_fraction=np.array(
+                        float(labels.sum()) / float(labels.size)),
+                )
+            np.savez_compressed(str(Path(out_path) / tile['name']), **export_data)
 
 
     def generate_tile(self, centre, res):
         x, y = centre
         bounds = _centred_bounds(x, y, 512, res)
         tile = self._build_tile(bounds, 512, res)
+        if tile is None:
+            return None
 
         tile_dict = {'data': tile,
                      'name': self._tile_name(bounds),
                      'bounds': bounds,
-                     'positive': 0 if tile[self.layer_index["LABELS"]].sum() == 0 else 1,
+                     'positive': int(
+                         self.labelled
+                         and tile[self.layer_index["LABELS"]].sum() > 0),
                      'res': res}
         self.tiles.append(tile_dict)
+        return tile_dict
 
 class WindowedDataSource:
     """
