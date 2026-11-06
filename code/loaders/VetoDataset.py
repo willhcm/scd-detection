@@ -47,7 +47,7 @@ class DEMVetoLabeller:
         self.max_width_m = max_width_m
 
     # build tile from candidate object, including DEM context
-    def _make_tile(self, obj, object_fraction=0.35):
+    def _make_tile(self, obj):
 
         # centroid 
         cx = obj["cx"]
@@ -58,13 +58,12 @@ class DEMVetoLabeller:
 
         # object size
         diameter_m = obj['diameter'] 
-        object_crop_width_m = (diameter_m / object_fraction)
 
         # DEM crop width
         # Four-times object box width, clipped to fixed limits.
         context_width_m = float(
             np.clip(
-                self.context_scale * object_crop_width_m,
+                self.context_scale * diameter_m,
                 self.min_width_m,
                 self.max_width_m))
 
@@ -129,7 +128,6 @@ class DEMVetoLabeller:
             "diameter_m": diameter_m,
             "bounds": context_bounds,
             "context_bounds": context_bounds,
-            "local_crop_width_m": object_crop_width_m,
             "context_width_m": context_width_m,
         }
 
@@ -255,7 +253,7 @@ class DEMVetoLabeller:
                     f"Local width: {tile['local_crop_width_m']:.1f} m\n"
                     f"Context width: {tile['context_width_m']:.1f} m\n\n"
                     f"Candidate {state['index'] + 1} / {len(candidates)}\n"
-                    f'Depth_width: {tile["scalar_features"][-1]:.1f} m\n')
+                    f'Depth_width: {tile["scalar_features"][-1]:.4f} m\n')
 
         # ------------------------------------------------------------------
         # Label callback
