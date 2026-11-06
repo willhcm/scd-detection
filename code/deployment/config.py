@@ -22,7 +22,7 @@ class DeployConfig:
     # merging across resolutions
     merge_band: int = 1024
     object_threshold: float = 0.50 # threshold for splitting max_prob map into objects for resolution-weighted max voting algorithm.
-    size_sigma: float = 0.8
+    size_sigma: float = 0.4
     object_fraction: float = 0.225 # midpoint of 0.1 and 0.35, which are used as object fractions in making the dataset. relativelty arbitrary, just roughly the object:image fraction that model is trained to detect.
     keep_threshold : float = 0.5 # final threshold for keeping objects after resolution-weighted max voting algorithm.
  
