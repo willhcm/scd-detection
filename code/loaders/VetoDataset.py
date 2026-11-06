@@ -33,7 +33,7 @@ class DEMVetoLabeller:
         tile_size=400):
 
         self.predictions = ShapeLabels(shp_path)
-        self.dem_source = WindowedDataSource.from_tiff(
+        self.dem_source = WindowedDataSource.from_tiff_utm(
             dem_path,
             type="DEM")
         
@@ -156,7 +156,7 @@ class DEMVetoLabeller:
 
     # for manual labelling of candidates, with export to npz files for training / validation of veto classifier
 
-    def label(self, min_area=10):
+    def label(self, min_area=1):
 
         objs = self.predictions.objects(self.target_crs)
 

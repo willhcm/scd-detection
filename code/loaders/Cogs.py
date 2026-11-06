@@ -186,10 +186,12 @@ class WindowedDataSource:
         return cls(path=path, type=type)
 
     @classmethod
-    def from_tiff_utm(cls, path, resolution, type="DEM"):
+    def from_tiff_utm(cls, path, resolution=None, type="DEM"):
 
         with rio.open(path) as src:
             target_crs = CRS.from_epsg(_utm_epsg(src.crs, src.bounds))
+            if resolution is None:
+                resolution = float(abs(src.res[0]))
 
         temp_path = cls.reproject_raster(src_path=path, dst_crs=target_crs, resolution=resolution)
         
