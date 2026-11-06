@@ -38,7 +38,7 @@ class DEMVetoLabeller:
             type="DEM")
         
         self.dem_res = self.dem_source.res
-        self.target_crs = target_crs
+        self.target_crs = self.dem_source.crs
         self.tiles = []
         self.region = region
         self.tile_size = tile_size
