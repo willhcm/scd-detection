@@ -150,12 +150,12 @@ class DEMVetoLabeller:
 
         relative_dem = tile["image"][0]
         context_mask = tile["image"][2]
+        tile_hillshade = hillshade(relative_dem)
 
         fig, ax = plt.subplots(1, 1, figsize=(10, 5))
-        hillshade = self.hillshade(relative_dem)
 
         # plot dem
-        ax.imshow(hillshade, cmap="gray")
+        ax.imshow(tile_hillshade, cmap="gray")
         # display mask
         ax.contour(context_mask, levels=[0.5], colors="red")
         ax.set_title(f"DEM context: {tile['context_width_m']:.0f} m")
