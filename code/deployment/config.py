@@ -31,7 +31,7 @@ class DeployConfig:
     veto_threshold: float = 0.9  # tuned
     veto_batch_size: int = 16
     veto_context_tile_size: int = 400
-    veto_object_fraction: float = 0.20
+    veto_object_fraction: float = 0.35
 
     context_scale: float = 4.0 
     min_context_width_m: float = 400.0

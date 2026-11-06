@@ -47,7 +47,7 @@ class DEMVetoLabeller:
         self.max_width_m = max_width_m
 
     # build tile from candidate object, including DEM context
-    def _make_tile(self, obj, object_fraction=0.25):
+    def _make_tile(self, obj, object_fraction=0.35):
 
         # centroid 
         cx = obj["cx"]
@@ -57,7 +57,7 @@ class DEMVetoLabeller:
         dms_centre = x_y_to_long_lat(cx, cy, self.target_crs, "EPSG:4326")
 
         # object size
-        diameter_m = obj['diameter'] * self.dem_res
+        diameter_m = obj['diameter'] 
         object_crop_width_m = (diameter_m / object_fraction)
 
         # DEM crop width
