@@ -57,7 +57,7 @@ class DEMVetoLabeller:
         dms_centre = x_y_to_long_lat(cx, cy, self.target_crs, "EPSG:4326")
 
         # object size
-        diameter_m = obj['diameter']
+        diameter_m = obj['diameter'] * self.dem_res
         object_crop_width_m = (diameter_m / object_fraction)
 
         # DEM crop width
