@@ -30,7 +30,7 @@ class DEMVetoLabeller:
         context_scale=10.0,
         min_width_m=512.0,
         max_width_m=50000.0,
-        tile_size=1024):
+        tile_size=512):
 
         self.predictions = ShapeLabels(shp_path)
         self.dem_source = WindowedDataSource.from_tiff_utm(
