@@ -19,6 +19,19 @@ sys.path.insert(0, str(CODE_DIR))
 
 from helpers.VetoHelpers import build_dem_context, VETO_SCALAR_NAMES, x_y_to_long_lat
 
+def hillshade(dem, azimuth=315, angle_altitude=45):
+    """
+    Compute hillshade from DEM.
+    """
+    x, y = np.gradient(dem)
+    slope = np.pi/2. - np.arctan(np.sqrt(x*x + y*y))
+    aspect = np.arctan2(-x, y)
+    azimuthrad = azimuth * np.pi / 180.
+    altituderad = angle_altitude * np.pi / 180.
+
+    shaded = np.sin(altituderad) * np.sin(slope) + np.cos(altituderad) * np.cos(slope) * np.cos(azimuthrad - aspect)
+    return (shaded + 1) / 2  # Normalize to [0, 1]
+
 class DEMVetoLabeller:
 
     def __init__(
@@ -139,9 +152,10 @@ class DEMVetoLabeller:
         context_mask = tile["image"][2]
 
         fig, ax = plt.subplots(1, 1, figsize=(10, 5))
+        hillshade = self.hillshade(relative_dem)
 
         # plot dem
-        ax.imshow(relative_dem,cmap="terrain")
+        ax.imshow(hillshade, cmap="gray")
         # display mask
         ax.contour(context_mask, levels=[0.5], colors="red")
         ax.set_title(f"DEM context: {tile['context_width_m']:.0f} m")
