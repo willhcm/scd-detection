@@ -31,7 +31,7 @@ class DeployConfig:
     veto_threshold: float = 0.9  # tuned
     veto_batch_size: int = 16
     veto_context_tile_size: int = 400
-    veto_object_fraction: float = 0.25
+    veto_object_fraction: float = 0.35
     context_scale: float = 4.0 
     min_context_width_m: float = 400.0
     max_context_width_m: float = 20000.0 # can have SCDs up to 5km in size, as seen in parts of Kazakhstan. Therefore 5km * 4.0 context size (which is fairly arbitrary, gives 20km realistic max.)
