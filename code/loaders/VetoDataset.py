@@ -10,6 +10,7 @@ import ipywidgets as widgets
 from IPython.display import display, clear_output
 import numpy as np
 import ipywidgets as widgets
+import geopandas as gpd
 
 from pathlib import Path
 import sys
@@ -36,16 +37,26 @@ class DEMVetoLabeller:
 
     def __init__(
         self,
-        shp_path,
+        pred_path,
         dem_path,
         region,
+        retain_path=None,
+        reject_path=None,
         target_crs = None,
         context_scale=10.0,
         min_width_m=512.0,
         max_width_m=50000.0,
         tile_size=512):
 
-        self.predictions = ShapeLabels(shp_path)
+        self.labels = None
+        self.predictions = ShapeLabels(pred_path)
+        self.retain_path = Path(retain_path) if retain_path is not None else None
+        self.reject_path = Path(reject_path) if reject_path is not None else None
+        self.pred_path = Path(pred_path)
+
+        if self.retain_path is not None:
+            self.from_shps = True
+
         self.dem_source = WindowedDataSource.from_tiff_utm(
             dem_path,
             type="DEM")
@@ -328,11 +339,45 @@ class DEMVetoLabeller:
 
         show_candidate()
 
+    def _build_from_shps(self, retain_path, reject_path):
+
+        retain_gdf = gpd.read_file(retain_path)
+        reject_gdf = gpd.read_file(reject_path)
+
+        retain_ids = set(retain_gdf['object_id'])
+        reject_ids = set(reject_gdf['object_id'])
+
+        objs = self.predictions.objects(self.target_crs)
+
+        tiles = []
+
+        for obj in objs:
+            if obj["id"] in retain_ids:
+                label = 1
+                label_name = "RETAIN"
+            elif obj["id"] in reject_ids:
+                label = 0
+                label_name = "REJECT"
+            else:
+                continue
+
+            tile = self._make_tile(obj)
+
+            if tile is not None:
+                tile["label"] = label
+                tile["label_name"] = label_name
+                tiles.append(tile)
+
+        return tiles
+
     # export tiles labelled in label()
     def export(self, output_directory):
 
         output_directory = Path(output_directory)
         output_directory.mkdir(parents=True, exist_ok=True)
+
+        if self.from_shps:
+            self.tiles = self._build_from_shps(self.retain_path, self.reject_path)
 
         for tile in self.tiles:
 
