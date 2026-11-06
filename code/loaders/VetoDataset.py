@@ -250,7 +250,6 @@ class DEMVetoLabeller:
 
                 print(
                     f"Object diameter: {tile['diameter_m']:.1f} m\n"
-                    f"Local width: {tile['local_crop_width_m']:.1f} m\n"
                     f"Context width: {tile['context_width_m']:.1f} m\n\n"
                     f"Candidate {state['index'] + 1} / {len(candidates)}\n"
                     f'Depth_width: {tile["scalar_features"][-1]:.4f} m\n')
@@ -341,7 +340,6 @@ class DEMVetoLabeller:
                 bounds=np.asarray(tile["bounds"], dtype=np.float64),
                 context_bounds=np.asarray(tile["context_bounds"], dtype=np.float64),
                 diameter_m=np.float32(tile["diameter_m"]),
-                local_crop_width_m=np.float32(tile["local_crop_width_m"]),
                 context_width_m=np.float32(tile["context_width_m"]),
                 crs=str(self.target_crs))
 
