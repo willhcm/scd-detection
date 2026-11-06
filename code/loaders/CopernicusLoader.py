@@ -21,6 +21,9 @@ def tile_name(lat, lon):
 
 
 class Cop30Loader:
+    """
+    Downloads and warps Copernicus 30m DEM tiles from AWS S3.
+    """
     def __init__(self, tile_dir, workers=16):
         self.tile_dir = tile_dir
         self.workers = workers

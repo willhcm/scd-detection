@@ -344,7 +344,9 @@ class Deployer:
         requested_returns = self.cfg.requested_returns
         predictions = self.predict()
 
+        print("Inference complete; starting weighted vote", flush=True)
         merged, objects, transform, crs, obj_score, provisional = self.weighted_vote(predictions)
+
         available = {
             "raw": predictions,
             "unvetoed": merged,
@@ -356,6 +358,7 @@ class Deployer:
         }
 
         if self.cfg.to_veto:
+            print("Applying Veto classifier to merged predictions...", flush=True)
             veto_results = self.veto(merged, objects, transform, crs)
             available.update({
                 "predictions": veto_results['predictions'],
@@ -405,11 +408,14 @@ class Deployer:
         counts = np.bincount(lab.ravel())
         lab[(counts < min_pixels)[lab]] = 0
 
+        print(f"Polygonizing {np.count_nonzero(lab)} positive pixels", flush=True)
+
         geoms, ids = [], []
         for geom, v in shapes(lab, mask=lab > 0, transform=transform, connectivity=8):
             geoms.append(shape(geom))
             ids.append(int(v))
 
+        print(f"Writing {len(geoms)} polygons", flush=True)
         gdf = gpd.GeoDataFrame({"object_id": ids, "geometry": geoms}, crs=crs)
 
         score = results.get("obj_score")

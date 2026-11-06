@@ -283,8 +283,7 @@ class PostProcessor:
                     predicted=predicted,
                     accepted=accepted,
                     rejected=rejected,
-                    skipped=skipped,
-                )
+                    skipped=skipped)
 
                 continue
 
@@ -328,11 +327,11 @@ class PostProcessor:
         )
 
         requested_returns = config.get().requested_returns
-        available_returns = {"predictions", "transform", "crs", "veto_probability_map", 'veto_map'}
+        available_returns = {"predictions", "transform", "crs", "veto_probability_map", 'rejected'}
 
 
         accepted_labels = np.where(stitched > 0, labeled, 0).astype(np.int32)
-        
+
         out = {
             "predictions": accepted_labels,
             "transform": transform,
