@@ -95,37 +95,86 @@ class Deployer:
         return preds   
 
     def object_scores(self, preds, labels, n_objects, base_res, transform, crs):
-        """ Creates a matrix of object scores for each resolution, where each row corresponds to an object and each column corresponds to a resolution. The score is the maximum probability value for that object at that resolution. """
+        """
+        Max probability of each labelled object at each prediction resolution.
+
+        preds: {res: {"prob", "transform", "crs"}}, resolutions sorted ascending
+        labels: (h, w) int array of object ids, 0 = background (memmap is fine)
+        n_objects: highest object id in labels
+        base_res: resolution of the label grid
+        transform, crs: georeferencing of the label grid
+
+        Returns a float32 array of shape (n_objects + 1, n_res). Row i is
+        object i, column j is the j-th resolution in sorted order. Row 0 is
+        background and stays zero. NaN and out-of-extent pixels count as 0.
+
+        Works in row bands of cfg.merge_band to keep RAM down.
+        """
+
+        # max prob per object per resolution -> (n_objects + 1, n_res), row 0 is background
         h, w = labels.shape
         band = self.cfg.merge_band
         items = sorted(preds.items())
-        stats = np.zeros((n_objects + 1, len(items)), dtype=np.float32)
+        scores = np.zeros((n_objects + 1, len(items)), dtype=np.float32)
+
+        # inverse transforms for same-crs preds, lets us skip reproject
+        inv_tf = {res: ~p["transform"] for res, p in items if p["crs"] == crs}
 
         for r0 in range(0, h, band):
             r1 = min(r0 + band, h)
-            lab = np.asarray(labels[r0:r1])
-            ids = np.unique(lab)
-            ids = ids[ids > 0]
-            if ids.size == 0:
+            band_labels = np.asarray(labels[r0:r1])
+
+            # only care about pixels that are actually in an object
+            rows, cols = np.nonzero(band_labels)
+            if rows.size == 0:
                 continue
+
+            # sort by object id once, reused for every resolution
+            pixel_ids = band_labels[rows, cols]
+            sort_idx = np.argsort(pixel_ids)
+            ids_sorted = pixel_ids[sort_idx]
+            run_starts = np.flatnonzero(np.r_[True, ids_sorted[1:] != ids_sorted[:-1]])
+            object_ids = ids_sorted[run_starts]
+
+            # pixel centres in map coords (band is offset by r0 rows)
+            map_x, map_y = transform * (cols + 0.5, rows + r0 + 0.5)
             band_tf = transform * Affine.translation(0, r0)
 
             for j, (res, pred) in enumerate(items):
+                prob = pred["prob"]
+
                 if res == base_res:
-                    cur = np.asarray(pred["prob"][r0:r1], dtype=np.float32)
+                    vals = np.asarray(prob[r0:r1])[rows, cols]
+
+                elif res in inv_tf:
+                    # nearest lookup by hand, same as reproject but much cheaper
+                    src_col, src_row = inv_tf[res] * (map_x, map_y)
+                    src_col = np.floor(src_col).astype(np.intp)
+                    src_row = np.floor(src_row).astype(np.intp)
+                    inside = ((src_col >= 0) & (src_col < prob.shape[1]) &
+                              (src_row >= 0) & (src_row < prob.shape[0]))
+                    vals = np.zeros(rows.size, dtype=np.float32)  # outside the source -> 0
+                    vals[inside] = prob[src_row[inside], src_col[inside]]
+
                 else:
-                    cur = np.full(lab.shape, np.nan, dtype=np.float32)
+                    # different crs, no way round the real reproject
+                    warped = np.full(band_labels.shape, np.nan, dtype=np.float32)
                     reproject(
-                        source=pred["prob"], destination=cur,
+                        source=prob, destination=warped,
                         src_transform=pred["transform"], src_crs=pred["crs"],
                         src_nodata=np.nan, dst_transform=band_tf, dst_crs=crs,
                         dst_nodata=np.nan, resampling=Resampling.nearest,
                         init_dest_nodata=True)
-                vals = ndimage.maximum(np.nan_to_num(cur, nan=0.0), lab, ids)
-                stats[ids, j] = np.maximum(stats[ids, j], vals)
+                    vals = warped[rows, cols]
 
-        return stats
+                # nan counts as 0, then max within each object's run
+                vals_sorted = np.nan_to_num(vals[sort_idx], nan=0.0)
+                run_max = np.maximum.reduceat(vals_sorted, run_starts)
+                # max with existing so objects crossing band edges keep their best
+                scores[object_ids, j] = np.maximum(scores[object_ids, j], run_max)
 
+        return scores
+    
     def weighted_vote(self, preds):
         """
         Object-aware weighted voting.

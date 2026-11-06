@@ -25,6 +25,7 @@ class DEMVetoLabeller:
         self,
         shp_path,
         dem_path,
+        region,
         target_crs = None,
         context_scale=4.0,
         min_width_m=400.0,
@@ -39,6 +40,7 @@ class DEMVetoLabeller:
         self.dem_res = self.dem_source.res
         self.target_crs = target_crs
         self.tiles = []
+        self.region = region
         self.tile_size = tile_size
         self.context_scale = context_scale
         self.min_width_m = min_width_m
@@ -337,6 +339,7 @@ class DEMVetoLabeller:
                 image=tile["image"],
                 scalar_features=tile["scalar_features"],
                 scalar_names=np.asarray(VETO_SCALAR_NAMES),
+                region=str(self.region),
                 label=np.int64(tile["label"]),
                 centre_in_dms=tile["centre_dms"],
                 bounds=np.asarray(tile["bounds"], dtype=np.float64),
