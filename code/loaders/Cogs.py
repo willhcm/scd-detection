@@ -191,8 +191,14 @@ class WindowedDataSource:
         with rio.open(path) as src:
             target_crs = CRS.from_epsg(_utm_epsg(src.crs, src.bounds))
             if resolution is None:
-                resolution = float(abs(src.res[0]))
-                print(resolution)
+                projected_transform, _, _ = calculate_default_transform(
+                    src.crs,
+                    target_crs,
+                    src.width,
+                    src.height,
+                    *src.bounds,
+                )
+                resolution = float(abs(projected_transform.a))
 
         temp_path = cls.reproject_raster(src_path=path, dst_crs=target_crs, resolution=resolution)
         
