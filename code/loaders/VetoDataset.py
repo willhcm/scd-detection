@@ -37,9 +37,9 @@ class DEMVetoLabeller:
 
     def __init__(
         self,
-        pred_path,
         dem_path,
         region,
+        pred_path=None,
         retain_path=None,
         reject_path=None,
         target_crs = None,
@@ -50,9 +50,8 @@ class DEMVetoLabeller:
 
         self.labels = None
         self.predictions = ShapeLabels(pred_path)
-        self.retain_path = Path(retain_path) if retain_path is not None else None
-        self.reject_path = Path(reject_path) if reject_path is not None else None
-        self.pred_path = Path(pred_path)
+        self.retains = ShapeLabels(retain_path) if retain_path is not None else None
+        self.rejects = ShapeLabels(reject_path) if reject_path is not None else None
 
         if self.retain_path is not None:
             self.from_shps = True
@@ -339,35 +338,27 @@ class DEMVetoLabeller:
 
         show_candidate()
 
-    def _build_from_shps(self, retain_path, reject_path):
+    def _build_from_shps(self):
 
-        retain_gdf = gpd.read_file(retain_path)
-        reject_gdf = gpd.read_file(reject_path)
-
-        retain_ids = set(retain_gdf['object_id'])
-        reject_ids = set(reject_gdf['object_id'])
-
-        objs = self.predictions.objects(self.target_crs)
+        to_retain_objs = self.retains.objects(self.target_crs)
+        to_reject_objs = self.rejects.objects(self.target_crs)
 
         tiles = []
 
-        for obj in objs:
-            if obj["id"] in retain_ids:
-                label = 1
-                label_name = "RETAIN"
-            elif obj["id"] in reject_ids:
-                label = 0
-                label_name = "REJECT"
-            else:
-                continue
-
+        for obj in to_retain_objs:
             tile = self._make_tile(obj)
-
             if tile is not None:
-                tile["label"] = label
-                tile["label_name"] = label_name
+                tile["label"] = 1
+                tile["label_name"] = "RETAIN"
                 tiles.append(tile)
 
+        for obj in to_reject_objs:
+            tile = self._make_tile(obj)
+            if tile is not None:
+                tile["label"] = 0
+                tile["label_name"] = "REJECT"
+                tiles.append(tile)
+                
         return tiles
 
     # export tiles labelled in label()
