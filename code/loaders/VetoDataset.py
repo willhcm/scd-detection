@@ -58,7 +58,6 @@ class DEMVetoLabeller:
 
         # object size
         diameter_m = obj['diameter']
-        print(diameter_m)
         object_crop_width_m = (diameter_m / object_fraction)
 
         # DEM crop width
@@ -256,8 +255,7 @@ class DEMVetoLabeller:
                     f"Local width: {tile['local_crop_width_m']:.1f} m\n"
                     f"Context width: {tile['context_width_m']:.1f} m\n\n"
                     f"Candidate {state['index'] + 1} / {len(candidates)}\n"
-                    f'Depth: {tile["scalar_features"][0]:.1f} m\n'
-                )
+                    f'Depth_width: {tile["scalar_features"][-1]:.1f} m\n')
 
         # ------------------------------------------------------------------
         # Label callback
