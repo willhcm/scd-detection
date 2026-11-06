@@ -192,6 +192,7 @@ class WindowedDataSource:
             target_crs = CRS.from_epsg(_utm_epsg(src.crs, src.bounds))
             if resolution is None:
                 resolution = float(abs(src.res[0]))
+                print(resolution)
 
         temp_path = cls.reproject_raster(src_path=path, dst_crs=target_crs, resolution=resolution)
         
