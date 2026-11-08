@@ -49,13 +49,22 @@ class DEMVetoLabeller:
         tile_size=512):
 
         self.labels = None
-        self.predictions = ShapeLabels(pred_path)
+
+
         self.retains = ShapeLabels(retain_path) if retain_path is not None else None
         self.rejects = ShapeLabels(reject_path) if reject_path is not None else None
 
         if self.retain_path is not None:
             self.from_shps = True
+            print(f"Labeller will build tiles from retain/reject shapefiles: {retain_path}, {reject_path}")
 
+        if pred_path is not None and (retain_path is not None and reject_path is not None):
+            self.predictions = ShapeLabels(pred_path)
+            print(f"Loaded {len(self.predictions.objects(target_crs))} candidate objects from predictions shapefile.")
+
+        if pred_path is None and (retain_path is None and reject_path is None):
+            raise ValueError("Either pred_path or both retain_path and reject_path must be provided.")
+        
         self.dem_source = WindowedDataSource.from_tiff_utm(
             dem_path,
             type="DEM")
@@ -358,7 +367,7 @@ class DEMVetoLabeller:
                 tile["label"] = 0
                 tile["label_name"] = "REJECT"
                 tiles.append(tile)
-                
+
         return tiles
 
     # export tiles labelled in label()
