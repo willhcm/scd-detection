@@ -377,7 +377,7 @@ class DEMVetoLabeller:
         output_directory.mkdir(parents=True, exist_ok=True)
 
         if self.from_shps:
-            self.tiles = self._build_from_shps(self.retain_path, self.reject_path)
+            self.tiles = self._build_from_shps()
 
         for tile in self.tiles:
 
