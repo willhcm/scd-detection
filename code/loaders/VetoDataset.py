@@ -39,9 +39,9 @@ class DEMVetoLabeller:
         self,
         dem_path,
         region,
-        pred_path=None,
-        retain_path=None,
-        reject_path=None,
+        pred_path = None,
+        retain_path = None,
+        reject_path = None,
         target_crs = None,
         context_scale=10.0,
         min_width_m=512.0,
@@ -54,7 +54,7 @@ class DEMVetoLabeller:
         self.retains = ShapeLabels(retain_path) if retain_path is not None else None
         self.rejects = ShapeLabels(reject_path) if reject_path is not None else None
 
-        if self.retain_path is not None:
+        if self.retains is not None and self.rejects is not None:
             self.from_shps = True
             print(f"Labeller will build tiles from retain/reject shapefiles: {retain_path}, {reject_path}")
 
