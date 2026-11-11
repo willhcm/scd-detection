@@ -54,8 +54,8 @@ class DEMVetoLabeller:
         self.retains = ShapeLabels(retain_path) if retain_path is not None else None
         self.rejects = ShapeLabels(reject_path) if reject_path is not None else None
 
-        if self.retains is not None and self.rejects is not None:
-            self.from_shps = True
+        self.from_shps = self.retains is not None and self.rejects is not None
+        if self.from_shps:
             print(f"Labeller will build tiles from retain/reject shapefiles: {retain_path}, {reject_path}")
 
         if pred_path is not None and (retain_path is not None and reject_path is not None):
@@ -381,11 +381,9 @@ class DEMVetoLabeller:
 
         for tile in self.tiles:
 
-            label_directory = output_directory / tile["label_name"]
+            output_directory.mkdir(parents=True, exist_ok=True)
 
-            label_directory.mkdir(parents=True, exist_ok=True)
-
-            output_path = label_directory / f"candidate_{tile['id']:05d}.npz"
+            output_path = output_directory / f"candidate_{tile['id']:05d}.npz"
 
             np.savez_compressed(
                 output_path,

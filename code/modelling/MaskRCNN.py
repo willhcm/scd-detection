@@ -380,7 +380,7 @@ class MaskRCNNDataset(Dataset):
             iqr = self.norm_stats[band]['iqr']
 
             if band == 'DEM':
-                dem_rel = (dem_rel - median) / iqr
+                dem_rel = dem_rel / iqr 
             elif band == 'SLOPE':
                 slope = (slope - median) / iqr         
             elif band == 'RR':

@@ -155,6 +155,12 @@ class DatasetWrapper():
     def report_distribution(self):
         # report the distribution of resolutions and geographies in the training set
 
+        if not hasattr(self, "resolution_bins"):
+            self.get_required_negative_counts(
+                (0, max(self.resolutions_positive_distribution)),
+                ratio_tolerance=0,
+            )
+
         res_bins = np.arange(0, 30, 2.5)
 
         region_df = pd.DataFrame({
@@ -184,6 +190,77 @@ class DatasetWrapper():
             pos = counts.get('positive', 0)
             neg = counts.get('negative', 0)
             print(f"resolution n{res} needs {(((1-target_pos_neg_ratio) / target_pos_neg_ratio) * pos) - neg:.0f} more negative tiles to reach target ratio of {target_pos_neg_ratio:.2f}")
+
+    def get_required_negative_counts(
+        self,
+        resolution_range,
+        target_positive_ratio=0.30,
+        ratio_tolerance=0.05,
+        bin_width=2.5,
+    ):
+        """Return missing-negative counts for each resolution bin in a range.
+
+        Bins use the fixed-width boundaries used by the distribution plot. A
+        bin is considered balanced when its positive fraction is within
+        ``ratio_tolerance`` of the target.
+        """
+        if not 0 < target_positive_ratio < 1:
+            raise ValueError("target_positive_ratio must be between 0 and 1.")
+        if ratio_tolerance < 0:
+            raise ValueError("ratio_tolerance must be non-negative.")
+        if bin_width <= 0:
+            raise ValueError("bin_width must be positive.")
+        if not self.resolutions_positive_distribution:
+            raise RuntimeError(
+                "Dataset distributions are unavailable; generate a dataset split first."
+            )
+
+        if len(resolution_range) != 2:
+            raise ValueError("resolution_range must contain (minimum, maximum).")
+        minimum, maximum = map(float, resolution_range)
+        if minimum > maximum:
+            raise ValueError(
+                "resolution_range minimum must not exceed its maximum."
+            )
+
+        max_resolution = max(
+            max(self.resolutions_positive_distribution),
+            maximum,
+        )
+        first_bin = np.floor(minimum / bin_width) * bin_width
+        bin_edges = np.arange(first_bin, max_resolution + bin_width, bin_width)
+        if len(bin_edges) < 2:
+            bin_edges = np.array([first_bin, first_bin + bin_width])
+
+        bins = {}
+        for lower in bin_edges[:-1]:
+            upper = lower + bin_width
+            if upper <= minimum or lower >= maximum:
+                continue
+            counts = {"positive": 0, "negative": 0}
+            for resolution, distribution in self.resolutions_positive_distribution.items():
+                if lower <= resolution < upper:
+                    counts["positive"] += distribution.get("positive", 0)
+                    counts["negative"] += distribution.get("negative", 0)
+            bins[float(lower)] = counts
+
+        required = {}
+        for lower, counts in bins.items():
+            positive = counts["positive"]
+            total = positive + counts["negative"]
+            positive_ratio = positive / total if total else 0.0
+            if total and positive_ratio > target_positive_ratio + ratio_tolerance:
+                target_negative_count = (
+                    (1 - target_positive_ratio) / target_positive_ratio
+                ) * positive
+                required[lower] = max(
+                    0, int(np.ceil(target_negative_count - counts["negative"]))
+                )
+            else:
+                required[lower] = 0
+
+        self.resolution_bins = bins
+        return required
 
     def _analyze_dataset(self):
         # analyze the metadata of the dataset to see distribution of resolutions and geographies
@@ -304,8 +381,7 @@ class DatasetWrapper():
             "DEM": "DEM",
             "SLOPE": "DEM_SLOPE", 
             "RR": "RR",
-            "LAPLACE": "LAPLACE",
-            "HILLSHADE": "HILLSHADE"}
+            "LAPLACE": "LAPLACE"}
 
         samples = {
             name: []
@@ -331,13 +407,7 @@ class DatasetWrapper():
                     elif channel == "DEM":
                         tile_median = np.median(image[names.index(layer_name)].ravel()[valid])
                         vals = vals - tile_median
-                    elif channel == "HILLSHADE":
-                        #flip 
-                        flat = np.cos(np.radians(45))
-                        vals = flat - vals
-                        vals = np.clip(vals, 0, None)
-                        vals = np.power(vals, 0.5)  # log transform to reduce skewness
-
+                        
                     samples[channel].append(vals)
 
         self.values = self.handle_outliers(samples)

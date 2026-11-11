@@ -26,12 +26,11 @@ OVERLAP_SIGMA_MULTIPLIER = 3
 TILE_GENERATOR_LAYER_NAMES = (
     "DEM",
     "DEM_SLOPE",
-    "HILLSHADE",
     "RR",
     "LAPLACE",
     "LABELS",
 )
-SCENE_DEFAULT_LAYERS = ("DEM", "DEM_SLOPE", "HILLSHADE", "RR", "LAPLACE")
+SCENE_DEFAULT_LAYERS = ("DEM", "DEM_SLOPE", "RR", "LAPLACE")
 MAX_TILE_ATTEMPTS = 10
 
 sys.path.insert(0, str(CODE_DIR))
@@ -296,17 +295,49 @@ class WindowedDataSource:
 @dataclass
 class ResBin:
     name: str
-    res: float
+    key: float
+    minimum: float
+    maximum: float
     count: int
 
 class NegativeMiner:
 
-    def __init__(self, dem: DataSource, label_path: Path, resolutions: list[float], NODATA=0, region=None):
+    def __init__(
+        self,
+        dem: DataSource,
+        resolution_range: tuple[float, float],
+        NODATA=0,
+        region=None,
+        label_path: Path = None,
+        dataset_wrapper=None,
+        target_positive_ratio=0.30,
+        ratio_tolerance=0.05,
+        bin_width=2.5,
+        random_seed=None,
+    ):
+        if len(resolution_range) != 2:
+            raise ValueError("resolution_range must contain (minimum, maximum).")
+        minimum, maximum = map(float, resolution_range)
+        if minimum <= 0 or minimum > maximum:
+            raise ValueError(
+                "resolution_range must contain positive (minimum, maximum) values."
+            )
+        if bin_width <= 0:
+            raise ValueError("bin_width must be positive.")
+
         self.dem = dem
-        self.resolutions = resolutions
+        self.resolution_range = (minimum, maximum)
+        self.bin_width = float(bin_width)
+        self.random = np.random.default_rng(random_seed)
         self.coverage = np.zeros(dem.data.shape, dtype=np.float32)
+        self.dataset_wrapper = dataset_wrapper
+        self.target_positive_ratio = target_positive_ratio
+        self.ratio_tolerance = ratio_tolerance
+
+        self.labelled = label_path is not None
+
         self.generator = TileGenerator(dem=dem, label_path=label_path)
-        self.layer_index = {name: i for i, name in enumerate(TILE_GENERATOR_LAYER_NAMES)}
+        self.layer_index = self.generator.layer_index
         self.report_capacity()
         self.NODATA = NODATA
         self.region = region
@@ -328,19 +359,38 @@ class NegativeMiner:
     def report_capacity(self):
 
         px_res = self.dem.res
-        free_px = self.coverage.size
+        free_px = np.count_nonzero(self.coverage == 0)
         free_area = free_px * px_res ** 2
 
-        print(f"free area: {free_area:,.0f} m^2 ({free_px:,} px, "
-            f"{100 * free_px / self.coverage.size:.1f}% of DEM)\n")
+        print(
+            f"free area: {free_area:,.0f} m^2 ({free_px:,} px, "
+            f"{100 * free_px / self.coverage.size:.1f}% of DEM)\n"
+        )
 
         self.bins = []
-        for res in sorted(self.resolutions):
-            tile_area = (512 * res) ** 2
+        minimum, maximum = self.resolution_range
+        first_bin = np.floor(minimum / self.bin_width) * self.bin_width
+        bin_starts = np.arange(first_bin, maximum, self.bin_width)
+        if not len(bin_starts):
+            bin_starts = np.array([first_bin])
+        for lower in bin_starts:
+            upper = min(lower + self.bin_width, maximum)
+            lower_bound = max(lower, minimum)
+            upper_bound = max(lower_bound, upper)
+            sample_res = (lower_bound + upper_bound) / 2
+            tile_area = (512 * sample_res) ** 2
             tile_count = int((free_area / tile_area) * 0.7)
-            print(f"res {res:>5.2f}m  tiles = {tile_count:.1f}")
+            print(f"res {lower_bound:.2f}-{upper_bound:.2f}m  tiles = {tile_count}")
 
-            self.bins.append(ResBin(name=f"{res:.2f}m", res=res, count=tile_count))
+            self.bins.append(
+                ResBin(
+                    name=f"{lower_bound:.2f}-{upper_bound:.2f}m",
+                    key=float(lower),
+                    minimum=lower_bound,
+                    maximum=upper_bound,
+                    count=tile_count,
+                )
+            )
 
     def _grid_candidates(self, tile_side, jitter=0.15):
         minx, miny, maxx, maxy = self.dem.bounds
@@ -351,32 +401,37 @@ class NegativeMiner:
 
         # jitter off-grid so tiles aren't all perfectly aligned - keeps some
         # placement diversity without falling back to pure random search
-        coords += np.random.uniform(-tile_side * jitter, tile_side * jitter, coords.shape)
-        np.random.shuffle(coords)
+        coords += self.random.uniform(-tile_side * jitter, tile_side * jitter, coords.shape)
+        self.random.shuffle(coords)
         return coords
 
     def _find_tile_positions(self, counts=None):
         results = {}
-        count_ceiling = min([b.count for b in self.bins])
-        
-        for b in sorted(self.bins, key=lambda b: b.res):  # largest footprint first, least flexible
-            tile_side = 512 * b.res
+        for b in sorted(self.bins, key=lambda b: b.maximum, reverse=True):
             placed = []
-            count = counts[b.res] if counts and b.res in counts else b.count
+            count = counts.get(b.key, b.count) if counts else b.count
 
-            for x0, y0 in self._grid_candidates(tile_side):
-                if len(placed) >= count:
+            for _ in range(count):
+                res = self.random.uniform(b.minimum, b.maximum)
+                tile_side = 512 * res
+                candidates = self._grid_candidates(tile_side)
+                placed_one = False
+                for x0, y0 in candidates:
+                    bounds = (x0, y0, x0 + tile_side, y0 + tile_side)
+                    if not _bounds_inside(bounds, self.dem.bounds):
+                        continue
+                    if self._is_tile_covered(bounds):
+                        continue
+                    self._update_coverage(bounds)
+                    placed.append((res, bounds))
+                    placed_one = True
+                    break
+                if not placed_one:
                     break
 
-                bounds = (x0, y0, x0 + tile_side, y0 + tile_side)
-                if self._is_tile_covered(bounds):
-                    continue
-                self._update_coverage(bounds)
-                placed.append(bounds)
-
-            if len(placed) < b.count:
-                print(f"{b.name}: placed {len(placed)}/{b.count}, candidates exhausted")
-            results[b.res] = placed
+            if len(placed) < count:
+                print(f"{b.name}: placed {len(placed)}/{count}, candidates exhausted")
+            results[b.key] = placed
 
         return results
 
@@ -387,27 +442,72 @@ class NegativeMiner:
 
     def export(self, tile, out_path, bounds, name, res):
 
-        labels = tile[self.layer_index["LABELS"]].astype(np.uint8)
-        image = tile[:self.layer_index["LABELS"]].astype(np.float32)
+        labels = None
+        if self.labelled:
+            labels = tile[self.layer_index["LABELS"]].astype(np.uint8)
+
+        image = (
+            tile[:self.layer_index["LABELS"]]
+            if self.labelled
+            else tile
+        ).astype(np.float32)
 
         np.savez_compressed(str(Path(out_path) / f'{self.region}_negative_{name}'),
                 image=image, 
-                layer_names=np.array(TILE_GENERATOR_LAYER_NAMES),
+                layer_names=np.array(
+                    self.generator.layer_names[:self.generator.layer_index["LABELS"]]
+                    if self.labelled
+                    else self.generator.layer_names
+                ),
                 res=np.array(res, dtype=np.float32),
-                labels=labels,
-                scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)),
+                labels=labels if self.labelled else None,
+                scd_pixel_fraction=np.array(float(labels.sum()) / float(labels.size)) if self.labelled else None,
                 bounds=bounds, 
                 region=self.region,
                 positive=False)
 
 
-    def generate_tiles(self, out_dir: Path, counts=None):
+    def generate_tiles(
+        self,
+        out_dir: Path,
+        counts=None,
+        dataset_wrapper=None,
+        fill_fraction=1.0,
+    ):
+        """Generate negatives for the configured resolution range.
+
+        When ``counts`` is omitted, ``fill_fraction`` controls how much of the
+        calculated missing-negative requirement is generated for this pass.
+        """
+        if not 0 <= fill_fraction <= 1:
+            raise ValueError("fill_fraction must be between 0 and 1.")
+
         out_dir.mkdir(parents=True, exist_ok=True)
+        if counts is None:
+            wrapper = dataset_wrapper or self.dataset_wrapper
+            if wrapper is None:
+                counts = {bin_.key: bin_.count for bin_ in self.bins}
+            else:
+                counts = wrapper.get_required_negative_counts(
+                    self.resolution_range,
+                    target_positive_ratio=self.target_positive_ratio,
+                    ratio_tolerance=self.ratio_tolerance,
+                    bin_width=self.bin_width,
+                )
+            counts = {
+                float(bin_start): int(np.ceil(count * fill_fraction))
+                for bin_start, count in counts.items()
+            }
+        else:
+            counts = {
+                b.key: int(counts.get(b.key, 0))
+                for b in self.bins
+            }
         tile_positions = self._find_tile_positions(counts)
 
-        for res, bounds_list in tile_positions.items():
+        for bin_start, tile_list in tile_positions.items():
 
-            for i, bounds in enumerate(bounds_list):
+            for res, bounds in tile_list:
                 tile = self.generator._build_tile(bounds, 512, res)
 
                 if tile is None:
@@ -425,8 +525,8 @@ class NegativeMiner:
         self.report_statistics(tile_positions)
 
     def report_statistics(self, tile_positions):
-        for res_name, bounds_list in tile_positions.items():
-            print(f"{res_name}: {len(bounds_list)} tiles placed")
+        for bin_name, tile_list in tile_positions.items():
+            print(f"{bin_name}: {len(tile_list)} tiles placed")
 
 class DatasetRefiner():
 

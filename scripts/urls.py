@@ -17,6 +17,9 @@ def get_urls_from_list(request, request_name):
     out_path = out_dir / f'{request_name}_urls.txt'
     with open(out_path, 'w') as out:
         for line in lines:
+            line = line.strip()
+            if not line:
+                continue
             url = _get_tile_url(line)
             out.write(f'{url}\n')
 
@@ -24,6 +27,10 @@ def get_urls_from_list(request, request_name):
 
 def _get_tile_url(tile):
     match = re.search(PATTERN, tile)
+
+    if not match:
+        raise ValueError(f"Invalid tile name: {tile}. Must match pattern {PATTERN}")
+    
     tile_name = match[0]
     
     prefix = tile_name[:2]

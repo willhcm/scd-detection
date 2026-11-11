@@ -41,7 +41,8 @@ def main(args):
             epochs=args.epochs,
             batch_size=args.batch_size,
             out_path=out_path)
-        
+
+       
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a Mask R-CNN model for SCD detection.")

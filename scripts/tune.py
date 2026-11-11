@@ -20,11 +20,30 @@ PARAM_GRID = {
 # only used by the veto stage, pointless to sweep with --no_veto
 VETO_ONLY = {'veto_threshold', 'detect_threshold'}
 
+DEPLOYER_PARAMS = {
+    "tile_size": 512,
+    "veto_context_tile_size": 224,
+    "veto_batch_size": 16,
+    "veto_threshold": 0.60, # tune on larger train set
+    "score_threshold": 0.60, # to tune
+    "mask_threshold": 0.55, # to tune
+    "detect_threshold": 0.6, # to tune
+    "context_scale": 5.0,
+    "min_context_width_m": 750.0,
+    "max_context_width_m": 4000.0,
+    "native_res": 1.0,
+    "stride_frac": 0.75,
+}
 
 def main(args):
 
     valid = {f.name for f in fields(DeployConfig)}
     unknown = (set(PARAM_GRID) | set(DEPLOYER_PARAMS)) - valid
+
+    params = DEPLOYER_PARAMS.copy()
+    overrides = {f.name: getattr(args, f.name) for f in fields(DeployConfig) if hasattr(args, f.name)}
+    params.update(overrides)
+
     if unknown:
         raise KeyError(f"not DeployConfig fields: {sorted(unknown)}")
 
@@ -48,7 +67,8 @@ def main(args):
     out_path.mkdir(parents=True)
 
     grid = {k: v for k, v in PARAM_GRID.items() if not (args.no_veto and k in VETO_ONLY)}
-    fixed = {k: getattr(args, k) for k in DEPLOYER_PARAMS if k not in grid}
+
+    fixed = {k: getattr(args, k) for k in params if k not in grid}
 
     print("fixed hyperparams:")
     for k, v in fixed.items():
