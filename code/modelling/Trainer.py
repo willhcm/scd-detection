@@ -227,7 +227,9 @@ class VetoTrainer():
             torch.cuda.manual_seed_all(seed)
 
     def train(self, folded_out_region, epochs, batch_size, out_path, veto_threshold=0.5):
-        train_loader, val_loader = self.dset.get_loaders(random_train=True, folded_out_region=folded_out_region, batch_size=batch_size)
+
+        random_train = folded_out_region is None
+        train_loader, val_loader = self.dset.get_loaders(random_train=random_train, folded_out_region=folded_out_region, batch_size=batch_size)
         if len(train_loader) == 0 or len(val_loader) == 0:
             raise RuntimeError("Veto training requires non-empty train and validation loaders.")
         if epochs < 1:
