@@ -44,28 +44,25 @@ class Vetoer(nn.Module):
         dem_feature_dim = self.context_encoder.classifier[0].in_features
         self.context_encoder.classifier = nn.Identity()  # Remove the original classifier
         self.candidate_encoder.classifier = nn.Identity()  # Remove the original classifier
-
-        self.scalar_encoder = nn.Sequential(
-            nn.Linear(scalar_dim, 32),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout),
-            nn.Linear(32, 32),
-            nn.ReLU(inplace=True))
-
+        
         # squeezed so the signal does not dominate the scalars. Final encodings are [64,] for image and [32,] for scalars.
-        self.image_squeezer = nn.Sequential(
-            nn.Linear(dem_feature_dim, 256),
+        self.squeezer = nn.Sequential(
+            nn.Linear(2 * dem_feature_dim, 256),
             nn.ReLU(inplace=True),
             nn.Dropout(dropout),
-            nn.Linear(256, 32),
-            nn.ReLU(inplace=True))  
+            nn.Linear(256, 128),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout),
+            nn.Linear(128, 32),  
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout))
 
         # shared after fusing
         self.classifier = nn.Sequential(
-            nn.Linear(96, 64),
+            nn.Linear(32 + len(VETO_SCALAR_NAMES), 16),
             nn.ReLU(inplace=True),
             nn.Dropout(dropout),
-            nn.Linear(64, 1))
+            nn.Linear(16, 1))
 
     def forward(self, context, candidate, scalar_features):
 
@@ -73,13 +70,12 @@ class Vetoer(nn.Module):
         context_features = self.context_encoder(context)
         candidate_features = self.candidate_encoder(candidate)
 
-        # get encodings
-        scalar_features = self.scalar_encoder(scalar_features)
-        context_features = self.image_squeezer(context_features)
-        candidate_features = self.image_squeezer(candidate_features)
+        image_features = torch.cat([context_features, candidate_features], dim=1)
+        # squeeze the image features
+        image_features = self.squeezer(image_features)
 
         # concat encodings
-        fused = torch.cat([context_features, candidate_features, scalar_features], dim=1)
+        fused = torch.cat([image_features, scalar_features], dim=1)
 
         # classify and return
         return self.classifier(fused).squeeze(1)     

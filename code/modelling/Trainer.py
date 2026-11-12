@@ -290,8 +290,8 @@ class VetoTrainer():
                     val_loss += loss.item()
 
                     preds = torch.sigmoid(outputs).squeeze() > veto_threshold
-                    all_labels.extend(labels.cpu().numpy())
-                    all_preds.extend(preds.cpu().numpy())
+                    all_labels.extend(labels.cpu().view(-1).numpy())
+                    all_preds.extend(preds.cpu().view(-1).numpy())
 
             scheduler.step()
 
