@@ -413,8 +413,8 @@ class DEMVetoLabeller:
 
             np.savez_compressed(
                 output_path,
-                mask = tile["image"][2],
-                image=tile["image"],
+                context=tile["context"],
+                candidate=tile["candidate"],
                 scalar_features=tile["scalar_features"],
                 scalar_names=np.asarray(VETO_SCALAR_NAMES),
                 region=str(self.region),
