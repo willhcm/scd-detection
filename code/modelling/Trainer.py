@@ -17,7 +17,6 @@ from torch.utils.data import DataLoader
 import numpy as np
 import copy
 from tqdm import tqdm
-from time import perf_counter
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 class Trainer():
@@ -239,8 +238,8 @@ class VetoTrainer():
         criterion = nn.BCEWithLogitsLoss()
 
         model.to(self.device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-6)
 
         train_losses = []
         val_losses = []
@@ -253,33 +252,17 @@ class VetoTrainer():
         patience = 20
         bad_epochs = 0
 
-        print("Starting training...")
+        print("Starting training...", flush=True)
         for epoch in range(epochs):
 
             model.train()
             train_loss = 0.0
 
-            batch_timer = perf_counter()
-            train_progress = tqdm(
-                train_loader,
-                desc=f"Epoch {epoch + 1}/{epochs} train",
-                leave=False,
-            )
-
-            for batch_index, (contexts, candidates, scalars, labels) in enumerate(
-                train_progress, start=1
-            ):
+            for contexts, candidates, scalars, labels in train_loader:
                 contexts = contexts.to(self.device)
                 candidates = candidates.to(self.device)
                 scalars = scalars.to(self.device)
                 labels = labels.to(self.device)
-
-                if batch_index == 1:
-                    print(
-                        f"First batch loaded: context={tuple(contexts.shape)}, "
-                        f"candidate={tuple(candidates.shape)}",
-                        flush=True,
-                    )
 
                 optimizer.zero_grad()
                 outputs = model(contexts, candidates, scalars)
@@ -288,11 +271,6 @@ class VetoTrainer():
                 optimizer.step()
 
                 train_loss += loss.item()
-                train_progress.set_postfix(
-                    loss=f"{loss.item():.4f}",
-                    batch_s=f"{(perf_counter() - batch_timer):.1f}",
-                )
-                batch_timer = perf_counter()
 
             train_loss /= len(train_loader)
             train_losses.append(train_loss)
@@ -303,12 +281,7 @@ class VetoTrainer():
             all_preds = []
 
             with torch.no_grad():
-                val_progress = tqdm(
-                    val_loader,
-                    desc=f"Epoch {epoch + 1}/{epochs} val",
-                    leave=False,
-                )
-                for contexts, candidates, scalars, labels in val_progress:
+                for contexts, candidates, scalars, labels in val_loader:
                     contexts = contexts.to(self.device)
                     candidates = candidates.to(self.device)
                     scalars = scalars.to(self.device)
@@ -348,7 +321,8 @@ class VetoTrainer():
                 f"Accuracy: {accuracy:.4f} | "
                 f"Precision: {precision:.4f} | "
                 f"Recall: {recall:.4f} | "
-                f"F1 Score: {f1_score:.4f}")
+                f"F1 Score: {f1_score:.4f}",
+                flush=True)
 
             if f1_score > best_f1:
                 best_f1 = f1_score
