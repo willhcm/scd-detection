@@ -357,5 +357,9 @@ class VetoTrainer():
 
         torch.save(out, out_path / f"Vetoer.pt")
 
+        print(f"Saved Vetoer model to {out_path / f'Vetoer.pt'}")
+
+        return
+
 
     
