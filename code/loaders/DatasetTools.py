@@ -469,8 +469,8 @@ class VetoDatasetWrapper():
         else:
             raise ValueError("Either random_train must be True or folded_out_region must be specified.")
 
-        print(f"Train paths: {len(self.train_paths)}, Val paths: {len(self.val_paths)}")
-        print('Estimating normalization stats...')
+        print(f"Train paths: {len(self.train_paths)}, Val paths: {len(self.val_paths)}", flush=True)
+        print('Estimating normalization stats...', flush=True)
         self.normalization_stats = self._estimate_normalisation_stats()
 
         train_set, val_set = VetoDataset(self.train_paths, self.normalization_stats, augment=True), VetoDataset(self.val_paths, self.normalization_stats, augment=False)

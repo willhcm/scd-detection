@@ -17,6 +17,7 @@ from torch.utils.data import DataLoader
 import numpy as np
 import copy
 from tqdm import tqdm
+from time import perf_counter
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 class Trainer():
@@ -39,6 +40,7 @@ class Trainer():
         model = MaskRCNN()
 
         print(f"Training on {len(train_loader.dataset)} samples, validating on {len(val_loader.dataset)} samples.")
+        print(f"Training device: {self.device}; batches per epoch: {len(train_loader)}.", flush=True)
         print(f"Training with {len(train_loader)} batches of size {batch_size}.")
         print(f'Input channels: {model.in_channels}.')
 
@@ -257,11 +259,27 @@ class VetoTrainer():
             model.train()
             train_loss = 0.0
 
-            for (contexts, candidates, scalars, labels) in train_loader:
+            batch_timer = perf_counter()
+            train_progress = tqdm(
+                train_loader,
+                desc=f"Epoch {epoch + 1}/{epochs} train",
+                leave=False,
+            )
+
+            for batch_index, (contexts, candidates, scalars, labels) in enumerate(
+                train_progress, start=1
+            ):
                 contexts = contexts.to(self.device)
                 candidates = candidates.to(self.device)
                 scalars = scalars.to(self.device)
                 labels = labels.to(self.device)
+
+                if batch_index == 1:
+                    print(
+                        f"First batch loaded: context={tuple(contexts.shape)}, "
+                        f"candidate={tuple(candidates.shape)}",
+                        flush=True,
+                    )
 
                 optimizer.zero_grad()
                 outputs = model(contexts, candidates, scalars)
@@ -270,6 +288,11 @@ class VetoTrainer():
                 optimizer.step()
 
                 train_loss += loss.item()
+                train_progress.set_postfix(
+                    loss=f"{loss.item():.4f}",
+                    batch_s=f"{(perf_counter() - batch_timer):.1f}",
+                )
+                batch_timer = perf_counter()
 
             train_loss /= len(train_loader)
             train_losses.append(train_loss)
@@ -280,7 +303,12 @@ class VetoTrainer():
             all_preds = []
 
             with torch.no_grad():
-                for contexts, candidates, scalars, labels in val_loader:
+                val_progress = tqdm(
+                    val_loader,
+                    desc=f"Epoch {epoch + 1}/{epochs} val",
+                    leave=False,
+                )
+                for contexts, candidates, scalars, labels in val_progress:
                     contexts = contexts.to(self.device)
                     candidates = candidates.to(self.device)
                     scalars = scalars.to(self.device)

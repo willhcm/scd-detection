@@ -25,7 +25,9 @@ class Vetoer(nn.Module):
         # Relative DEM + slope + candidate mask. 3 channels, no replace conv needed
         self.context_encoder = mobilenet_v3_small(weights=MobileNet_V3_Small_Weights.IMAGENET1K_V1)
         self.candidate_encoder = mobilenet_v3_small(weights=MobileNet_V3_Small_Weights.IMAGENET1K_V1)
+
         candidate_conv = self.candidate_encoder.features[0][0]
+
         self.candidate_encoder.features[0][0] = nn.Conv2d(
             2,
             candidate_conv.out_channels,
@@ -45,7 +47,7 @@ class Vetoer(nn.Module):
         self.context_encoder.classifier = nn.Identity()  # Remove the original classifier
         self.candidate_encoder.classifier = nn.Identity()  # Remove the original classifier
         
-        # squeezed so the signal does not dominate the scalars. Final encodings are [64,] for image and [32,] for scalars.
+        # squeezed so the signal does not dominate the scalars. 
         self.squeezer = nn.Sequential(
             nn.Linear(2 * dem_feature_dim, 256),
             nn.ReLU(inplace=True),
