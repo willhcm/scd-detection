@@ -1,5 +1,6 @@
 import itertools
 import numpy as np
+import optuna
 from pathlib import Path
 import sys
 CODE_DIR = Path("../../code").resolve()
@@ -202,3 +203,60 @@ class Tuner():
 
         print(f"Best params: {best_params}, Best Pixel IoU: {best_iou:.4f}")
         return best_params, best_results
+
+    def tune_bayes(
+        self,
+        param_space,
+        n_trials=50,
+        seed=42,
+        study_name=None,
+        storage=None,
+    ):
+        """Tune categorical parameter candidates with Bayesian optimization.
+
+        ``param_space`` maps each parameter name to a non-empty sequence of
+        candidate values. Optuna selects among those values using its TPE
+        sampler, while the objective remains pixel IoU.
+        """
+        if n_trials < 1:
+            raise ValueError("n_trials must be at least 1.")
+        if not param_space:
+            raise ValueError("param_space must contain at least one parameter.")
+        if any(not values for values in param_space.values()):
+            raise ValueError("Each parameter must have at least one candidate value.")
+
+        sampler = optuna.samplers.TPESampler(seed=seed)
+        study = optuna.create_study(
+            direction="maximize",
+            sampler=sampler,
+            study_name=study_name,
+            storage=storage,
+            load_if_exists=storage is not None and study_name is not None,
+        )
+
+        def objective(trial):
+            params = {
+                name: trial.suggest_categorical(name, list(values))
+                for name, values in param_space.items()
+            }
+            print(f"Evaluating trial {trial.number}: {params}")
+            preds = self.run(params)
+            metrics = self.evaluate_results(preds)
+            trial.set_user_attr("metrics", metrics)
+            print(
+                f"Trial {trial.number}: pixel IoU = "
+                f"{metrics['pixel_iou']:.4f}"
+            )
+            return metrics["pixel_iou"]
+
+        study.optimize(objective, n_trials=n_trials)
+
+        best_trial = study.best_trial
+        best_results = best_trial.user_attrs.get("metrics")
+        if best_results is None:
+            preds = self.run(best_trial.params)
+            best_results = self.evaluate_results(preds)
+
+        print(f"Best params: {study.best_params}")
+        print(f"Best Pixel IoU: {study.best_value:.4f}")
+        return study.best_params, best_results

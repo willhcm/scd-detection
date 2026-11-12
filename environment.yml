@@ -29,3 +29,4 @@ dependencies:
   - pip:
       - scienceplots
       - opencv-python-headless
+      - optuna

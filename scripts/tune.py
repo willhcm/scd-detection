@@ -3,6 +3,7 @@ from dataclasses import fields
 from pathlib import Path
 import sys
 import torch
+import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = REPO_ROOT / "results"
@@ -12,13 +13,16 @@ from modelling.Tuner import Tuner
 
 # keys must be DeployConfig field names
 PARAM_GRID = {
-    'score_threshold': [0.6, 0.7, 0.8, 0.9],
-    'mask_threshold': [0.4, 0.5, 0.6, 0.7],
-    'veto_threshold': [0.6, 0.7, 0.8, 0.9],
+    'score_threshold': np.arange(0.4, 0.8, 0.025).tolist(),
+    'mask_threshold': np.arange(0.3, 0.6, 0.025).tolist(),
+    'veto_threshold': np.arange(0.5, 0.975, 0.025).tolist(),
+    'size_sigma': np.arange(0.2, 0.8, 0.05).tolist(),
+    'object_threshold': np.arange(0.3, 0.7, 0.05).tolist(),
+    'keep_threshold': np.arange(0.3, 0.7, 0.05).tolist(),
 }
 
 # only used by the veto stage, pointless to sweep with --no_veto
-VETO_ONLY = {'veto_threshold', 'detect_threshold'}
+VETO_ONLY = {'veto_threshold'}
 
 DEPLOYER_PARAMS = {
     "tile_size": 512,
@@ -27,7 +31,6 @@ DEPLOYER_PARAMS = {
     "veto_threshold": 0.60, # tune on larger train set
     "score_threshold": 0.60, # to tune
     "mask_threshold": 0.55, # to tune
-    "detect_threshold": 0.6, # to tune
     "context_scale": 5.0,
     "min_context_width_m": 750.0,
     "max_context_width_m": 4000.0,
@@ -77,6 +80,7 @@ def main(args):
     for k, v in grid.items():
         print(f"  {k} = {v}")
     print(f"  no_veto = {args.no_veto}")
+    print(f"  method = {args.method}")
 
     tuner = Tuner(model=model_state,
                   dem_path=dem_path,
@@ -89,7 +93,16 @@ def main(args):
                   to_veto=not args.no_veto,
                   label_path=args.label_path)
 
-    best_params, best_results = tuner.tune(grid)
+    if args.method == "grid":
+        best_params, best_results = tuner.tune(grid)
+    else:
+        best_params, best_results = tuner.tune_bayes(
+            grid,
+            n_trials=args.n_trials,
+            seed=args.seed,
+            study_name=args.study_name,
+            storage=args.storage,
+        )
 
     print('Best hyperparameters found:')
     for k, v in best_params.items():
@@ -109,6 +122,21 @@ if __name__ == "__main__":
     parser.add_argument("--resolutions", type=float, nargs='+', default=[1.0], help="List of resolutions to process.")
     parser.add_argument("--no_veto", action="store_true", help="dont veto")
     parser.add_argument("--label_path", type=Path, required=True, help="Path to the label file for evaluation.")
+    parser.add_argument(
+        "--method",
+        choices=("grid", "bayes"),
+        default="bayes",
+        help="Hyperparameter search method.",
+    )
+    parser.add_argument("--n_trials", type=int, default=50)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--study_name", type=str, default=None)
+    parser.add_argument(
+        "--storage",
+        type=str,
+        default=None,
+        help="Optuna storage URL, e.g. sqlite:///tuning.db.",
+    )
 
     hp = parser.add_argument_group("deployer hyperparameters")
     for name, default in DEPLOYER_PARAMS.items():

@@ -59,7 +59,7 @@ class Vetoer(nn.Module):
 
         # shared after fusing
         self.classifier = nn.Sequential(
-            nn.Linear(32 + len(VETO_SCALAR_NAMES), 16),
+            nn.Linear(32 + scalar_dim, 16),
             nn.ReLU(inplace=True),
             nn.Dropout(dropout),
             nn.Linear(16, 1))
