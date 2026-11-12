@@ -18,7 +18,7 @@ import sys
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 
-from helpers.VetoHelpers import build_dem_context, VETO_SCALAR_NAMES, x_y_to_long_lat
+from helpers.VetoHelpers import VETO_SCALAR_NAMES, build_veto_data, x_y_to_long_lat
 
 def hillshade(dem, azimuth=315, angle_altitude=45):
     """
@@ -43,9 +43,9 @@ class DEMVetoLabeller:
         retain_path = None,
         reject_path = None,
         target_crs = None,
-        context_scale=10.0,
+        context_scale=8.0,
         min_width_m=512.0,
-        max_width_m=50000.0,
+        max_width_m=40000.0,
         tile_size=512):
 
         self.labels = None
@@ -92,7 +92,6 @@ class DEMVetoLabeller:
         diameter_m = obj['diameter'] 
 
         # DEM crop width
-        # Four-times object box width, clipped to fixed limits.
         context_width_m = float(
             np.clip(
                 self.context_scale * diameter_m,
@@ -107,52 +106,80 @@ class DEMVetoLabeller:
             cx + context_half_width,
             cy + context_half_width)
 
-        dem = self.dem_source.reproject_to_shape(
+        candidate_width_m = float(diameter_m) * 2
+        candidate_bounds = (
+            cx - candidate_width_m / 2.0,
+            cy - candidate_width_m / 2.0,
+            cx + candidate_width_m / 2.0,
+            cy + candidate_width_m / 2.0)
+
+        dem_context = self.dem_source.reproject_to_shape(
             target_crs=self.target_crs,
             tile_bounds=context_bounds,
             out_width=self.tile_size,
             out_height=self.tile_size,
-            resampling=Resampling.bilinear,
-        )
+            resampling=Resampling.bilinear)
 
-        if dem is None:
+        candidate = self.dem_source.reproject_to_shape(
+            target_crs=self.target_crs,
+            tile_bounds=candidate_bounds,
+            out_width=self.tile_size,
+            out_height=self.tile_size,
+            resampling=Resampling.bilinear)
+
+        if dem_context is None or candidate is None:
             return None
 
-        dem_array = np.asarray(dem)
+        dem_array = np.asarray(dem_context)
+        candidate_array = np.asarray(candidate)
 
-        if not np.isfinite(dem_array).any():
+        if not np.isfinite(dem_array).any() or not np.isfinite(candidate_array).any():
             return None
 
         context_transform = from_bounds(
             *context_bounds,
             self.tile_size,
+            self.tile_size)
+
+        candidate_transform = from_bounds(
+            *candidate_bounds,
             self.tile_size,
-        )
+            self.tile_size)
 
         context_mask = rasterize(
             [(obj["geom"], 1)],
             out_shape=(
                 self.tile_size,
-                self.tile_size,
-            ),
+                self.tile_size),
             transform=context_transform,
             fill=0,
             dtype=np.uint8,
         )
 
-        image, scalar_features = build_dem_context(
-            dem=dem,
-            candidate_mask=context_mask,
+        candidate_mask = rasterize(
+            [(obj["geom"], 1)],
+            out_shape=(
+                self.tile_size,
+                self.tile_size),
+            transform=candidate_transform,
+            fill=0,
+            dtype=np.uint8,
+        )
+
+        context_image, candidate_image, scalar_features = build_veto_data(
+            context=dem_context,
+            context_mask=context_mask,
+            candidate=candidate,
+            candidate_mask=candidate_mask,
             context_width_m=context_width_m,
             candidate_diameter_m=diameter_m)
 
-
-
-        if image is None:
+        if context_image is None or candidate_image is None or scalar_features is None:
             return None
-
+    
         return {
-            "image": image,
+            "context": context_image,
+            "candidate": candidate_image,
             "scalar_features": scalar_features,
             "id": obj["id"],
             "centre_dms": dms_centre,
@@ -166,9 +193,8 @@ class DEMVetoLabeller:
     # show for labelling
     def _show_tile(self, tile):
 
-
-        relative_dem = tile["image"][0]
-        context_mask = tile["image"][2]
+        relative_dem = tile["context"][0]
+        context_mask = tile["context"][2]
         tile_hillshade = hillshade(relative_dem)
 
         fig, ax = plt.subplots(1, 1, figsize=(10, 5))

@@ -256,13 +256,14 @@ class VetoTrainer():
             model.train()
             train_loss = 0.0
 
-            for (images, scalars, labels) in train_loader:
-                images = images.to(self.device)
+            for (contexts, candidates, scalars, labels) in train_loader:
+                contexts = contexts.to(self.device)
+                candidates = candidates.to(self.device)
                 scalars = scalars.to(self.device)
                 labels = labels.to(self.device)
 
                 optimizer.zero_grad()
-                outputs = model(images, scalars)
+                outputs = model(contexts, candidates, scalars)
                 loss = criterion(outputs.squeeze(), labels.float())
                 loss.backward()
                 optimizer.step()
@@ -278,12 +279,13 @@ class VetoTrainer():
             all_preds = []
 
             with torch.no_grad():
-                for images, scalars, labels in val_loader:
-                    images = images.to(self.device)
+                for contexts, candidates, scalars, labels in val_loader:
+                    contexts = contexts.to(self.device)
+                    candidates = candidates.to(self.device)
                     scalars = scalars.to(self.device)
                     labels = labels.to(self.device)
 
-                    outputs = model(images, scalars)
+                    outputs = model(contexts, candidates, scalars)
                     loss = criterion(outputs.squeeze(), labels.float())
                     val_loss += loss.item()
 

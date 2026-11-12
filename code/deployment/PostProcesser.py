@@ -6,7 +6,7 @@ import torch
 import deployment.config as config
 from rasterio.enums import Resampling
 from rasterio.transform import from_bounds
-from helpers.VetoHelpers import build_dem_context, normalise_veto_data, VETO_BAND_INDEX
+from helpers.VetoHelpers import build_veto_data, normalise_veto_data, VETO_BAND_INDEX
 from loaders.Cogs import WindowedDataSource
 import os
 from pathlib import Path
@@ -115,14 +115,22 @@ class PostProcessor:
         # wider DEM context around the same candidate centre.
         # clip provides a minimum and maximum scene size to avoid tiny/massive context extents
         context_width_m = np.clip(self.context_scale * crop_width_m, self.min_context_width_m, self.max_context_width_m)
+        candidate_width_m = float(diameter_m) * 2.0
 
         context_half_width = context_width_m / 2.0
+        candidate_half_width = candidate_width_m / 2.0
 
         context_bounds = (
             cx - context_half_width,
             cy - context_half_width,
             cx + context_half_width,
             cy + context_half_width,
+        )
+        candidate_bounds = (
+            cx - candidate_half_width,
+            cy - candidate_half_width,
+            cx + candidate_half_width,
+            cy + candidate_half_width,
         )
 
         dem = self.dem_source.reproject_to_shape(
@@ -132,14 +140,22 @@ class PostProcessor:
             out_height=self.context_tile_size,
             resampling=Resampling.bilinear,
         )
+        candidate_dem = self.dem_source.reproject_to_shape(
+            target_crs=crs,
+            tile_bounds=candidate_bounds,
+            out_width=self.context_tile_size,
+            out_height=self.context_tile_size,
+            resampling=Resampling.bilinear,
+        )
 
         # similarly handles invalid DEM fetches
-        if dem is None:
+        if dem is None or candidate_dem is None:
             return None
 
         dem = np.asarray(dem)
+        candidate_dem = np.asarray(candidate_dem)
 
-        if not np.isfinite(dem).any():
+        if not np.isfinite(dem).any() or not np.isfinite(candidate_dem).any():
             return None
 
         # gets mask in zoomed out scale for dem context
@@ -149,25 +165,42 @@ class PostProcessor:
             bounds=context_bounds,
             output_size=self.context_tile_size,
         )
+        candidate_mask = self._object_mask_for_bounds(
+            obj=obj,
+            source_transform=transform,
+            bounds=candidate_bounds,
+            output_size=self.context_tile_size,
+        )
 
         # build scalar features (e.g. candidate - annulus elevation delta)
-        image, scalar_features = build_dem_context(
-            dem=dem,
-            candidate_mask=context_mask,
+        image, candidate_image, scalar_features = build_veto_data(
+            context=dem,
+            context_mask=context_mask,
             context_width_m=context_width_m,
-            candidate_diameter_m=diameter_m)
+            candidate_diameter_m=diameter_m,
+            candidate=candidate_dem,
+            candidate_mask=candidate_mask,
+        )
 
         # handles empty scalar features in case some error in calculation 
-        if (image is None or scalar_features is None):
+        if image is None or candidate_image is None or scalar_features is None:
             return None
 
         to_normalize = {
             'dem': image[VETO_BAND_INDEX['DEM']],
             'slope': image[VETO_BAND_INDEX['SLOPE']],
-            'scalar_features': scalar_features}
+            'scalar_features': scalar_features,
+            'candidate_dem': candidate_image[0],
+        }
 
-        dem, slope, scalar_features = normalise_veto_data(to_normalize, norm_stats=self.norm_stats)
+        dem, slope, scalar_features, candidate_dem = normalise_veto_data(
+            to_normalize,
+            norm_stats=self.norm_stats)
         image = np.stack([dem, slope, context_mask.astype(np.float32)], axis=0).astype(np.float32)
+        candidate_image = np.stack(
+            [candidate_dem, candidate_image[1].astype(np.float32)],
+            axis=0,
+        )
 
         image = np.asarray(image, dtype=np.float32)
 
@@ -176,6 +209,10 @@ class PostProcessor:
         return {
             "image": np.ascontiguousarray(
                 image,
+                dtype=np.float32,
+            ),
+            "candidate": np.ascontiguousarray(
+                candidate_image,
                 dtype=np.float32,
             ),
             "scalar_features": np.ascontiguousarray(
@@ -216,6 +253,7 @@ class PostProcessor:
         predicted = 0
 
         batch_dem = []
+        batch_candidate = []
         batch_scalars = []
         batch_objs = []
 
@@ -236,12 +274,19 @@ class PostProcessor:
 
             # make torch tensor from batch and send to device
             dem_tensor = torch.from_numpy(np.stack(batch_dem, axis=0)).to(self.device, dtype=torch.float32)
+            candidate_tensor = torch.from_numpy(
+                np.stack(batch_candidate, axis=0)
+            ).to(self.device, dtype=torch.float32)
             scalar_tensor = torch.from_numpy(np.stack(batch_scalars, axis=0)).to(self.device, dtype=torch.float32)
 
             # predict
             with torch.inference_mode():
 
-                logits = self.model(dem_tensor, scalar_tensor).view(-1)
+                logits = self.model(
+                    dem_tensor,
+                    candidate_tensor,
+                    scalar_tensor,
+                ).view(-1)
 
                 # sigmoid for probs
                 probabilities = torch.sigmoid(logits).cpu().numpy()
@@ -264,6 +309,7 @@ class PostProcessor:
 
             # empty batch lists
             batch_dem.clear()
+            batch_candidate.clear()
             batch_scalars.clear()
             batch_objs.clear()
 
@@ -289,6 +335,7 @@ class PostProcessor:
 
             # if can build, add to batch lists
             batch_dem.append(tile["image"])
+            batch_candidate.append(tile["candidate"])
             batch_scalars.append(tile["scalar_features"])
             batch_objs.append(obj)
 

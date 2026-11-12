@@ -48,55 +48,70 @@ def _make_annulus(candidate_mask):
     return candidate_mask, annulus
 
 
-def build_dem_context(
-    dem,
-    candidate_mask,
+def build_veto_data(
+    context,
+    context_mask,
     context_width_m,
-    candidate_diameter_m):
+    candidate_diameter_m,
+    candidate,
+    candidate_mask):
     """
     Docstring
     """
     
     candidate_mask = np.asarray(candidate_mask).astype(bool)
+    context_mask = np.asarray(context_mask).astype(bool)
 
-    valid = np.isfinite(dem)
+    candidate = np.asarray(candidate)
+    context = np.asarray(context)
+    valid = np.isfinite(context)
 
+    # generate wider DEM context branch
     if not valid.any():
-        return None, None
+        return None, None, None
 
     # Fill NODATA values in DEM with the median of valid values to avoid NaNs in calculations (handles very small regions where no data exists at edge of DEM scene)
-    fill_value = float(np.nanmedian(dem[valid]))
-    dem = np.where(valid, dem, fill_value).astype(np.float32)
+    fill_value = float(np.nanmedian(context[valid]))
+    context = np.where(valid, context, fill_value).astype(np.float32)
+    context_mask, annulus = _make_annulus(context_mask)
 
-    candidate_mask, annulus = _make_annulus(candidate_mask)
+    # fill for candidate
+    candidate_data_valid = np.isfinite(candidate)
+    if not candidate_data_valid.any():
+        return None, None, None
+    candidate_fill = float(np.median(candidate[candidate_data_valid]))
+    candidate = np.where(candidate_data_valid, candidate, candidate_fill).astype(np.float32)
 
     # Ensure that the candidate and annulus are within the valid DEM area
-    candidate_valid = candidate_mask & valid # where the candidate is valid in the DEM
-    annulus_valid = annulus & valid # where the annulus is valid in the DEM
+    context_candidate_valid = context_mask & valid
+    candidate_valid = candidate_mask & candidate_data_valid
+    annulus_valid = annulus & valid
 
+    if not context_candidate_valid.any():
+        context_candidate_valid = context_mask
     if not candidate_valid.any():
-        candidate_valid = candidate_mask
+        candidate_valid = np.ones(candidate.shape, dtype=bool)
 
     # if no valid pixels in annulus, use all valid pixels outside candidate as annulus
     if not annulus_valid.any():
-        annulus_valid = valid & ~candidate_mask
+        annulus_valid = valid & ~context_mask
 
     # get values from masks 
-    candidate_values = dem[candidate_valid]
-    annulus_values = dem[annulus_valid]
+    candidate_values = candidate[candidate_valid]
+    annulus_values = context[annulus_valid]
 
     # calculate stats from these values.
     annulus_mean = float(np.mean(annulus_values))
 
     # repeat for slope
-    h, width = dem.shape
+    h, width = context.shape
     pixel_size_m = float(context_width_m) / float(width)
 
-    grad_y, grad_x = np.gradient(dem, pixel_size_m, pixel_size_m)
+    grad_y, grad_x = np.gradient(context, pixel_size_m, pixel_size_m)
 
     slope = np.hypot(grad_x, grad_y).astype(np.float32)
 
-    candidate_slope = slope[candidate_valid]
+    candidate_slope = slope[context_candidate_valid]
     annulus_slope = slope[annulus_valid]
 
     depth = np.median(candidate_values) - annulus_mean
@@ -111,25 +126,36 @@ def build_dem_context(
               dtype=np.float32)
 
     # return dem, slope (stacked) and scalsrs
-    dem_context = np.stack([dem, slope, candidate_mask.astype(np.float32)], axis=0).astype(np.float32)
+    dem_context = np.stack([context, slope, context_mask.astype(np.float32)], axis=0).astype(np.float32)
+    dem_candidate = np.stack([candidate, candidate_mask.astype(np.float32)], axis=0).astype(np.float32)
 
-    return dem_context, scalar_features
+    return dem_context, dem_candidate, scalar_features
 
 def normalise_veto_data(data, norm_stats):
 
-    dem, slope, scalars = data['dem'], data['slope'], data['scalar_features']
+    dem = data['dem']
+    slope = data['slope']
+    scalars = data['scalar_features']
+    candidate_dem = data.get('candidate_dem')
 
     dem, slope = _handle_outliers((dem, slope))
 
     dem_rel = dem - np.median(dem)
-
-    dem_rel = (dem_rel - norm_stats['DEM']['median']) / norm_stats['DEM']['iqr']
+    dem_rel = (dem_rel / norm_stats['DEM']['iqr'])
     slope = (slope - norm_stats['SLOPE']['median']) / norm_stats['SLOPE']['iqr']
+
+    candidate_dem_rel = None
+    if candidate_dem is not None:
+        candidate_dem = _handle_outliers((candidate_dem,))[0]
+        candidate_dem_rel = candidate_dem - np.median(candidate_dem)
+        candidate_dem_rel /= norm_stats['Candidate_DEM']['iqr']
 
     for i, name in enumerate(VETO_SCALAR_NAMES):
         scalars[i] = (scalars[i] - norm_stats[name]['median']) / norm_stats[name]['iqr']
 
-    return dem_rel, slope, scalars
+    if candidate_dem_rel is None:
+        return dem_rel, slope, scalars
+    return dem_rel, slope, scalars, candidate_dem_rel
 
 def _handle_outliers(bands):
 

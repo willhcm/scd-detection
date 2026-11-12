@@ -407,7 +407,7 @@ class DatasetWrapper():
                     elif channel == "DEM":
                         tile_median = np.median(image[names.index(layer_name)].ravel()[valid])
                         vals = vals - tile_median
-                        
+
                     samples[channel].append(vals)
 
         self.values = self.handle_outliers(samples)
@@ -491,13 +491,15 @@ class VetoDatasetWrapper():
 
         # instantiate samples dictionary with name of channel type and empty list, which will be populated by randomly samples values as a flat array.
         samples = {name: [] for name in channels}
+        samples['Candidate_DEM'] = []
 
         for p in self.train_paths:
             with np.load(p, allow_pickle=True) as sample:
 
-                img_data = {'DEM': sample['image'][VETO_BAND_INDEX['DEM']], 'SLOPE': sample['image'][VETO_BAND_INDEX['SLOPE']]}
+                img_data = {'DEM': sample['context'][VETO_BAND_INDEX['DEM']], 'SLOPE': sample['context'][VETO_BAND_INDEX['SLOPE']]}
                 scalar_data = sample['scalar_features']
                 scalars = {name: scalar_data[i] for i, name in enumerate(scalar_names)}
+                candidate_dem = sample['candidate'][0]
                 
                 # validity check 
                 img = np.stack(list(img_data.values()), axis=0) # to check validity it must be an np array of [channels, height, width]
@@ -519,6 +521,8 @@ class VetoDatasetWrapper():
                 for name, value in scalars.items():
                     if np.isfinite(value):
                         samples[name].append(value)
+
+                samples['Candidate_DEM'].append(candidate_dem.ravel()[chosen] - np.median(candidate_dem.ravel()[valid]))
 
         # calculate stats from sampled values.
         stats = {}
