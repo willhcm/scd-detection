@@ -251,6 +251,7 @@ class VetoTrainer():
         patience = 20
         bad_epochs = 0
 
+        print("Starting training...")
         for epoch in range(epochs):
 
             model.train()
@@ -346,6 +347,7 @@ class VetoTrainer():
         return results
 
     def save_model(self, state, out_path, folded_out_region):
+        print('saving model...')
         norm_stats = self.dset.normalization_stats
         out = {'state': state,
                'norm_stats': norm_stats,

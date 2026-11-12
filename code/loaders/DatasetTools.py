@@ -452,8 +452,9 @@ class VetoDatasetWrapper():
         self.normalization_stats = {}
 
     def get_loaders(self, random_train=True, folded_out_region=None, batch_size=16):
-
+        
         all_paths = list(self.root.glob('*.npz'))
+
         if random_train:
             self.train_paths, self.val_paths = train_test_split(all_paths, test_size=0.2, random_state=42)
         elif not random_train and folded_out_region is not None:
@@ -468,12 +469,15 @@ class VetoDatasetWrapper():
         else:
             raise ValueError("Either random_train must be True or folded_out_region must be specified.")
 
+        print(f"Train paths: {len(self.train_paths)}, Val paths: {len(self.val_paths)}")
+        print('Estimating normalization stats...')
         self.normalization_stats = self._estimate_normalisation_stats()
 
         train_set, val_set = VetoDataset(self.train_paths, self.normalization_stats, augment=True), VetoDataset(self.val_paths, self.normalization_stats, augment=False)
 
-        train_loader = DataLoader(train_set, shuffle=True, batch_size=batch_size)
-        val_loader = DataLoader(val_set, shuffle=False, batch_size=batch_size)
+
+        train_loader = DataLoader(train_set, shuffle=True, batch_size=batch_size, num_workers=4, persistent_workers=True, pin_memory=True)
+        val_loader = DataLoader(val_set, shuffle=False, batch_size=batch_size, num_workers=4, persistent_workers=True, pin_memory=True)
 
         return train_loader, val_loader
 
@@ -481,7 +485,7 @@ class VetoDatasetWrapper():
         with np.load(path, allow_pickle=True) as tile:
             return tile["region"].item()
 
-    def _estimate_normalisation_stats(self, n_samples_per_tile=10000, seed=42):
+    def _estimate_normalisation_stats(self, n_samples_per_tile=5000, seed=42):
 
         channels = ['DEM', 'SLOPE']
         scalar_names = list(VETO_SCALAR_NAMES)

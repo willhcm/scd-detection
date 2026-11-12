@@ -128,7 +128,7 @@ if __name__ == "__main__":
         default="bayes",
         help="Hyperparameter search method.",
     )
-    parser.add_argument("--n_trials", type=int, default=50)
+    parser.add_argument("--n_trials", type=int, default=100)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--study_name", type=str, default=None)
     parser.add_argument(
