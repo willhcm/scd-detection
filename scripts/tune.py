@@ -21,6 +21,17 @@ PARAM_GRID = {
     'keep_threshold': np.arange(0.3, 0.7, 0.05).tolist(),
 }
 
+# Continuous ranges used by Bayesian search. Bounds match the minimum and
+# maximum values represented in PARAM_GRID.
+PARAM_SPACE = {
+    'score_threshold': {'type': 'float', 'low': 0.4, 'high': 0.775},
+    'mask_threshold': {'type': 'float', 'low': 0.3, 'high': 0.575},
+    'veto_threshold': {'type': 'float', 'low': 0.5, 'high': 0.95},
+    'size_sigma': {'type': 'float', 'low': 0.2, 'high': 0.75},
+    'object_threshold': {'type': 'float', 'low': 0.3, 'high': 0.65},
+    'keep_threshold': {'type': 'float', 'low': 0.3, 'high': 0.65},
+}
+
 # only used by the veto stage, pointless to sweep with --no_veto
 VETO_ONLY = {'veto_threshold'}
 
@@ -41,7 +52,7 @@ DEPLOYER_PARAMS = {
 def main(args):
 
     valid = {f.name for f in fields(DeployConfig)}
-    unknown = (set(PARAM_GRID) | set(DEPLOYER_PARAMS)) - valid
+    unknown = (set(PARAM_SPACE) | set(DEPLOYER_PARAMS)) - valid
 
     params = DEPLOYER_PARAMS.copy()
     overrides = {f.name: getattr(args, f.name) for f in fields(DeployConfig) if hasattr(args, f.name)}
@@ -70,14 +81,19 @@ def main(args):
     out_path.mkdir(parents=True)
 
     grid = {k: v for k, v in PARAM_GRID.items() if not (args.no_veto and k in VETO_ONLY)}
+    search_space = {
+        k: v for k, v in PARAM_SPACE.items()
+        if not (args.no_veto and k in VETO_ONLY)
+    }
 
     fixed = {k: getattr(args, k) for k in params if k not in grid}
 
     print("fixed hyperparams:")
     for k, v in fixed.items():
         print(f"  {k} = {v}")
-    print("grid:")
-    for k, v in grid.items():
+    print("search space:")
+    values_to_print = grid if args.method == "grid" else search_space
+    for k, v in values_to_print.items():
         print(f"  {k} = {v}")
     print(f"  no_veto = {args.no_veto}")
     print(f"  method = {args.method}")
@@ -97,7 +113,7 @@ def main(args):
         best_params, best_results = tuner.tune(grid)
     else:
         best_params, best_results = tuner.tune_bayes(
-            grid,
+            search_space,
             n_trials=args.n_trials,
             seed=args.seed,
             study_name=args.study_name,

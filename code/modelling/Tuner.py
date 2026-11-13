@@ -3,6 +3,7 @@ import numpy as np
 import optuna
 from pathlib import Path
 import sys
+from collections.abc import Mapping
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 import geopandas as gpd
@@ -210,20 +211,33 @@ class Tuner():
         n_trials=50,
         seed=42,
         study_name=None,
-        storage=None,
-    ):
-        """Tune categorical parameter candidates with Bayesian optimization.
+        storage=None):
 
-        ``param_space`` maps each parameter name to a non-empty sequence of
-        candidate values. Optuna selects among those values using its TPE
-        sampler, while the objective remains pixel IoU.
+        """Tune parameter candidates or continuous ranges with Bayesian optimization.
+
+        A sequence value is treated as a categorical candidate list for
+        backwards compatibility. A mapping can define a continuous or integer
+        range, for example ``{"type": "float", "low": 0.2, "high": 0.8}``.
+        Float ranges may also specify ``step`` or ``log``.
         """
         if n_trials < 1:
             raise ValueError("n_trials must be at least 1.")
         if not param_space:
             raise ValueError("param_space must contain at least one parameter.")
-        if any(not values for values in param_space.values()):
-            raise ValueError("Each parameter must have at least one candidate value.")
+        for name, space in param_space.items():
+            if isinstance(space, Mapping):
+                if space.get("type") not in {"float", "int"}:
+                    raise ValueError(
+                        f"{name} range type must be 'float' or 'int'."
+                    )
+                if "low" not in space or "high" not in space:
+                    raise ValueError(f"{name} range needs 'low' and 'high'.")
+                if space["low"] > space["high"]:
+                    raise ValueError(f"{name} range has low greater than high.")
+                if space.get("step") is not None and space.get("log", False):
+                    raise ValueError(f"{name} cannot specify both step and log=True.")
+            elif not space:
+                raise ValueError(f"{name} must have at least one candidate value.")
 
         sampler = optuna.samplers.TPESampler(seed=seed)
         study = optuna.create_study(
@@ -235,10 +249,23 @@ class Tuner():
         )
 
         def objective(trial):
-            params = {
-                name: trial.suggest_categorical(name, list(values))
-                for name, values in param_space.items()
-            }
+            params = {}
+            for name, space in param_space.items():
+                if not isinstance(space, Mapping):
+                    params[name] = trial.suggest_categorical(name, list(space))
+                    continue
+
+                suggest = trial.suggest_float if space["type"] == "float" else trial.suggest_int
+                kwargs = {
+                    "low": space["low"],
+                    "high": space["high"],
+                }
+                if space.get("step") is not None:
+                    kwargs["step"] = space["step"]
+                if space.get("log", False):
+                    kwargs["log"] = True
+                params[name] = suggest(name, **kwargs)
+
             print(f"Evaluating trial {trial.number}: {params}")
             preds = self.run(params)
             metrics = self.evaluate_results(preds)
