@@ -289,11 +289,7 @@ class VetoTrainer():
                     scalars = scalars.to(self.device)
                     labels = labels.to(self.device)
 
-                    if epoch == 50:
-                        outputs, embeddings = model(contexts, candidates, scalars, return_embeddings=True)
-                        np.savez_compressed(out_path / f"veto_embeddings.npz", embeddings=embeddings.cpu().numpy(), labels=labels.cpu().numpy())
-                    else:
-                        outputs = model(contexts, candidates, scalars)
+                    outputs, embeddings = model(contexts, candidates, scalars, return_embeddings=True)
 
                     loss = criterion(outputs.squeeze(), labels.float())
                     val_loss += loss.item()
@@ -353,6 +349,7 @@ class VetoTrainer():
 
 
         np.savez_compressed(out_path / f"veto_training_metrics_fold_{folded_out_region}.npz", **results)
+        np.savez_compressed(out_path / f"veto_embeddings.npz", embeddings=embeddings.cpu().numpy(), labels=labels.cpu().numpy())
         self.save_model(best_state, out_path, folded_out_region)
         return results
 
