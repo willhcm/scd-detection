@@ -403,7 +403,18 @@ class MaskRCNNDataset(Dataset):
         band_indices = [li[b] for b in _BANDS_TO_LOAD]
 
         image = d["image"][band_indices].astype(np.float32)
-        mask = d["labels"].astype(np.float32)
+        raw_labels = d["labels"]
+        if raw_labels.ndim == 0:
+            if raw_labels.item() is not None:
+                raise ValueError(f"Expected a 2-D label mask in {path}, got a scalar.")
+            mask = np.zeros(image.shape[1:], dtype=np.float32)
+        else:
+            mask = raw_labels.astype(np.float32)
+            if mask.shape != image.shape[1:]:
+                raise ValueError(
+                    f"Label mask shape {mask.shape} does not match image shape "
+                    f"{image.shape[1:]} in {path}."
+                )
 
         if self.augment:
             # rotate / flip
