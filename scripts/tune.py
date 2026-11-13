@@ -1,5 +1,5 @@
 import argparse
-from dataclasses import fields
+from dataclasses import MISSING, fields
 from pathlib import Path
 import sys
 import torch
@@ -32,22 +32,28 @@ PARAM_SPACE = {
     'keep_threshold': {'type': 'float', 'low': 0.3, 'high': 0.65},
 }
 
+# Fixed deployment parameters passed to each tuning run. Their values are
+# taken from DeployConfig so this script cannot silently drift from runtime
+# defaults.
+_CONFIG_FIELDS = {field.name: field for field in fields(DeployConfig)}
+_FIXED_PARAM_NAMES = (
+    "tile_size",
+    "veto_context_tile_size",
+    "veto_batch_size",
+    "context_scale",
+    "min_context_width_m",
+    "max_context_width_m",
+    "native_res",
+    "stride_frac",
+)
+DEPLOYER_PARAMS = {
+    name: _CONFIG_FIELDS[name].default
+    for name in _FIXED_PARAM_NAMES
+    if _CONFIG_FIELDS[name].default is not MISSING
+}
+
 # only used by the veto stage, pointless to sweep with --no_veto
 VETO_ONLY = {'veto_threshold'}
-
-DEPLOYER_PARAMS = {
-    "tile_size": 512,
-    "veto_context_tile_size": 224,
-    "veto_batch_size": 16,
-    "veto_threshold": 0.60, # tune on larger train set
-    "score_threshold": 0.60, # to tune
-    "mask_threshold": 0.55, # to tune
-    "context_scale": 5.0,
-    "min_context_width_m": 750.0,
-    "max_context_width_m": 4000.0,
-    "native_res": 1.0,
-    "stride_frac": 0.75,
-}
 
 def main(args):
 
@@ -134,7 +140,12 @@ if __name__ == "__main__":
     parser.add_argument("--model_state_path", type=Path, default=REPO_ROOT / "models" / "maskrcnn.pt")
     parser.add_argument("--run_name", type=str, required=True, help="Name of the run.")
     parser.add_argument("--veto_model_state_path", type=Path, required=False, help="Path to the veto model state dictionary.")
-    parser.add_argument("--device", type=str, default="cuda", help="Device to run the model on (e.g., 'cuda' or 'cpu').")
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=_CONFIG_FIELDS["device"].default,
+        help="Device to run the model on (e.g., 'cuda' or 'cpu').",
+    )
     parser.add_argument("--resolutions", type=float, nargs='+', default=[1.0], help="List of resolutions to process.")
     parser.add_argument("--no_veto", action="store_true", help="dont veto")
     parser.add_argument("--label_path", type=Path, required=True, help="Path to the label file for evaluation.")
