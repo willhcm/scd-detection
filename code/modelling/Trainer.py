@@ -240,8 +240,8 @@ class VetoTrainer():
         criterion = nn.BCEWithLogitsLoss()
 
         model.to(self.device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-6)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-5, weight_decay=1e-4)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-7)
 
         train_losses = []
         val_losses = []
@@ -289,7 +289,12 @@ class VetoTrainer():
                     scalars = scalars.to(self.device)
                     labels = labels.to(self.device)
 
-                    outputs = model(contexts, candidates, scalars)
+                    if epoch == 50:
+                        outputs, embeddings = model(contexts, candidates, scalars, return_embeddings=True)
+                        np.savez_compressed(out_path / f"veto_embeddings.npz", embeddings=embeddings.cpu().numpy(), labels=labels.cpu().numpy())
+                    else:
+                        outputs = model(contexts, candidates, scalars)
+
                     loss = criterion(outputs.squeeze(), labels.float())
                     val_loss += loss.item()
 
@@ -345,6 +350,7 @@ class VetoTrainer():
             "recalls": recalls,
             "f1s": f1s
         }
+
 
         np.savez_compressed(out_path / f"veto_training_metrics_fold_{folded_out_region}.npz", **results)
         self.save_model(best_state, out_path, folded_out_region)

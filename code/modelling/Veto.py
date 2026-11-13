@@ -19,7 +19,7 @@ class Vetoer(nn.Module):
     A neural network model to screen out false positives from Mask R-CNN predictions.
     """
     # 3 encoder branches and shared classifier
-    def __init__(self, scalar_dim=len(VETO_SCALAR_NAMES), dropout=0.3):
+    def __init__(self, scalar_dim=len(VETO_SCALAR_NAMES), dropout=0.4):
         super().__init__()
 
         # Relative DEM + slope + candidate mask. 3 channels, no replace conv needed
@@ -48,25 +48,35 @@ class Vetoer(nn.Module):
         self.candidate_encoder.classifier = nn.Identity()  # Remove the original classifier
         
         # squeezed so the signal does not dominate the scalars. 
+
+        self.fuser = nn.Sequential(nn.Linear(32 + scalar_dim, 16), nn.ReLU(inplace=True), nn.Dropout(dropout))
+
         self.squeezer = nn.Sequential(
-            nn.Linear(2 * dem_feature_dim, 256),
+            nn.Linear(2 * dem_feature_dim, 128),
             nn.ReLU(inplace=True),
             nn.Dropout(dropout),
-            nn.Linear(256, 128),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout),
-            nn.Linear(128, 32),  
+            nn.Linear(128, 32),
             nn.ReLU(inplace=True),
             nn.Dropout(dropout))
 
         # shared after fusing
         self.classifier = nn.Sequential(
-            nn.Linear(32 + scalar_dim, 16),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout),
             nn.Linear(16, 1))
 
-    def forward(self, context, candidate, scalar_features):
+    def freeze_encoders(self):
+        """ Freeze the encoder weights to prevent them from being updated during training. Conv1 remains trainable to allow for fine-tuning on the specific input channels. """
+        for param in self.context_encoder.parameters():
+            param.requires_grad = False
+        for param in self.candidate_encoder.parameters():
+            param.requires_grad = False
+
+        parameters = list(self.context_encoder.features[0][0].parameters()) + list(self.candidate_encoder.features[0][0].parameters())
+        for param in parameters:
+            param.requires_grad = True
+
+        return
+
+    def forward(self, context, candidate, scalar_features, return_embeddings=False):
 
         # get feature encodings
         context_features = self.context_encoder(context)
@@ -77,9 +87,12 @@ class Vetoer(nn.Module):
         image_features = self.squeezer(image_features)
 
         # concat encodings
-        fused = torch.cat([image_features, scalar_features], dim=1)
+        fused = self.fuser(torch.cat([image_features, scalar_features], dim=1))
 
         # classify and return
+        if return_embeddings:
+            return self.classifier(fused).squeeze(1), fused
+        
         return self.classifier(fused).squeeze(1)     
 
 
