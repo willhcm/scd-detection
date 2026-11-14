@@ -559,7 +559,7 @@ class ResPredictor():
     # overlap is at 50%, so halves the amount of intensive calculations required.
     def _make_row_strip(self, dem_source, y0, x_positions, tile_w_m, resolution):
 
-        res_value = np.log(resolution) / np.log(15.0)
+        res_value = np.log1p(resolution) / np.log1p(self.norm_stats["max_res"])
         
         minx = x_positions[0] - self.overlap_m
         maxx = x_positions[-1] + tile_w_m + self.overlap_m
@@ -618,7 +618,7 @@ class ResPredictor():
     def predict(self):
 
         resolution = self.res
-        res_value = np.log(resolution) / np.log(15.0)
+        res_value = np.log1p(resolution) / np.log1p(self.norm_stats["max_res"])
         dem_source = WindowedDataSource.from_tiff_utm(self.dem_path, resolution=resolution)
         progress = None
 
@@ -781,8 +781,8 @@ class ResPredictor():
 
         if name == 'DEM':
             band = band - np.median(band)
-
-        band = band - self.norm_stats[name]['median']
+        elif name != 'DEM':
+            band = band - self.norm_stats[name]['median']
         band = band / self.norm_stats[name]['iqr']
 
         return band

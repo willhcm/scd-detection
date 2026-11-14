@@ -24,12 +24,12 @@ PARAM_GRID = {
 # Continuous ranges used by Bayesian search. Bounds match the minimum and
 # maximum values represented in PARAM_GRID.
 PARAM_SPACE = {
-    'score_threshold': {'type': 'float', 'low': 0.4, 'high': 0.775},
-    'mask_threshold': {'type': 'float', 'low': 0.3, 'high': 0.575},
-    'veto_threshold': {'type': 'float', 'low': 0.5, 'high': 0.95},
-    'size_sigma': {'type': 'float', 'low': 0.2, 'high': 0.75},
-    'object_threshold': {'type': 'float', 'low': 0.3, 'high': 0.65},
-    'keep_threshold': {'type': 'float', 'low': 0.3, 'high': 0.65},
+    'score_threshold': {'type': 'float', 'low': 0.1, 'high': 0.9},
+    'mask_threshold': {'type': 'float', 'low': 0.1, 'high': 0.9},
+    'veto_threshold': {'type': 'float', 'low': 0.1, 'high': 0.975},
+    'size_sigma': {'type': 'float', 'low': 0.1, 'high': 0.9},
+    'object_threshold': {'type': 'float', 'low': 0.1, 'high': 0.9},
+    'keep_threshold': {'type': 'float', 'low': 0.1, 'high': 0.9},
 }
 
 # Fixed deployment parameters passed to each tuning run. Their values are
