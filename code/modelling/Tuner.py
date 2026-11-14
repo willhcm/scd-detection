@@ -8,8 +8,8 @@ CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 import geopandas as gpd
 import rasterio
-from rasterio.features import rasterize
-from shapely.geometry import box
+from rasterio.features import rasterize, shapes
+from shapely.geometry import box, shape
 
 from deployment.Inference import SCDModel
 
@@ -57,10 +57,22 @@ class Tuner():
         deployer = self.model.deployer
 
         results = deployer.sweep()
-        trial_path = self.out_path / "trial.shp"
 
-        # predictions as gdf
-        return deployer.merge_predictions(results['predictions'], results['transform'], results['crs'], trial_path)
+        labels = np.asarray(results["predictions"]).astype(np.int32)
+        geometries, object_ids = [], []
+        for geometry, object_id in shapes(
+            labels,
+            mask=labels > 0,
+            transform=results["transform"],
+            connectivity=8,
+        ):
+            geometries.append(shape(geometry))
+            object_ids.append(int(object_id))
+
+        return gpd.GeoDataFrame(
+            {"object_id": object_ids, "geometry": geometries},
+            crs=results["crs"],
+        )
 
     def evaluate_results(self, preds):
         """Return a dict of object precision, recall and F1, followed by
@@ -70,7 +82,15 @@ class Tuner():
         """
 
         matched, unmatched, FN = [], [], []
-        label_boxes = [box(*row.geometry.bounds) for _, row in self.labels.iterrows()]
+        labels = self.labels
+        if preds.crs != labels.crs:
+            if preds.crs is None or labels.crs is None:
+                raise ValueError(
+                    "Prediction and label CRS are required for object-level metrics."
+                )
+            labels = labels.to_crs(preds.crs)
+
+        label_boxes = [box(*row.geometry.bounds) for _, row in labels.iterrows()]
 
         for idx, row in preds.iterrows():
             pred_box = box(*row.geometry.bounds)
@@ -79,12 +99,12 @@ class Tuner():
             else:
                 unmatched.append(idx)
 
-        for idx, row in self.labels.iterrows():
+        for idx, row in labels.iterrows():
             label_box = box(*row.geometry.bounds)
             if not any(bbox_iou(label_box, box(*preds.loc[i].geometry.bounds)) > 0.5 for i in matched):
                 FN.append(idx)
 
-        FNs = self.labels.loc[FN]
+        FNs = labels.loc[FN]
 
         # objet-level metrics
 
