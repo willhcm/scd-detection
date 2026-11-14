@@ -47,7 +47,8 @@ class Tuner():
                             veto_model_state=veto_model_state,
                             hyperparams=hyperparams,
                             run_name=run_name,
-                            to_veto=to_veto)
+                            to_veto=to_veto,
+                            requested_returns={"predictions", "transform", "crs"})
 
     def run(self, params):
 
