@@ -60,9 +60,10 @@ def main(args):
     valid = {f.name for f in fields(DeployConfig)}
     unknown = (set(PARAM_SPACE) | set(DEPLOYER_PARAMS)) - valid
 
-    params = DEPLOYER_PARAMS.copy()
-    overrides = {f.name: getattr(args, f.name) for f in fields(DeployConfig) if hasattr(args, f.name)}
-    params.update(overrides)
+    params = {
+        name: getattr(args, name)
+        for name in DEPLOYER_PARAMS
+    }
 
     if unknown:
         raise KeyError(f"not DeployConfig fields: {sorted(unknown)}")
