@@ -328,7 +328,7 @@ class VetoTrainer():
                 flush=True)
 
             if val_loss < best_loss:
-                best_loss = val_loss
+                best_loss = copy.copy(val_loss)
                 best_state = copy.deepcopy(model.state_dict()) # prevents accidental overwriting of best model state with more training epochs.
                 bad_epochs = 0
                 print(f"New best model at epoch {epoch+1} with Val Loss={best_loss:.4f}")
