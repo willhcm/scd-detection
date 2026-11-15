@@ -348,7 +348,7 @@ class VetoTrainer():
             "f1s": f1s
         }
 
-
+        print(f"Saving model with best F1 score: {best_f1:.4f} at epoch {epoch+1 - bad_epochs}")
         np.savez_compressed(out_path / f"veto_training_metrics_fold_{folded_out_region}.npz", **results)
         np.savez_compressed(out_path / f"veto_embeddings.npz", embeddings=embeddings.cpu().numpy(), labels=labels.cpu().numpy())
         self.save_model(best_state, out_path, folded_out_region)

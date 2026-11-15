@@ -405,11 +405,12 @@ class DEMVetoLabeller:
         if self.from_shps:
             self.tiles = self._build_from_shps()
 
-        for tile in self.tiles:
+        for tile_index, tile in enumerate(self.tiles):
 
             output_directory.mkdir(parents=True, exist_ok=True)
 
-            output_path = output_directory / f"{self.region}_candidate_{tile['id']:05d}.npz"
+            output_path = output_directory / (
+                f"{self.region}_candidate_{tile_index:05d}.npz")
 
             np.savez_compressed(
                 output_path,
@@ -426,4 +427,9 @@ class DEMVetoLabeller:
                 context_width_m=np.float32(tile["context_width_m"]),
                 crs=str(self.target_crs))
 
-        print(f"Exported {len(self.tiles)} candidates.")
+        labels = [int(tile["label"]) for tile in self.tiles]
+        print(
+            f"Exported {len(self.tiles)} candidates "
+            f"({sum(label == 1 for label in labels)} retain, "
+            f"{sum(label == 0 for label in labels)} reject)."
+        )
