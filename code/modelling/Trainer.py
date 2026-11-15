@@ -226,7 +226,7 @@ class VetoTrainer():
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
 
-    def train(self, folded_out_region, epochs, batch_size, out_path, veto_threshold=0.9):
+    def train(self, folded_out_region, epochs, batch_size, out_path, veto_threshold=0.5):
 
         random_train = folded_out_region is None
         train_loader, val_loader = self.dset.get_loaders(random_train=random_train, folded_out_region=folded_out_region, batch_size=batch_size)
@@ -240,7 +240,7 @@ class VetoTrainer():
         criterion = nn.BCEWithLogitsLoss()
 
         model.to(self.device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=5e-6, weight_decay=1e-4)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-5, weight_decay=1e-4)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-7)
 
         train_losses = []
@@ -331,6 +331,7 @@ class VetoTrainer():
                 best_loss = val_loss
                 best_state = copy.deepcopy(model.state_dict()) # prevents accidental overwriting of best model state with more training epochs.
                 bad_epochs = 0
+                print(f"Saved new best model at epoch {epoch+1} with Val Loss={best_loss:.4f}")
             else:
                 bad_epochs += 1
 
