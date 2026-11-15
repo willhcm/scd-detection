@@ -48,6 +48,9 @@ class InstanceResPredictor(ResPredictor):
             x_positions = x_positions[valid_x]
             y_positions = y_positions[valid_y]
 
+            if len(x_positions) == 0 or len(y_positions) == 0:
+                return [], transform, dem_source.crs, (h, w)
+
             batch_tiles, batch_locs = [], []
 
             def flush_batch():

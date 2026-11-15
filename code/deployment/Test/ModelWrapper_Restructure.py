@@ -20,10 +20,11 @@ class InstanceModelWrapper:
         if resolutions.dim() == 1:
             resolutions = resolutions.unsqueeze(1)
 
-        outputs = self.model(
-            list(images.unbind(0)),
-            resolutions=resolutions,
-        )
+        with torch.inference_mode():
+            outputs = self.model(
+                list(images.unbind(0)),
+                resolutions=resolutions,
+            )
         instances = []
         for output in outputs:
             scores = output["scores"].detach().cpu()

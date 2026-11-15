@@ -73,7 +73,7 @@ class InstancePostProcessor(PostProcessor):
             region = self._region(instance)
             tile = self._make_tile(region, transform, crs)
             if tile is None:
-                accepted.append(instance)
+                rejected.append(instance)
                 continue
 
             batch_dem.append(tile["image"])
