@@ -28,6 +28,9 @@ those instances before the final stamp.
 When multiple resolutions are configured, each resolution is vetoed on its own
 grid first. Accepted masks are then transformed to the first resolution's grid
 and overlaps are resolved in favor of the highest Mask R-CNN instance score.
+Duplicate accepted masks with at least 0.5 mask IoU are suppressed before
+stamping. Contained masks are also suppressed by default when 99% or more of
+the smaller mask is covered by a larger mask, regardless of detector score.
 
 The command-line equivalent is:
 

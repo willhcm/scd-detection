@@ -183,16 +183,63 @@ class DeployerRestructure:
         return canonical
 
     @staticmethod
-    def _resolve_overlaps(instances, shape):
-        """Assign shared pixels to the highest-scoring accepted instance."""
+    def _resolve_overlaps(
+        instances,
+        shape,
+        iou_threshold=0.5,
+        suppress_contained=True,
+        containment_threshold=0.99,
+    ):
+        """Suppress duplicate masks, then assign shared pixels by score."""
         resolved = np.zeros(shape, dtype=np.int32)
         ordered = sorted(
             instances,
             key=lambda instance: instance["score"],
             reverse=True,
         )
+        pixels_by_instance = [
+            np.unique(np.ravel_multi_index(
+                (instance["coords"][:, 0], instance["coords"][:, 1]),
+                shape,
+            ))
+            for instance in ordered
+        ]
+        suppressed = np.zeros(len(ordered), dtype=bool)
+
+        for index, instance_pixels in enumerate(pixels_by_instance):
+            for other_index, other_pixels in enumerate(pixels_by_instance):
+                if index == other_index or not other_pixels.size:
+                    continue
+                intersection = np.intersect1d(
+                    instance_pixels,
+                    other_pixels,
+                    assume_unique=True,
+                ).size
+                if not intersection:
+                    continue
+
+                if (
+                    suppress_contained
+                    and instance_pixels.size < other_pixels.size
+                    and intersection / instance_pixels.size
+                    >= containment_threshold
+                ):
+                    suppressed[index] = True
+                    break
+
+                union = instance_pixels.size + other_pixels.size - intersection
+                if (
+                    union
+                    and intersection / union >= iou_threshold
+                    and ordered[index]["score"] < ordered[other_index]["score"]
+                ):
+                    suppressed[index] = True
+                    break
+
         kept = []
-        for instance in ordered:
+        for index, instance in enumerate(ordered):
+            if suppressed[index]:
+                continue
             rows, cols = instance["coords"].T
             available = resolved[rows, cols] == 0
             if not available.any():
