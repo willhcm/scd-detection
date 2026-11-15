@@ -4,6 +4,8 @@ import optuna
 from pathlib import Path
 import sys
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 import geopandas as gpd
@@ -20,41 +22,72 @@ def bbox_iou(a, b):
 class Tuner():
 
     def __init__(self,
-                model,
-                dem_path, 
-                device,
-                resolutions,
-                out_path,
+                model=None,
+                dem_path=None,
+                device="cpu",
+                resolutions=None,
+                out_path=None,
                 run_name=None,
                 veto_model_state=None,
                 hyperparams=None,
                 to_veto=True,
-                label_path=None):
+                label_path=None,
+                areas=None):
 
-        if label_path is None:
-            raise ValueError("Tuner needs a label_path to evaluate against.")
+        if areas is None:
+            if label_path is None or dem_path is None or model is None:
+                raise ValueError(
+                    "Single-area tuning needs model, dem_path and label_path."
+                )
+            areas = [{
+                "name": "area",
+                "model": model,
+                "dem_path": dem_path,
+                "device": device,
+                "resolutions": resolutions,
+                "out_path": out_path,
+                "run_name": run_name,
+                "veto_model_state": veto_model_state,
+                "hyperparams": hyperparams,
+                "to_veto": to_veto,
+                "label_path": label_path,
+            }]
+        if not areas:
+            raise ValueError("Tuner needs at least one test area.")
 
         self.out_path = out_path
-        self.labels = gpd.read_file(label_path)
+        self._config_lock = Lock()
+        self.area_models = []
+        for area in areas:
+            area_name = area.get("name", f"area-{len(self.area_models) + 1}")
+            if area.get("label_path") is None:
+                raise ValueError(f"Test area {area_name} needs a label_path.")
+            self.area_models.append({
+                "name": area_name,
+                "model": SCDModel(
+                    MaskRCNN_model_state=area["model"],
+                    dem_path=area["dem_path"],
+                    device=area["device"],
+                    resolutions=area["resolutions"],
+                    out_path=area["out_path"],
+                    veto_model_state=area.get("veto_model_state"),
+                    hyperparams=area.get("hyperparams"),
+                    run_name=area.get("run_name"),
+                    to_veto=area.get("to_veto", True),
+                    requested_returns={"predictions", "transform", "crs"},
+                ),
+                "labels": gpd.read_file(area["label_path"]),
+            })
 
-        # the full checkpoint goes in (model_state_dict + norm_stats), Deployer unpacks it.
-        # hyperparams are the fixed (non-swept) DeployConfig fields.
-        self.model = SCDModel(MaskRCNN_model_state=model,
-                            dem_path=dem_path,
-                            device=device,
-                            resolutions=resolutions,
-                            out_path=out_path,
-                            veto_model_state=veto_model_state,
-                            hyperparams=hyperparams,
-                            run_name=run_name,
-                            to_veto=to_veto,
-                            requested_returns={"predictions", "transform", "crs"})
+        self.model = self.area_models[0]["model"]
+        self.labels = self.area_models[0]["labels"]
 
-    def run(self, params):
-
-        # rebuilds the Deployer, so score/mask thresholds reach the model wrapper too
-        self.model.set_params(**params)
-        deployer = self.model.deployer
+    def _run_area(self, area, params):
+        # config is module-global, so protect only the short rebuild/snapshot
+        # section. Each deployer then owns an immutable config snapshot.
+        with self._config_lock:
+            area["model"].set_params(**params)
+            deployer = area["model"].deployer
 
         results = deployer.sweep()
 
@@ -64,8 +97,8 @@ class Tuner():
             labels,
             mask=labels > 0,
             transform=results["transform"],
-            connectivity=8,
-        ):
+            connectivity=8):
+
             geometries.append(shape(geometry))
             object_ids.append(int(object_id))
 
@@ -74,7 +107,15 @@ class Tuner():
             crs=results["crs"],
         )
 
-    def evaluate_results(self, preds):
+    def run(self, params):
+        with ThreadPoolExecutor(max_workers=len(self.area_models)) as executor:
+            predictions = list(executor.map(
+                lambda area: self._run_area(area, params),
+                self.area_models,
+            ))
+        return predictions[0] if len(predictions) == 1 else predictions
+
+    def _evaluate_area(self, preds, area):
         """Return a dict of object precision, recall and F1, followed by
         scene-wide pixel IoU, precision, recall, F1 and accuracy. Pixel metrics are
         computed on valid DEM pixels after rasterizing the prediction and
@@ -82,7 +123,7 @@ class Tuner():
         """
 
         matched, unmatched, FN = [], [], []
-        labels = self.labels
+        labels = area["labels"]
         if preds.crs != labels.crs:
             if preds.crs is None or labels.crs is None:
                 raise ValueError(
@@ -115,7 +156,7 @@ class Tuner():
         # scene wide pixel-level metrics
         # Use the DEM grid as the common scene grid.  Rasterizing the complete
         # GeoDataFrames first makes overlapping object polygons count once.
-        with rasterio.open(self.model.dem_path) as dem:
+        with rasterio.open(area["model"].dem_path) as dem:
             reference_crs = dem.crs
             valid_pixels = ~dem.read(1, masked=True).mask
             raster_shape = (dem.height, dem.width)
@@ -202,8 +243,38 @@ class Tuner():
 
         return out
 
+    def evaluate_results(self, preds):
+        if not isinstance(preds, list):
+            return self._evaluate_area(preds, self.area_models[0])
+
+        if len(preds) != len(self.area_models):
+            raise ValueError("Number of prediction sets must match test areas.")
+
+        with ThreadPoolExecutor(max_workers=len(self.area_models)) as executor:
+            area_metrics = list(executor.map(
+                self._evaluate_area,
+                preds,
+                self.area_models,
+            ))
+
+        flat_pixel_iou = sum(
+            metric["pixel_iou"] for metric in area_metrics
+        ) / len(area_metrics)
+        flat_object_f1 = sum(
+            metric["object_f1"] for metric in area_metrics
+        ) / len(area_metrics)
+
+        return {
+            "object_f1": flat_object_f1,
+            "pixel_iou": flat_pixel_iou,
+            "area_metrics": {
+                area["name"]: metric
+                for area, metric in zip(self.area_models, area_metrics)
+            },
+        }
+
     def tune(self, param_grid):
-        best_iou = -1
+        best_object_f1 = -1
         best_params = None
         best_results = None
 
@@ -214,16 +285,19 @@ class Tuner():
             print(f"Evaluating params: {params}")
             preds = self.run(params)
             metrics = self.evaluate_results(preds)
-            iou = metrics['pixel_iou']
+            object_f1 = metrics["object_f1"]
 
-            print(f"Params: {params}, Pixel IoU: {iou:.4f}")
+            print(f"Params: {params}, Object F1: {object_f1:.4f}")
 
-            if iou > best_iou:
-                best_iou = iou
+            if object_f1 > best_object_f1:
+                best_object_f1 = object_f1
                 best_params = params
                 best_results = metrics
 
-        print(f"Best params: {best_params}, Best Pixel IoU: {best_iou:.4f}")
+        print(
+            f"Best params: {best_params}, Best Object F1: "
+            f"{best_object_f1:.4f}"
+        )
         return best_params, best_results
 
     def tune_bayes(
@@ -292,10 +366,10 @@ class Tuner():
             metrics = self.evaluate_results(preds)
             trial.set_user_attr("metrics", metrics)
             print(
-                f"Trial {trial.number}: pixel IoU = "
-                f"{metrics['pixel_iou']:.4f}"
-            )
-            return metrics["pixel_iou"]
+                f"Trial {trial.number}: object F1 = "
+                f"{metrics['object_f1']:.4f}")
+            
+            return metrics["object_f1"]
 
         study.optimize(objective, n_trials=n_trials)
 
@@ -306,5 +380,5 @@ class Tuner():
             best_results = self.evaluate_results(preds)
 
         print(f"Best params: {study.best_params}")
-        print(f"Best Pixel IoU: {study.best_value:.4f}")
+        print(f"Best Object F1: {study.best_value:.4f}")
         return study.best_params, best_results

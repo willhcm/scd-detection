@@ -1,5 +1,6 @@
 import argparse
 from dataclasses import MISSING, fields
+import json
 from pathlib import Path
 import sys
 import torch
@@ -68,7 +69,7 @@ def main(args):
     if unknown:
         raise KeyError(f"not DeployConfig fields: {sorted(unknown)}")
 
-    if not args.no_veto and not args.veto_model_state_path:
+    if not args.areas_config and not args.no_veto and not args.veto_model_state_path:
         raise ValueError("pass --veto_model_state_path, or use --no_veto.")
 
     out_path = RESULTS_DIR / args.run_name
@@ -76,14 +77,8 @@ def main(args):
         raise FileExistsError(f"{out_path} already exists, pick a different run name.")
 
     dem_path = args.dem_path.resolve()
-    if not dem_path.exists():
+    if not args.areas_config and not dem_path.exists():
         raise FileNotFoundError(f"DEM path not found: {dem_path}")
-
-    model_state = torch.load(REPO_ROOT / args.model_state_path, map_location=args.device)
-
-    veto_state = None
-    if args.veto_model_state_path:
-        veto_state = torch.load(REPO_ROOT / args.veto_model_state_path, map_location=args.device)
 
     out_path.mkdir(parents=True)
 
@@ -105,16 +100,87 @@ def main(args):
     print(f"  no_veto = {args.no_veto}")
     print(f"  method = {args.method}")
 
-    tuner = Tuner(model=model_state,
-                  dem_path=dem_path,
-                  device=args.device,
-                  resolutions=args.resolutions,
-                  out_path=out_path,
-                  run_name=args.run_name,
-                  veto_model_state=veto_state,
-                  hyperparams=fixed,
-                  to_veto=not args.no_veto,
-                  label_path=args.label_path)
+    if args.areas_config:
+        config_path = (REPO_ROOT / args.areas_config).resolve()
+        with config_path.open() as config_file:
+            area_config = json.load(config_file)
+        area_specs = (
+            area_config.get("areas", area_config)
+            if isinstance(area_config, dict)
+            else area_config
+        )
+        if not isinstance(area_specs, list) or not area_specs:
+            raise ValueError("areas_config must contain a non-empty 'areas' list.")
+
+        areas = []
+        for index, spec in enumerate(area_specs, start=1):
+            required = {"dem_path", "model_state_path", "label_path"}
+            missing = required - set(spec)
+            if missing:
+                raise ValueError(f"Area {index} is missing: {sorted(missing)}")
+
+            def area_path(value):
+                path = Path(value)
+                return path if path.is_absolute() else config_path.parent / path
+
+            area_device = spec.get("device", args.device)
+            veto_path = spec.get("veto_model_state_path")
+            if not args.no_veto and not veto_path:
+                raise ValueError(
+                    f"Area {index} needs veto_model_state_path, or use --no_veto."
+                )
+            area_hyperparams = dict(fixed)
+            if "native_res" in spec:
+                area_hyperparams["native_res"] = spec["native_res"]
+            areas.append({
+                "name": spec.get("name", f"area-{index}"),
+                "model": torch.load(
+                    area_path(spec["model_state_path"]),
+                    map_location=area_device,
+                ),
+                "dem_path": area_path(spec["dem_path"]),
+                "device": area_device,
+                "resolutions": spec.get("resolutions", args.resolutions),
+                "out_path": out_path,
+                "run_name": args.run_name,
+                "veto_model_state": (
+                    torch.load(area_path(veto_path), map_location=area_device)
+                    if veto_path else None
+                ),
+                "hyperparams": area_hyperparams,
+                "to_veto": not args.no_veto,
+                "label_path": area_path(spec["label_path"]),
+            })
+
+        tuner = Tuner(
+            model=None,
+            dem_path=None,
+            device=args.device,
+            resolutions=args.resolutions,
+            out_path=out_path,
+            areas=areas,
+        )
+    else:
+        model_state = torch.load(
+            REPO_ROOT / args.model_state_path,
+            map_location=args.device,
+        )
+        veto_state = None
+        if args.veto_model_state_path:
+            veto_state = torch.load(
+                REPO_ROOT / args.veto_model_state_path,
+                map_location=args.device,
+            )
+        tuner = Tuner(model=model_state,
+                      dem_path=dem_path,
+                      device=args.device,
+                      resolutions=args.resolutions,
+                      out_path=out_path,
+                      run_name=args.run_name,
+                      veto_model_state=veto_state,
+                      hyperparams=fixed,
+                      to_veto=not args.no_veto,
+                      label_path=args.label_path)
 
     if args.method == "grid":
         best_params, best_results = tuner.tune(grid)
@@ -149,7 +215,16 @@ if __name__ == "__main__":
     )
     parser.add_argument("--resolutions", type=float, nargs='+', default=[1.0], help="List of resolutions to process.")
     parser.add_argument("--no_veto", action="store_true", help="dont veto")
-    parser.add_argument("--label_path", type=Path, required=True, help="Path to the label file for evaluation.")
+    parser.add_argument("--label_path", type=Path, help="Path to the label file for evaluation.")
+    parser.add_argument(
+        "--areas_config",
+        type=Path,
+        help=(
+            "JSON file defining multiple test areas. Each area needs "
+            "dem_path, model_state_path and label_path; optional fields are "
+            "name, veto_model_state_path, device, resolutions and native_res."
+        ),
+    )
     parser.add_argument(
         "--method",
         choices=("grid", "bayes"),

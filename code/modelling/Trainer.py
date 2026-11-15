@@ -237,7 +237,8 @@ class VetoTrainer():
         print(f"Training on {len(train_loader.dataset)} samples, validating on {len(val_loader.dataset)} samples.")
 
         model = Vetoer()
-        criterion = nn.BCEWithLogitsLoss()
+        pos_weight = torch.tensor([1.5], device=self.device) 
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
         model.to(self.device)
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-5, weight_decay=1e-4)
