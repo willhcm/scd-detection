@@ -9,17 +9,13 @@ RESULTS_DIR = REPO_ROOT / "results"
 sys.path.insert(0, str(REPO_ROOT / "code"))
 from deployment.config import DeployConfig
 import deployment.config as config
+from deployment.Inference import SCDModel
 
 # set by their own arguments (or read from the DEM), so no override flag
 NOT_OVERRIDABLE = {"dem_path", "resolutions", "device", "nodata", "to_veto"}
 
 
 def main(args):
-    if args.restructured_model:
-        from deployment.Test.Inference import SCDModel
-    else:
-        from deployment.Inference import SCDModel
-
     names = {f.name for f in fields(DeployConfig)} - NOT_OVERRIDABLE
     overrides = {k: v for k, v in vars(args).items() if k in names}
     requested_returns = {k.split("_")[1]: True for k in vars(args) if k.startswith("return_") and getattr(args, k)}
