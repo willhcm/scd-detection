@@ -128,6 +128,8 @@ class InstanceResPredictor(ResPredictor):
 class DeployerRestructure:
     """Instance-level alternative to the weighted-merge Deployer."""
 
+    duplicate_iou_threshold = 0.2
+
     def __init__(self, model_state_dict, veto_model_dict):
         self.cfg = config.get()
         self.norm_stats = model_state_dict["norm_stats"]
@@ -326,10 +328,15 @@ class DeployerRestructure:
                 canonical_shape,
             ))
 
-        unvetoed, _ = self._resolve_overlaps(all_instances, canonical_shape)
+        unvetoed, _ = self._resolve_overlaps(
+            all_instances,
+            canonical_shape,
+            iou_threshold=self.duplicate_iou_threshold,
+        )
         predictions, accepted = self._resolve_overlaps(
             accepted,
             canonical_shape,
+            iou_threshold=self.duplicate_iou_threshold,
         )
 
         available = {
