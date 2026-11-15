@@ -376,8 +376,8 @@ class PostProcessor:
         requested_returns = config.get().requested_returns
         available_returns = {"predictions", "transform", "crs", "veto_probability_map", 'rejected'}
 
-
         accepted_labels = np.where(stitched > 0, labeled, 0).astype(np.int32)
+        rejected_labels = np.where(veto_map < 0, labeled, 0).astype(np.int32)
 
         out = {
             "predictions": accepted_labels,
@@ -386,6 +386,6 @@ class PostProcessor:
 
         out.update({k: v for k, v in {
             "veto_probability_map": veto_probability_map,
-            'rejected': veto_map}.items() if k in requested_returns and k in available_returns})
+            'rejected': rejected_labels}.items() if k in requested_returns and k in available_returns})
 
         return out

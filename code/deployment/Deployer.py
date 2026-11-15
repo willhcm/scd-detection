@@ -423,6 +423,36 @@ class Deployer:
 
     # merges all veto-cleaned predictions and then sieves remaining predictions
     # which are too physically small to be reasonably resolvable given the native DEM. 
+
+    def polygonize(self, array, transform, crs, threshold=0.0):
+        """
+        Converts a binary mask array into a GeoDataFrame of polygons.
+
+        Parameters
+        ----------
+        array: np.ndarray
+            2D binary mask array where non-zero values represent the objects to be polygonized.
+        transform: affine.Affine
+            Affine transformation for the array.
+        crs: rasterio.crs.CRS
+            Coordinate reference system for the output GeoDataFrame.
+        threshold: float
+            The threshold value for the array. Values above this threshold will be considered as part of the objects to be polygonized.
+
+        Returns
+        -------
+        gdf: geopandas.GeoDataFrame
+            GeoDataFrame containing the polygons of the objects in the input array.
+        """
+
+        geoms, ids = [], []
+        for geom, v in shapes(array.astype(np.int32), mask=array > threshold, transform=transform, connectivity=8):
+            geoms.append(shape(geom))
+            ids.append(int(v))
+
+        gdf = gpd.GeoDataFrame({"object_id": ids, "geometry": geoms}, crs=crs)
+        return gdf
+
     def save_predictions(self, results, output_path):
         """
 
@@ -445,6 +475,7 @@ class Deployer:
         cfg = self.cfg
         requested_returns = cfg.requested_returns
 
+        # process and polygonize the predictions, filtering out small objects based on the native resolution and minimum object size.
         # native res should determine smallest resolvable objects.
         min_m2 = (cfg.native_res ** 2) * cfg.min_native_pixels # resolution constrain, an area.
         min_pixels = int(np.ceil(max(min_m2, cfg.min_object_m2) / (self.base_res ** 2)))
@@ -459,13 +490,7 @@ class Deployer:
 
         print(f"Polygonizing {np.count_nonzero(lab)} positive pixels", flush=True)
 
-        geoms, ids = [], []
-        for geom, v in shapes(lab, mask=lab > 0, transform=transform, connectivity=8):
-            geoms.append(shape(geom))
-            ids.append(int(v))
-
-        print(f"Writing {len(geoms)} polygons", flush=True)
-        gdf = gpd.GeoDataFrame({"object_id": ids, "geometry": geoms}, crs=crs)
+        gdf = self.polygonize(lab, transform, crs, threshold=0.0)
 
         score = results.get("obj_score")
         if score is not None and not gdf.empty:
@@ -474,16 +499,38 @@ class Deployer:
         if not gdf.empty:
             gdf["area_m2"] = gdf.geometry.area
 
+        # polygonize rejected objects (at veto stage)
+        if "rejected" in results:
+            rejected = results["rejected"]
+            if not np.all(rejected == 0):
+                rejected_gdf = self.polygonize(rejected, transform, crs, threshold=0.0)
+                rejected_gdf["area_m2"] = rejected_gdf.geometry.area
+                results["rejected"] = rejected_gdf
+    
         output_path = Path(output_path)
         output_path.mkdir(parents=True, exist_ok=True)
 
         NPYS = ["raw", "provisional", "obj_score", 'unvetoed']
+        TIFS = ['rejected']
         saved = {}
 
         for req in requested_returns:
             if req == "predictions":
                 out_path = output_path / "predictions.shp"
                 gdf.to_file(out_path, driver="ESRI Shapefile")
+            elif req in TIFS:
+                out_path = output_path / f"{req}.tif"
+                with rasterio.open(
+                    out_path,
+                    "w",
+                    driver="GTiff",
+                    height=results[req].shape[0],
+                    width=results[req].shape[1],
+                    count=1,
+                    dtype=results[req].dtype,
+                    crs=results['crs'],
+                    transform=results['transform']) as dst:
+                    dst.write(results[req], 1)
             elif req in NPYS:
                 out_path = output_path / f"{req}.npy"
                 np.save(out_path, results[req])
