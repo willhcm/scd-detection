@@ -226,7 +226,7 @@ class VetoTrainer():
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
 
-    def train(self, folded_out_region, epochs, batch_size, out_path, veto_threshold=0.5):
+    def train(self, folded_out_region, epochs, batch_size, out_path, veto_threshold=0.9):
 
         random_train = folded_out_region is None
         train_loader, val_loader = self.dset.get_loaders(random_train=random_train, folded_out_region=folded_out_region, batch_size=batch_size)
@@ -240,7 +240,7 @@ class VetoTrainer():
         criterion = nn.BCEWithLogitsLoss()
 
         model.to(self.device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-5, weight_decay=1e-4)
+        optimizer = torch.optim.Adam(model.parameters(), lr=5e-6, weight_decay=1e-4)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-7)
 
         train_losses = []
@@ -249,7 +249,7 @@ class VetoTrainer():
         precisions = []
         recalls = []
         f1s = []
-        best_f1 = -1.0
+        best_loss = float('inf')
         best_state = None
         patience = 20
         bad_epochs = 0
@@ -327,8 +327,8 @@ class VetoTrainer():
                 f"F1 Score: {f1_score:.4f}",
                 flush=True)
 
-            if f1_score > best_f1:
-                best_f1 = f1_score
+            if val_loss < best_loss:
+                best_loss = val_loss
                 best_state = copy.deepcopy(model.state_dict()) # prevents accidental overwriting of best model state with more training epochs.
                 bad_epochs = 0
             else:
@@ -347,7 +347,7 @@ class VetoTrainer():
             "f1s": f1s
         }
 
-        print(f"Saving model with best F1 score: {best_f1:.4f} at epoch {epoch+1 - bad_epochs}")
+        print(f"Saving model with best loss: {best_loss:.4f} at epoch {epoch+1 - bad_epochs}")
         np.savez_compressed(out_path / f"veto_training_metrics_fold_{folded_out_region}.npz", **results)
         np.savez_compressed(out_path / f"veto_embeddings.npz", embeddings=embeddings.cpu().numpy(), labels=labels.cpu().numpy())
         self.save_model(best_state, out_path, folded_out_region)
