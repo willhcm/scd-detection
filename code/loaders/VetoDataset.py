@@ -410,7 +410,7 @@ class DEMVetoLabeller:
             output_directory.mkdir(parents=True, exist_ok=True)
 
             output_path = output_directory / (
-                f"{self.region}_candidate_{tile_index:05d}.npz")
+                f"{self.region}_{tile['label_name']}_candidate_{tile_index:05d}.npz")
 
             np.savez_compressed(
                 output_path,
