@@ -115,7 +115,7 @@ def merge_masks(masks, h, w):
     return masks.any(dim=0)
 
 
-def evaluate_maskrcnn_metrics(model, val_loader, device, mask_thresh=0.55, score_thresh=0.77):
+def evaluate_maskrcnn_metrics(model, val_loader, device, mask_thresh=0.5, score_thresh=0.5):
     model.eval()
 
     tp = fp = fn = 0           # object level

@@ -17,7 +17,7 @@ class DeployConfig:
 
     # Mask-RCNN detection
     score_threshold: float = 0.60 # tuned
-    mask_threshold: float = 0.40  # tuned
+    mask_threshold: float = 0.00
 
     # merging across resolutions
     merge_band: int = 1024

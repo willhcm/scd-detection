@@ -59,7 +59,7 @@ class Trainer():
 
         patience = 20
         bad_epochs = 0
-        best_f1 = -1.0
+        best_loss = float("inf")
         best_state = None
         best_epoch = -1
 
@@ -148,12 +148,15 @@ class Trainer():
                 f"Pixel F1: {p_f1:.4f} | "
                 f"Old F1: {old_f1:.4f} | ")
 
-            if val_f1 > best_f1:
-                best_f1 = val_f1
+            if _val_loss < best_loss:
+                best_loss = _val_loss
                 best_epoch = epoch + 1
                 best_state = copy.deepcopy(model.state_dict())
 
-                print(f"Saved new best model at epoch {best_epoch} with F1={best_f1:.4f}")
+                print(
+                    f"Saved new best model at epoch {best_epoch} "
+                    f"with Val Loss={best_loss:.4f}"
+                )
                 bad_epochs = 0
             else:
                 bad_epochs += 1
