@@ -25,6 +25,10 @@ results = model.predict()
 `score_threshold` filters Mask R-CNN instances and `veto_threshold` filters
 those instances before the final stamp.
 
+When multiple resolutions are configured, each resolution is vetoed on its own
+grid first. Accepted masks are then transformed to the first resolution's grid
+and overlaps are resolved in favor of the highest Mask R-CNN instance score.
+
 The command-line equivalent is:
 
 ```bash

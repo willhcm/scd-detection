@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from rasterio.features import shapes
+from rasterio.warp import transform as warp_transform
 from shapely.geometry import shape
 
 import deployment.config as config
@@ -146,15 +147,72 @@ class DeployerRestructure:
             self.veto_model.eval()
 
     @staticmethod
+    def _canonicalize(
+        instances,
+        source_transform,
+        source_crs,
+        target_transform,
+        target_crs,
+        target_shape,
+    ):
+        canonical = []
+        for instance in instances:
+            rows, cols = instance["coords"].T
+            xs, ys = source_transform * (cols + 0.5, rows + 0.5)
+            if source_crs != target_crs:
+                xs, ys = warp_transform(source_crs, target_crs, xs, ys)
+            target_cols, target_rows = ~target_transform * (xs, ys)
+            target_rows = np.floor(target_rows).astype(np.intp)
+            target_cols = np.floor(target_cols).astype(np.intp)
+            inside = (
+                (target_rows >= 0)
+                & (target_rows < target_shape[0])
+                & (target_cols >= 0)
+                & (target_cols < target_shape[1])
+            )
+            if inside.any():
+                canonical.append({
+                    **instance,
+                    "coords": np.column_stack(
+                        (target_rows[inside], target_cols[inside])
+                    ),
+                })
+        return canonical
+
+    @staticmethod
+    def _resolve_overlaps(instances, shape):
+        """Assign shared pixels to the highest-scoring accepted instance."""
+        resolved = np.zeros(shape, dtype=np.int32)
+        ordered = sorted(
+            instances,
+            key=lambda instance: instance["score"],
+            reverse=True,
+        )
+        kept = []
+        for instance in ordered:
+            rows, cols = instance["coords"].T
+            available = resolved[rows, cols] == 0
+            if not available.any():
+                continue
+            resolved[rows[available], cols[available]] = len(kept) + 1
+            kept.append({
+                **instance,
+                "coords": np.column_stack(
+                    (rows[available], cols[available])
+                ),
+            })
+        return resolved, kept
+
+    @staticmethod
     def _stamp(canvas, instances):
         for object_id, instance in enumerate(instances, start=1):
             rows, cols = instance["coords"].T
             canvas[rows, cols] = object_id
 
     def sweep(self):
-        all_instances = []
+        resolution_results = []
         raw = {}
-        transform = crs = shape = None
+        canonical_transform = canonical_crs = canonical_shape = None
 
         for resolution in self.cfg.resolutions:
             predictor = InstanceResPredictor(
@@ -162,40 +220,74 @@ class DeployerRestructure:
                 self.model,
                 self.norm_stats,
             )
-            instances, transform, crs, shape = predictor.predict()
+            instances, transform, crs, raster_shape = predictor.predict()
             raw[resolution] = instances
-            all_instances.extend(instances)
+            resolution_results.append((instances, transform, crs, raster_shape))
 
-        if transform is None or crs is None or shape is None:
+        if not resolution_results:
             raise RuntimeError("No resolution produced an inference grid.")
 
-        unvetoed = np.zeros(shape, dtype=np.int32)
-        self._stamp(unvetoed, all_instances)
-        accepted = all_instances
+        _, canonical_transform, canonical_crs, canonical_shape = (
+            resolution_results[0]
+        )
+        all_instances = []
+        accepted = []
         rejected = []
         veto_probabilities = []
 
-        if self.cfg.to_veto:
-            postprocessor = InstancePostProcessor(
-                self.veto_model,
-                self.veto_norm_stats,
-            )
-            accepted, rejected, veto_probabilities = (
-                postprocessor.predict_instances(
-                    all_instances,
-                    transform,
-                    crs,
+        for instances, transform, crs, _ in resolution_results:
+            if self.cfg.to_veto:
+                postprocessor = InstancePostProcessor(
+                    self.veto_model,
+                    self.veto_norm_stats,
                 )
-            )
+                accepted_instances, rejected_instances, probabilities = (
+                    postprocessor.predict_instances(instances, transform, crs)
+                )
+            else:
+                accepted_instances = instances
+                rejected_instances = []
+                probabilities = []
 
-        predictions = np.zeros(shape, dtype=np.int32)
-        self._stamp(predictions, accepted)
+            accepted.extend(self._canonicalize(
+                accepted_instances,
+                transform,
+                crs,
+                canonical_transform,
+                canonical_crs,
+                canonical_shape,
+            ))
+            rejected.extend(self._canonicalize(
+                rejected_instances,
+                transform,
+                crs,
+                canonical_transform,
+                canonical_crs,
+                canonical_shape,
+            ))
+            veto_probabilities.extend(probabilities)
+
+            all_instances.extend(self._canonicalize(
+                instances,
+                transform,
+                crs,
+                canonical_transform,
+                canonical_crs,
+                canonical_shape,
+            ))
+
+        unvetoed, _ = self._resolve_overlaps(all_instances, canonical_shape)
+        predictions, accepted = self._resolve_overlaps(
+            accepted,
+            canonical_shape,
+        )
+
         available = {
             "raw": raw,
             "unvetoed": unvetoed,
             "predictions": predictions,
-            "transform": transform,
-            "crs": crs,
+            "transform": canonical_transform,
+            "crs": canonical_crs,
             "rejected": rejected,
             "veto_probability_map": veto_probabilities,
         }
