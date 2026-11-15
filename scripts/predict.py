@@ -9,13 +9,16 @@ RESULTS_DIR = REPO_ROOT / "results"
 sys.path.insert(0, str(REPO_ROOT / "code"))
 from deployment.config import DeployConfig
 import deployment.config as config
-from deployment.Inference import SCDModel
 
 # set by their own arguments (or read from the DEM), so no override flag
 NOT_OVERRIDABLE = {"dem_path", "resolutions", "device", "nodata", "to_veto"}
 
 
 def main(args):
+    if args.restructured_model:
+        from deployment.Test.Inference import SCDModel
+    else:
+        from deployment.Inference import SCDModel
 
     names = {f.name for f in fields(DeployConfig)} - NOT_OVERRIDABLE
     overrides = {k: v for k, v in vars(args).items() if k in names}
@@ -71,6 +74,14 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="cuda", help="Device to run the model on (e.g., 'cuda' or 'cpu').")
     parser.add_argument("--resolutions", type=float, nargs='+', default=[1.0], help="List of resolutions to process.")
     parser.add_argument("--no_veto", action="store_true", help="dont veto")
+    parser.add_argument(
+        "--restructured_model",
+        action="store_true",
+        help=(
+            "Use instance-level inference: veto each Mask R-CNN instance "
+            "before stamping accepted masks into the final raster."
+        ),
+    )
 
     # one flag per DeployConfig field; only flags actually passed end up in args
     cfg_args = parser.add_argument_group("config overrides")
