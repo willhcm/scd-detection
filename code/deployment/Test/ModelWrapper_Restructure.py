@@ -9,12 +9,14 @@ class InstanceModelWrapper:
     def __init__(self, model_dict, score_threshold=0.60, mask_threshold=0.40):
         self.model = MaskRCNN()
         self.model.load_state_dict(model_dict)
+        self.model.eval()
         self.score_threshold = score_threshold
         self.mask_threshold = mask_threshold
 
     def predict_instances(self, images, resolutions, device):
         images = images.to(device)
         resolutions = resolutions.to(device)
+        self.model.to(device)
         if resolutions.dim() == 1:
             resolutions = resolutions.unsqueeze(1)
 
