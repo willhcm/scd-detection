@@ -188,6 +188,14 @@ class WindowedDataSource:
     def from_tiff_utm(cls, path, resolution=None, type="DEM"):
 
         with rio.open(path) as src:
+            if src.crs is None:
+                raise ValueError(f"Raster has no CRS: {path}")
+            bounds = np.asarray(src.bounds, dtype=np.float64)
+            if not np.isfinite(bounds).all():
+                raise ValueError(
+                    f"Raster has non-finite bounds: path={path}, "
+                    f"crs={src.crs}, bounds={src.bounds}"
+                )
             target_crs = CRS.from_epsg(_utm_epsg(src.crs, src.bounds))
             if resolution is None:
                 projected_transform, _, _ = calculate_default_transform(
@@ -825,11 +833,32 @@ class ShapeLabels:
 # ChatGPT assistance with this function too!
 # convertion to UTM from global DD
 def _utm_epsg(src_crs, bounds):
+    if src_crs is None:
+        raise ValueError("Cannot determine UTM zone without a source CRS.")
+
+    epsg = src_crs.to_epsg()
+    if src_crs.is_projected and epsg is not None and (
+        32601 <= epsg <= 32660 or 32701 <= epsg <= 32760
+    ):
+        return epsg
+
     transformer = Transformer.from_crs(src_crs, "EPSG:4326", always_xy=True)
     minx, miny, maxx, maxy = bounds
     lon = (minx + maxx) / 2
     lat = (miny + maxy) / 2
     lon_wgs, lat_wgs = transformer.transform(lon, lat)
+    if not np.isfinite([lon_wgs, lat_wgs]).all():
+        raise ValueError(
+            "Could not transform raster centre to WGS84: "
+            f"crs={src_crs}, bounds={bounds}, "
+            f"centre=({lon}, {lat}), transformed=({lon_wgs}, {lat_wgs})"
+        )
+    if not -180 <= lon_wgs <= 180 or not -90 <= lat_wgs <= 90:
+        raise ValueError(
+            "Raster centre transformed outside WGS84 bounds: "
+            f"crs={src_crs}, bounds={bounds}, "
+            f"transformed=({lon_wgs}, {lat_wgs})"
+        )
     zone = int((lon_wgs + 180) / 6) + 1
     return 32600 + zone if lat_wgs >= 0 else 32700 + zone
 
