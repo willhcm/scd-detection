@@ -284,6 +284,7 @@ class VetoTrainer():
             val_loss = 0.0
             all_labels = []
             all_preds = []
+            embeddings = []
 
             with torch.no_grad():
                 for contexts, candidates, scalars, labels in val_loader:
@@ -292,8 +293,8 @@ class VetoTrainer():
                     scalars = scalars.to(self.device)
                     labels = labels.to(self.device)
 
-                    outputs, embeddings = model(contexts, candidates, scalars, return_embeddings=True)
-
+                    outputs, embeds = model(contexts, candidates, scalars, return_embeddings=True)
+                    embeddings.append(embeds.cpu())
                     loss = criterion(outputs.squeeze(), labels.float())
                     val_loss += loss.item()
 
