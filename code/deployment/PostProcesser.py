@@ -26,9 +26,10 @@ class PostProcessor:
         Normalization statistics for the veto data.
     """
 
-    def __init__(self, model, norm_stats=None):
+    def __init__(self, model, norm_stats=None, cfg=None):
 
-        cfg = config.get()
+        cfg = cfg or config.get()
+        self.cfg = cfg
 
         # veto model setup
         self.device = cfg.device
@@ -373,7 +374,7 @@ class PostProcessor:
             f"{skipped} objects could not be assessed."
         )
 
-        requested_returns = config.get().requested_returns
+        requested_returns = self.cfg.requested_returns
         available_returns = {"predictions", "transform", "crs", "veto_probability_map", 'rejected'}
 
         accepted_labels = np.where(stitched > 0, labeled, 0).astype(np.int32)

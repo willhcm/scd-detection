@@ -85,7 +85,12 @@ class Deployer:
         self.model.model.to(self.cfg.device)
         preds = {}
         for res in self.cfg.resolutions:
-            predictor = ResPredictor(res, self.model, self.norm_stats)
+            predictor = ResPredictor(
+                res,
+                self.model,
+                self.norm_stats,
+                cfg=self.cfg,
+            )
 
             prob_map, transform, crs = predictor.predict()
 
@@ -300,7 +305,11 @@ class Deployer:
         return out
     
     def veto(self, merged, labels, transform, crs):
-        return PostProcessor(self.veto_model, self.veto_norm_stats).predict(merged, labels, transform, crs)
+        return PostProcessor(
+            self.veto_model,
+            self.veto_norm_stats,
+            cfg=self.cfg,
+        ).predict(merged, labels, transform, crs)
 
     def sweep(self):
 
@@ -491,9 +500,9 @@ class ResPredictor():
     Internally calls ModelWrapper.predict() to run the model on each tile, and merges the results into a single probability map.
     """
 
-    def __init__(self, res, model, norm_stats):
+    def __init__(self, res, model, norm_stats, cfg=None):
 
-        cfg = config.get()
+        cfg = cfg or config.get()
 
         self.res = res
         self.model = model
