@@ -27,6 +27,8 @@ _BANDS_TO_LOAD = ['DEM', 'DEM_SLOPE', 'RR', 'LAPLACE']
 class ResolutionFiLM(nn.Module):
     """
     Generates per-channel gamma/beta from a scalar resolution value.
+
+    Feature Linear Modulation.
     """
 
     def __init__(self, out_channels=256, hidden=64):
@@ -50,7 +52,7 @@ class FiLMBackbone(nn.Module):
     """
     Wraps torchvision's BackboneWithFPN so every FPN level gets modulated
     by a resolution conditioning vector before being handed to the RPN/ROI heads.
-    FiLM.
+    Actual implementation of FiLM onto backbone features. Embeds the resolution of the input image, allowing the model to adapt predictions based on this context.
     """
 
     def __init__(self, backbone_with_fpn):
@@ -184,6 +186,9 @@ class MaskRCNN(nn.Module):
         self.model.backbone.body.conv1 = new_conv
  
     def _replace_heads(self, num_classes):
+        """
+        Replaces the classification and mask heads of the model to predict a different number of classes.
+        """
         box_in_features = self.model.roi_heads.box_predictor.cls_score.in_features
         self.model.roi_heads.box_predictor = FastRCNNPredictor(box_in_features, num_classes)
  

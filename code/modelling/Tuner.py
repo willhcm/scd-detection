@@ -56,7 +56,7 @@ class Tuner():
             raise ValueError("Tuner needs at least one test area.")
 
         self.out_path = out_path
-        self._config_lock = Lock()
+        self._config_lock = Lock() # ensures that config is not modified while a deployer is running.
         self.area_models = []
         for area in areas:
             area_name = area.get("name", f"area-{len(self.area_models) + 1}")

@@ -13,9 +13,9 @@ from deployment.config import DeployConfig
 from modelling.Tuner import Tuner
 
 # keys must be DeployConfig field names
+# Used for discrete grid search.
 PARAM_GRID = {
     'score_threshold': np.arange(0.4, 0.8, 0.025).tolist(),
-    'mask_threshold': np.arange(0.3, 0.6, 0.025).tolist(),
     'veto_threshold': np.arange(0.5, 0.975, 0.025).tolist(),
     'size_sigma': np.arange(0.2, 0.8, 0.05).tolist(),
     'object_threshold': np.arange(0.3, 0.7, 0.05).tolist(),
@@ -26,7 +26,6 @@ PARAM_GRID = {
 # maximum values represented in PARAM_GRID.
 PARAM_SPACE = {
     'score_threshold': {'type': 'float', 'low': 0.1, 'high': 0.9},
-    'mask_threshold': {'type': 'float', 'low': 0.1, 'high': 0.9},
     'veto_threshold': {'type': 'float', 'low': 0.1, 'high': 0.975},
     'size_sigma': {'type': 'float', 'low': 0.1, 'high': 0.9},
     'object_threshold': {'type': 'float', 'low': 0.1, 'high': 0.9},
@@ -37,6 +36,7 @@ PARAM_SPACE = {
 # taken from DeployConfig so this script cannot silently drift from runtime
 # defaults.
 _CONFIG_FIELDS = {field.name: field for field in fields(DeployConfig)}
+
 _FIXED_PARAM_NAMES = (
     "tile_size",
     "veto_context_tile_size",
@@ -50,7 +50,7 @@ _FIXED_PARAM_NAMES = (
 DEPLOYER_PARAMS = {
     name: _CONFIG_FIELDS[name].default
     for name in _FIXED_PARAM_NAMES
-    if _CONFIG_FIELDS[name].default is not MISSING
+    if _CONFIG_FIELDS[name].default is not MISSING # MISSING being a sentinal value for fields which dont have defaults.
 }
 
 # only used by the veto stage, pointless to sweep with --no_veto
@@ -207,39 +207,18 @@ if __name__ == "__main__":
     parser.add_argument("--model_state_path", type=Path, default=REPO_ROOT / "models" / "maskrcnn.pt")
     parser.add_argument("--run_name", type=str, required=True, help="Name of the run.")
     parser.add_argument("--veto_model_state_path", type=Path, required=False, help="Path to the veto model state dictionary.")
-    parser.add_argument(
-        "--device",
-        type=str,
-        default=_CONFIG_FIELDS["device"].default,
-        help="Device to run the model on (e.g., 'cuda' or 'cpu').",
-    )
+    parser.add_argument("--device", type=str, default=_CONFIG_FIELDS["device"].default, help="Device to run the model on (e.g., 'cuda' or 'cpu').")
     parser.add_argument("--resolutions", type=float, nargs='+', default=[1.0], help="List of resolutions to process.")
     parser.add_argument("--no_veto", action="store_true", help="dont veto")
     parser.add_argument("--label_path", type=Path, help="Path to the label file for evaluation.")
-    parser.add_argument(
-        "--areas_config",
-        type=Path,
-        help=(
-            "JSON file defining multiple test areas. Each area needs "
-            "dem_path, model_state_path and label_path; optional fields are "
-            "name, veto_model_state_path, device, resolutions and native_res."
-        ),
-    )
-    parser.add_argument(
-        "--method",
-        choices=("grid", "bayes"),
-        default="bayes",
-        help="Hyperparameter search method.",
-    )
+    parser.add_argument("--areas_config", type=Path, help=("JSON file defining multiple test areas. Each area needs dem_path, model_state_path and label_path; optional fields are "
+            "name, veto_model_state_path, device, resolutions and native_res."))
+    
+    parser.add_argument("--method", choices=("grid", "bayes"), default="bayes", help="Hyperparameter search method.",)
     parser.add_argument("--n_trials", type=int, default=100)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--study_name", type=str, default=None)
-    parser.add_argument(
-        "--storage",
-        type=str,
-        default=None,
-        help="Optuna storage URL, e.g. sqlite:///tuning.db.",
-    )
+    parser.add_argument("--storage", type=str, default=None, help="Optuna storage URL, e.g. sqlite:///tuning.db.",)
 
     hp = parser.add_argument_group("deployer hyperparameters")
     for name, default in DEPLOYER_PARAMS.items():

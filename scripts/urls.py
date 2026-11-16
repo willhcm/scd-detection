@@ -1,3 +1,6 @@
+# Script to download DEM data from the United Kingdom's Department for Environment, Food and Rural Affiars (DEFRA). Dataset is the 2022 Composite LIDAR dataset, with a resolution of 1m.
+# Not built to deal with any other datatypes, but could be adapted to do so.
+
 import re
 from pathlib import Path
 import geopandas as gpd
@@ -6,7 +9,7 @@ import argparse
 PATTERN = r"[A-Z]{2}\d{2}[a-z]{2}"
 ROOT = 'https://environment.data.gov.uk/tiles/collections/survey/lidar_composite_dtm/2022/1/'
 
-def get_urls_from_list(request, request_name):
+def get_urls_from_list(request):
 
     out_dir = Path.cwd() / "urls"
     out_dir.mkdir(exist_ok=True)
@@ -14,6 +17,7 @@ def get_urls_from_list(request, request_name):
     with open(request) as f:
         lines = f.readlines()
 
+    request_name = Path(request).stem
     out_path = out_dir / f'{request_name}_urls.txt'
     with open(out_path, 'w') as out:
         for line in lines:

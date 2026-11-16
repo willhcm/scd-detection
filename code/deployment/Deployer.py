@@ -76,7 +76,7 @@ class Deployer:
 
     def predict(self):
         """
-        Predicts the probability maps for each resolution in cfg.resolutions using the Mask R-CNN model.
+        Predicts the probability maps for each resolution in cfg.resolutions using the Mask R-CNN model. Calls ResPredictor for each resolution and returns a dictionary of predictions.
         """
 
         self.model.model.eval()
@@ -266,69 +266,6 @@ class Deployer:
         labels.flush()
         return merged, labels, transform, crs, obj_score, provisional
         
-    def merge_predictions_pyramid(self, preds):
-
-        cfg = self.cfg
-        band = cfg.merge_band
-
-        base_res = min(preds)
-        self.base_res = base_res
-        base = preds[base_res]
-        transform, crs = base["transform"], base["crs"]
-        h, w = base["prob"].shape
-
-        scratch_dir = REPO_ROOT / 'scratch' / 'merge' 
-        scratch_dir.mkdir(parents=True, exist_ok=True)
-        merged = np.lib.format.open_memmap(
-            scratch_dir / "merged.npy", mode="w+", dtype=np.float32, shape=(h, w))
-        support = np.lib.format.open_memmap(
-            scratch_dir / "support.npy", mode="w+", dtype=np.uint8, shape=(h, w))
-        coverage = np.lib.format.open_memmap(
-            scratch_dir / "coverage.npy", mode="w+", dtype=np.uint8, shape=(h, w))
-
-        for r0 in range(0, h, band):
-            r1 = min(r0 + band, h)
-            shape = (r1 - r0, w)
-            band_transform = transform * Affine.translation(0, r0)
-
-            best = np.full(shape, np.nan, dtype=np.float32)
-            sup = np.zeros(shape, dtype=np.uint8)
-            cov = np.zeros(shape, dtype=np.uint8)
-
-            for res, pred in preds.items():
-                if res == base_res:
-                    cur = np.array(pred["prob"][r0:r1], dtype=np.float32)
-                else:
-                    cur = np.full(shape, np.nan, dtype=np.float32)
-                    reproject(
-                        source=pred["prob"],
-                        destination=cur,
-                        src_transform=pred["transform"],
-                        src_crs=pred["crs"],
-                        src_nodata=np.nan,
-                        dst_transform=band_transform,
-                        dst_crs=crs,
-                        dst_nodata=np.nan,
-                        resampling=Resampling.nearest,
-                        init_dest_nodata=True)
-
-                ok = np.isfinite(cur)
-                cov += ok
-                sup += ok & (cur >= cfg.support_threshold)
-                best = np.fmax(best, cur)
-
-            weak = (cov > 0) & (sup < cfg.min_support) & (best < cfg.single_scale_keep)
-            best[weak] = 0.0
-            best[cov == 0] = np.nan
-
-            merged[r0:r1] = best
-            support[r0:r1] = sup
-            coverage[r0:r1] = cov
-
-        for m in (merged, support, coverage):
-            m.flush()
-
-        return merged, transform, crs, support, coverage
 
     def max_prob(self, preds, base_res, transform, crs, shape, path):
         h, w = shape
@@ -455,7 +392,6 @@ class Deployer:
 
     def save_predictions(self, results, output_path):
         """
-
         Saves the merged predictions to disk in the specified format (shapefile, GeoTIFF, or NumPy array) based on the requested returns in the configuration.
 
         Parameters
@@ -546,6 +482,12 @@ class Deployer:
 
 # self contained res predictor to decrease amount of calculations needed to be made repetitively!
 class ResPredictor():
+    """
+    Predicts probability maps for a single resolution using the Mask R-CNN model.
+    Handles tiling the input DEM, running predictions on each tile, and merging the resullts.
+    
+    Internally calls ModelWrapper.predict() to run the model on each tile, and merges the results into a single probability map.
+    """
 
     def __init__(self, res, model, norm_stats):
 

@@ -8,38 +8,80 @@ from modelling.Trainer import Trainer
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-def main(args):
+def main(
+    root,
+    folded_out_regions=None,
+    epochs=50,
+    batch_size=8,
+    run=None,
+    LORO_CV=False,
+    random_split=False,
+    model="MaskRCNN",
+):
+    """Train an SCD detection MaskRCNN using the selected training strategy.
 
-    trainer = Trainer(args.root, device="cuda" if torch.cuda.is_available() else "cpu")
-    out_path = REPO_ROOT / "results" / "training" / args.run
+    Parameters
+    ----------
+    root : str
+        Root directory of the training dataset.
+    folded_out_regions : list of str, optional
+        Regions to hold out during training.
+    epochs : int, optional
+        Number of training epochs.
+    batch_size : int, optional
+        Number of samples per training batch.
+    run : str, optional
+        Name of the training run.
+    LORO_CV : bool, optional
+        Run leave-one-region-out cross-validation.
+    random_split : bool, optional
+        Use a random train/validation split.
+    model : str, optional
+        Model type to train, such as ``"MaskRCNN"`` or ``"UNET"``.
+
+    Returns
+    -------
+    None
+        Training artifacts are saved under
+        ``results/training/<run>``. Mask R-CNN training writes the checkpoint
+        ``MaskRCNN.pt`` and compressed NumPy metric or resolution archives.
+        Leave-one-region-out training additionally writes
+        ``LORO_CV_results.npz`` and per-region subdirectories; random-split
+        training writes its artifacts under ``random_split``. The UNet
+        training branch writes its artifacts using the selected trainer.
+    """
+
+    folded_out_regions = [] if folded_out_regions is None else folded_out_regions
+    trainer = Trainer(root, device="cuda" if torch.cuda.is_available() else "cpu")
+    out_path = REPO_ROOT / "results" / "training" / run
     out_path.mkdir(parents=True, exist_ok=True)
 
-    if args.model.upper() != "MASKRCNN":
+    if model.upper() != "MASKRCNN":
         trainer.train_unet_fold(
-            folded_out_region=args.folded_out_regions[0] if args.folded_out_regions else None,
-            epochs=args.epochs,
-            batch_size=args.batch_size,
+            folded_out_region=folded_out_regions[0] if folded_out_regions else None,
+            epochs=epochs,
+            batch_size=batch_size,
             out_path=out_path,
-            random_train=args.random_split)
+            random_train=random_split)
         return
 
-    if args.LORO_CV:
-        regions = args.folded_out_regions # Replace with actual region names
-        trainer.LORO_CV(regions, out_path, epochs = args.epochs, batch_size=args.batch_size)
+    if LORO_CV:
+        regions = folded_out_regions
+        trainer.LORO_CV(regions, out_path, epochs=epochs, batch_size=batch_size)
 
-    elif args.random_split:
+    elif random_split:
         trainer.random_split(
             out_path=out_path,
-            epochs=args.epochs,
-            batch_size=args.batch_size,
-            exclude_region=args.folded_out_regions[0] if args.folded_out_regions else None
+            epochs=epochs,
+            batch_size=batch_size,
+            exclude_region=folded_out_regions[0] if folded_out_regions else None
         )
 
     else:
         trainer.train_fold(
-            folded_out_region=args.folded_out_regions[0],
-            epochs=args.epochs,
-            batch_size=args.batch_size,
+            folded_out_region=folded_out_regions[0],
+            epochs=epochs,
+            batch_size=batch_size,
             out_path=out_path)
 
 
@@ -55,4 +97,4 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="MaskRCNN", help="Model to train.")
     args = parser.parse_args()
 
-    main(args)
+    main(**vars(args))

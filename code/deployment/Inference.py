@@ -33,6 +33,53 @@ import subprocess
 #      MaskRCNN Model
 
 class SCDModel():
+    """Run the complete SCD inference workflow.
+
+    ``SCDModel`` is the main user-facing inference class. It prepares the
+    DEM input, configures a :class:`Deployer`, runs predictions at the
+    requested resolutions, applies the optional veto model, and saves the
+    resulting outputs.
+
+    Parameters
+    ----------
+    MaskRCNN_model_state : dict
+        Checkpoint for the Mask R-CNN model. It must contain the keys
+        ``"model_state_dict"`` and ``"norm_stats"``.
+    dem_path : pathlib.Path
+        Path to a DEM raster or to a directory of ``.tif`` DEM tiles. A
+        directory is mosaicked into ``merged.tif`` before inference.
+    device : str
+        Device used for model inference, such as ``"cpu"`` or ``"cuda"``.
+    resolutions : list
+        DEM resolutions at which to run inference.
+    out_path : pathlib.Path
+        Directory where prediction outputs and ``covered_bounds.txt`` are
+        saved.
+    veto_model_state : dict, optional
+        Checkpoint for the veto classifier. Required when ``to_veto`` is
+        ``True``.
+    hyperparams : dict, optional
+        Overrides for fields in :class:`deployment.config.DeployConfig`.
+    run_name : str, optional
+        Name recorded in ``covered_bounds.txt`` for this inference run.
+    to_veto : bool, default=True
+        Whether to apply the veto classifier to the merged predictions.
+    requested_returns : set, optional
+        Names of the intermediate and final results to return from the
+        deployment pipeline, such as ``"predictions"``, ``"transform"``,
+        ``"crs"``, or ``"raw"``.
+
+    Raises
+    ------
+    ValueError
+        If vetoing is enabled without a veto model checkpoint.
+    TypeError
+        If ``dem_path`` is neither a file nor a directory.
+    FileNotFoundError
+        If a DEM directory contains no ``.tif`` files.
+    FileExistsError
+        If a DEM directory already contains ``merged.tif``.
+    """
 
     def __init__(self, 
                 MaskRCNN_model_state, 
@@ -64,11 +111,44 @@ class SCDModel():
 
     # PUBLIC METHODS
     def set_params(self, **params):
+        """Update deployment parameters and rebuild the deployer.
+
+        Parameters
+        ----------
+        **params
+            Values for fields in :class:`deployment.config.DeployConfig`.
+            The existing configuration is replaced with these overrides,
+            and the deployer is rebuilt so it uses the updated snapshot.
+        """
         # Deployer snapshots the config on init, so it has to be rebuilt.
         config.update(**params)
         self.deployer = Deployer(self.MaskRCNN_model_state, self.veto_model_state)
 
     def predict(self):
+        """Run inference, save predictions, and record DEM coverage metadata.
+
+        Returns
+        -------
+        dict
+            Results selected by ``requested_returns``. The available results
+            include merged ``"predictions"``, ``"transform"``, ``"crs"``,
+            ``"raw"``, ``"unvetoed"``, ``"obj_score"``, ``"provisional"``,
+            and veto outputs when vetoing is enabled. The returned values are
+            in-memory arrays or geospatial metadata; they are also written to
+            ``self.out_path`` when their names are requested:
+
+            * ``predictions`` is saved as ``predictions.shp`` in ESRI
+              Shapefile format.
+            * ``raw``, ``provisional``, ``obj_score``, and ``unvetoed`` are
+              saved as NumPy ``.npy`` arrays.
+            * ``rejected`` is saved as a GeoTIFF ``rejected.tif``.
+            * Run metadata is appended to ``covered_bounds.txt`` as text,
+              including the run name, DEM bounds, CRS, and source tile names.
+
+            Files are saved under ``self.out_path``. Only outputs included in
+            ``requested_returns`` are written, except
+            ``covered_bounds.txt``, which is always updated.
+        """
 
         print('Running SCD model prediction...')
 
@@ -88,6 +168,7 @@ class SCDModel():
 
     # Private
     def _create_deployer(self, hyperparams, requested_returns):
+        """Initialize deployment configuration and construct a deployer."""
 
         config.init(
             dem_path=self.dem_path,
@@ -101,6 +182,8 @@ class SCDModel():
         return Deployer(self.MaskRCNN_model_state, self.veto_model_state)
 
     def _resolve_data_source(self, dem_path):
+        """Resolve a DEM file or build a raster mosaic from DEM tiles."""
+
         if os.path.isfile(dem_path):
             with rio.open(dem_path) as src:
                 self.NODATA = src.nodata
@@ -114,6 +197,19 @@ class SCDModel():
             raise TypeError('Please input a valid file or directory as a PosixPath')
 
     def _build_dem(self, dem_dir):
+        """Mosaic all DEM GeoTIFFs in a directory into ``merged.tif``.
+
+        Parameters
+        ----------
+        dem_dir : pathlib.Path
+            Directory containing the source DEM tiles.
+
+        Returns
+        -------
+        pathlib.Path
+            Path to the generated ``merged.tif`` raster.
+        """
+
         dem_dir = Path(dem_dir)
 
         paths = list(dem_dir.glob("*.tif"))
