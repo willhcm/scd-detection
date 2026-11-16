@@ -83,13 +83,13 @@ class Tuner():
         self.labels = self.area_models[0]["labels"]
 
     def _run_area(self, area, params):
-        # config is module-global, so protect only the short rebuild/snapshot
-        # section. Each deployer then owns an immutable config snapshot.
+        # Deployment still has legacy module-global config consumers. Keep the
+        # complete sweep under the lock so another area cannot replace the
+        # active DEM/config while this area is running.
         with self._config_lock:
             area["model"].set_params(**params)
             deployer = area["model"].deployer
-
-        results = deployer.sweep()
+            results = deployer.sweep()
 
         labels = np.asarray(results["predictions"]).astype(np.int32)
         geometries, object_ids = [], []
