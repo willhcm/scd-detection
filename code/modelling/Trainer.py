@@ -450,10 +450,16 @@ class VetoTrainer():
             "f1s": f1s
         }
 
+        self.save_model(best_state, out_path, folded_out_region)
         print(f"Saving model with best loss: {best_loss:.4f} at epoch {epoch+1 - bad_epochs}")
         np.savez_compressed(out_path / f"veto_training_metrics_fold_{folded_out_region}.npz", **results)
-        np.savez_compressed(out_path / f"veto_embeddings.npz", embeddings=embeddings, labels=labels.cpu().numpy())
-        self.save_model(best_state, out_path, folded_out_region)
+        validation_embeddings = torch.cat(embeddings, dim=0).numpy()
+        validation_labels = np.asarray(all_labels)
+        np.savez_compressed(
+            out_path / f"veto_embeddings.npz",
+            embeddings=validation_embeddings,
+            labels=validation_labels,
+        )
         return results
 
     def save_model(self, state, out_path, folded_out_region):
