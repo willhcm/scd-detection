@@ -119,9 +119,23 @@ def main(args):
             if missing:
                 raise ValueError(f"Area {index} is missing: {sorted(missing)}")
 
-            def area_path(value):
+            def area_path(value, field_name):
                 path = Path(value)
-                return path if path.is_absolute() else config_path.parent / path
+                if path.is_absolute():
+                    candidates = [path]
+                else:
+                    candidates = [
+                        config_path.parent / path,
+                        REPO_ROOT / path,
+                        Path.cwd() / path,
+                    ]
+                for candidate in candidates:
+                    if candidate.exists():
+                        return candidate.resolve()
+                raise FileNotFoundError(
+                    f"Area {index} {field_name} not found. Tried: "
+                    + ", ".join(str(candidate.resolve()) for candidate in candidates)
+                )
 
             area_device = spec.get("device", args.device)
             veto_path = spec.get("veto_model_state_path")
@@ -135,21 +149,24 @@ def main(args):
             areas.append({
                 "name": spec.get("name", f"area-{index}"),
                 "model": torch.load(
-                    area_path(spec["model_state_path"]),
+                    area_path(spec["model_state_path"], "model_state_path"),
                     map_location=area_device,
                 ),
-                "dem_path": area_path(spec["dem_path"]),
+                "dem_path": area_path(spec["dem_path"], "dem_path"),
                 "device": area_device,
                 "resolutions": spec.get("resolutions", args.resolutions),
                 "out_path": out_path,
                 "run_name": args.run_name,
                 "veto_model_state": (
-                    torch.load(area_path(veto_path), map_location=area_device)
+                    torch.load(
+                        area_path(veto_path, "veto_model_state_path"),
+                        map_location=area_device,
+                    )
                     if veto_path else None
                 ),
                 "hyperparams": area_hyperparams,
                 "to_veto": not args.no_veto,
-                "label_path": area_path(spec["label_path"]),
+                "label_path": area_path(spec["label_path"], "label_path"),
             })
 
         tuner = Tuner(

@@ -392,6 +392,7 @@ class VetoTrainer():
                     labels = labels.to(self.device)
 
                     outputs, embeds = model(contexts, candidates, scalars, return_embeddings=True)
+
                     embeddings.append(embeds.cpu())
                     loss = criterion(outputs.squeeze(), labels.float())
                     val_loss += loss.item()
