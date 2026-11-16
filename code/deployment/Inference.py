@@ -56,6 +56,7 @@ class SCDModel():
         self.out_path = out_path
         self.run_name = run_name
         self.to_veto = to_veto
+        self.native_res = native_res
 
         # config needs the resolved DEM path and its nodata value, so it is
         # initialised after the DEM has been found/merged.
@@ -82,6 +83,7 @@ class SCDModel():
             f.write(f"Run: {self.run_name}\n")
             f.write(f"Bounds of DEM: {self.DEM_bounds}\n")
             f.write(f"CRS of DEM: {self.DEM_crs}\n")
+            f.write(f"Tiles used: {', '.join(self.tiles_names)}\n")
 
         return results
 
@@ -121,6 +123,7 @@ class SCDModel():
             raise FileExistsError(f"merged.tif already exists in {dem_dir}. Please remove it or choose a different directory.")
 
         print(f"Building DEM from directory: {dem_dir}")
+        self.tiles_names = [p.name for p in paths]
 
         with rio.open(paths[0]) as src:
             src_nodata = src.nodata
