@@ -1,4 +1,17 @@
-# maskRCNN Trainer class to cleanly enable script-based training and LORO-CV for HPC cluster use.
+"""Training orchestration for the Mask R-CNN and veto models.
+
+The trainers sit between the dataset wrappers in
+``loaders.DatasetTools`` and the model implementations in this package.
+``DatasetWrapper`` supplies batches of four-band DEM tiles, instance targets,
+and training-set normalization statistics to :class:`Trainer`. The resulting
+Mask R-CNN checkpoint preserves those statistics because deployment must
+normalize inference tiles in exactly the same way.
+
+``VetoDatasetWrapper`` and :class:`VetoTrainer` form the second training
+stage. They load candidate/context samples generated from Mask R-CNN
+predictions, train :class:`modelling.Veto.Vetoer`, and save its weights with
+the corresponding normalization statistics for the deployment veto stage.
+"""
 
 from pathlib import Path
 import sys
@@ -20,8 +33,26 @@ from tqdm import tqdm
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 class Trainer():
+    """Train the Mask R-CNN detector from tiled ``.npz`` training data.
+
+    The dataset wrapper owns splitting, metadata analysis, normalization, and
+    batch collation. This class owns the optimization loop, validation
+    metrics, staged unfreezing, early stopping, and checkpoint packaging.
+    Methods that create folds all eventually call :meth:`train_fold`, so the
+    checkpoint and metric format stays consistent across training strategies.
+    """
 
     def __init__(self, root, device):
+        """Create a trainer and connect it to a dataset wrapper.
+
+        Parameters
+        ----------
+        root : str or pathlib.Path
+            Directory of detector-training ``.npz`` tiles.
+        device : str
+            Device label retained by the trainer for reporting; model tensors
+            are moved to the available CUDA device when training starts.
+        """
         self.root = root
         self.dset = DatasetWrapper(root)
         self.device = device
@@ -29,12 +60,43 @@ class Trainer():
 
     @staticmethod
     def set_seed(seed):
+        """Seed PyTorch and NumPy, including all visible CUDA devices."""
         torch.manual_seed(seed)
         np.random.seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
 
     def train_fold(self, folded_out_region, epochs=50, batch_size=8, out_path=None, random_train=False, exclude_region=None):
+        """Train and validate one detector split.
+
+        ``DatasetWrapper.get_loaders`` determines whether this is a geographic
+        holdout or a random split, then returns augmented training batches and
+        non-augmented validation batches using statistics computed from the
+        training paths only. The best validation-loss state is saved together
+        with those statistics so the checkpoint can be consumed by
+        ``deployment.Deployer``.
+
+        Parameters
+        ----------
+        folded_out_region : str or None
+            Region excluded from training for a geographic holdout.
+        epochs : int, default=50
+            Maximum number of epochs.
+        batch_size : int, default=8
+            Number of tiles per optimization batch.
+        out_path : pathlib.Path
+            Directory for metrics, distributions, and the checkpoint.
+        random_train : bool, default=False
+            Request the random 80/20 split instead of a region holdout.
+        exclude_region : str or None
+            Retained for compatibility; the split is controlled by
+            ``folded_out_region``.
+
+        Returns
+        -------
+        tuple
+            The metric dictionary and the best model state dictionary.
+        """
         train_loader, val_loader = self.dset.get_loaders(folded_out_region, batch_size, random_train=random_train)
         model = MaskRCNN()
 
@@ -187,6 +249,12 @@ class Trainer():
         return results, best_state 
 
     def LORO_CV(self, regions, out_path, epochs=50, batch_size=8):
+        """Run :meth:`train_fold` once for each held-out region.
+
+        Each fold receives its own directory and checkpoint. A compressed
+        aggregate archive is written at ``out_path/LORO_CV_results.npz``;
+        this method itself returns no value.
+        """
         results = {}
         for region in regions: # where region is the region being folded out.
             fold_out_path = out_path / f"fold_{region}"
@@ -197,6 +265,12 @@ class Trainer():
         np.savez_compressed(out_path / "LORO_CV_results.npz", **results)
 
     def random_split(self, out_path, epochs=50, batch_size=8, exclude_region=None):
+        """Train one reproducible random 80/20 split.
+
+        The split is delegated to :class:`DatasetWrapper`, and all outputs are
+        placed below ``out_path/random_split``. The additional
+        ``random_split_results.npz`` archive contains the fold metrics.
+        """
         fold_out_path = out_path / "random_split"
         fold_out_path.mkdir(parents=True, exist_ok=True)
 
@@ -207,6 +281,7 @@ class Trainer():
         self.save_model(state, fold_out_path, exclude_region)
 
     def save_model(self, state, out_path, folded_out_region):
+        """Save detector weights with normalization metadata for deployment."""
         out = {'model_state_dict': state, 
                'norm_stats': self.dset.normalization_stats,
                'folded_out_region': folded_out_region}
@@ -214,8 +289,17 @@ class Trainer():
         torch.save(out, out_path / f"MaskRCNN.pt")
 
 class VetoTrainer():
+    """Train the classifier that filters detector candidates.
+
+    ``VetoDatasetWrapper`` partitions candidate samples, estimates statistics
+    from the training partition, and returns batches shaped for
+    :class:`modelling.Veto.Vetoer`. The saved ``Vetoer.pt`` checkpoint stores
+    both the classifier state and those statistics, matching the structure
+    expected by ``deployment.Deployer``.
+    """
 
     def __init__(self, root, device):
+        """Create a veto trainer connected to candidate-level training data."""
 
         self.root = root
         self.dset = VetoDatasetWrapper(root)
@@ -224,12 +308,26 @@ class VetoTrainer():
 
     @staticmethod
     def set_seed(seed):
+        """Seed PyTorch and NumPy, including all visible CUDA devices."""
         torch.manual_seed(seed)
         np.random.seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
 
     def train(self, folded_out_region, epochs, batch_size, out_path, veto_threshold=0.5):
+        """Train, validate, and save the candidate veto classifier.
+
+        The wrapper supplies context images, candidate masks, scalar features,
+        and binary labels. Validation predictions are thresholded only for
+        reporting metrics; optimization uses the raw logits and
+        ``BCEWithLogitsLoss``. The best validation-loss state is saved with
+        normalization metadata for inference.
+
+        Returns
+        -------
+        dict
+            Per-epoch loss, accuracy, precision, recall, and F1 histories.
+        """
 
         random_train = folded_out_region is None
         train_loader, val_loader = self.dset.get_loaders(random_train=random_train, folded_out_region=folded_out_region, batch_size=batch_size)
@@ -354,11 +452,12 @@ class VetoTrainer():
 
         print(f"Saving model with best loss: {best_loss:.4f} at epoch {epoch+1 - bad_epochs}")
         np.savez_compressed(out_path / f"veto_training_metrics_fold_{folded_out_region}.npz", **results)
-        np.savez_compressed(out_path / f"veto_embeddings.npz", embeddings=embeddings.cpu().numpy(), labels=labels.cpu().numpy())
+        np.savez_compressed(out_path / f"veto_embeddings.npz", embeddings=embeddings, labels=labels.cpu().numpy())
         self.save_model(best_state, out_path, folded_out_region)
         return results
 
     def save_model(self, state, out_path, folded_out_region):
+        """Save veto weights with normalization and fold metadata."""
         print('saving model...')
         norm_stats = self.dset.normalization_stats
         out = {'state': state,

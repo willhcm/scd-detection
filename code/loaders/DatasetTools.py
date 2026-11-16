@@ -1,4 +1,12 @@
-# dataset wrapper for loading data from a directory of images, and analysing the metadata to see distribution of resolutions and geographies
+"""Dataset preparation shared by detector and veto training.
+
+The detector pipeline starts with tiled ``.npz`` files. :class:`DatasetWrapper`
+creates train/validation splits, estimates training-only normalization
+statistics, and hands both to ``MaskRCNNDataset``. The veto pipeline performs
+the analogous preparation with :class:`VetoDataset` for candidate samples
+generated from detector predictions. The resulting loaders are consumed by
+``Trainer`` and ``VetoTrainer`` respectively.
+"""
 from os import name
 from random import random
 
@@ -19,8 +27,16 @@ from modelling.Veto import VetoDataset
 from helpers.VetoHelpers import VETO_BAND_INDEX, VETO_SCALAR_NAMES, _handle_outliers
 
 class DatasetWrapper():
+    """Prepare detector tiles, splits, sampling, and normalization.
+
+    The wrapper keeps the split and preprocessing contract in one place:
+    training datasets are augmented, validation datasets are not, and both
+    use statistics estimated only from the training paths. ``Trainer`` stores
+    :attr:`normalization_stats` in its checkpoint for inference.
+    """
 
     def __init__(self, root_dir):
+        """Initialize the detector tile root and split diagnostics."""
         self.root_dir = Path(root_dir)
         self.train_resolution_distribution = {}
         self.train_geography_distribution = {}
@@ -30,6 +46,13 @@ class DatasetWrapper():
         self.normalization_stats = {}
 
     def get_loaders(self, folded_out_region, batch_size, random_train=False):
+        """Build the detector train and validation loaders.
+
+        This is the main handoff to ``Trainer``. It selects a geographic
+        holdout or random split, applies a diameter-aware sampler to the
+        training dataset, and uses the shared Mask R-CNN collator for
+        variable-length instance targets.
+        """
         if random_train:
             train_set, val_set = self.generate_random_split(train_ratio=0.8, exclude_region=folded_out_region)
         else:
@@ -52,6 +75,12 @@ class DatasetWrapper():
         return train_loader, val_loader
 
     def generate_random_split(self, train_ratio=0.8, exclude_region=None):
+        """Create a reproducible random split and normalized datasets.
+
+        Normalization is learned after splitting and therefore excludes
+        validation tiles. The returned training dataset enables augmentation;
+        validation does not.
+        """
         self.all_paths = list(self.root_dir.glob("*.npz"))
 
         if exclude_region:
@@ -69,6 +98,13 @@ class DatasetWrapper():
 
 
     def generate_dataset(self, test_region=None):
+        """Create a geographic holdout or default random detector split.
+
+        When ``test_region`` is provided, all tiles from that region become
+        validation data. Otherwise files are split 80/20 using a fixed seed.
+        Both paths estimate normalization from training tiles before
+        constructing ``MaskRCNNDataset`` instances.
+        """
 
         self.train_paths = []
         self.test_paths = []
@@ -105,6 +141,7 @@ class DatasetWrapper():
                 MaskRCNNDataset(self.test_paths, self.normalization_stats, augment=False))
         
     def plot_distribution(self):
+        """Plot resolution, geography, and positive/negative distributions."""
 
         # plot the distribution of resolutions and geographies in the training set
         # color parts of each hist bar for positive and negative samples in the geography distribution
@@ -153,6 +190,7 @@ class DatasetWrapper():
         plt.show()
 
     def report_distribution(self):
+        """Print split distributions and negative-sampling requirements."""
         # report the distribution of resolutions and geographies in the training set
 
         if not hasattr(self, "resolution_bins"):
@@ -203,6 +241,10 @@ class DatasetWrapper():
         Bins use the fixed-width boundaries used by the distribution plot. A
         bin is considered balanced when its positive fraction is within
         ``ratio_tolerance`` of the target.
+
+        The method reads distributions populated by a split method, stores
+        the computed bins for the reporting helpers, and does not alter the
+        underlying tile split.
         """
         if not 0 < target_positive_ratio < 1:
             raise ValueError("target_positive_ratio must be between 0 and 1.")
@@ -263,6 +305,7 @@ class DatasetWrapper():
         return required
 
     def _analyze_dataset(self):
+        """Populate metadata distributions for the current training paths."""
         # analyze the metadata of the dataset to see distribution of resolutions and geographies
 
         for path in self.train_paths:
@@ -303,6 +346,13 @@ class DatasetWrapper():
         self.max_res = max(self.train_resolution_distribution.keys())
 
     def _diameter_weighted_sampler(self, paths, alpha=0.5, neg_frac=0.7):
+        """Create a sampler balancing object diameter and negative tiles.
+
+        The sampler is passed directly to the training ``DataLoader`` by
+        :meth:`get_loaders`. Positive tiles are weighted by the inverse
+        frequency of their diameter bin, while unlabeled tiles receive the
+        configured negative mass.
+        """
         max_d = np.zeros(len(paths))
         for i, path in enumerate(paths):
             with np.load(path, allow_pickle=True) as tile:
@@ -327,22 +377,28 @@ class DatasetWrapper():
         return WeightedRandomSampler(w, num_samples=len(paths), replacement=True)
 
     def _get_resolution(self, path):
+        """Read a tile's scalar resolution metadata."""
         # extract resolution from metadata of the image at path
         with np.load(path) as tile:
             return tile['res'].item()
 
     def _get_region(self, path):
+        """Read a tile's geographic region metadata."""
         with np.load(path, allow_pickle=True) as tile:
             return tile["region"].item()
 
     def _get_positive(self, path):
+        """Read whether a tile contains a positive training object."""
         # extract positive label from metadata of the image at path
         with np.load(path, allow_pickle=True) as tile:
             return tile['positive'].item()
 
     def handle_outliers(self, vals):
         """
-        Handle outliers in the DEM, Slope, RR, and Laplace bands by clipping to the 1st and 99th percentiles.
+        Clip sampled channel values before normalization statistics are computed.
+
+        The clipped samples are used to derive robust median/IQR statistics
+        for the detector input channels.
         """
         for channel in vals:
             channel_vals = np.concatenate(vals[channel])
@@ -365,14 +421,16 @@ class DatasetWrapper():
         Each training tile contributes approximately the same number
         of randomly sampled valid pixels.
 
-        DEM is deliberately excluded because it is normalized
-        independently on a tile-by-tile basis.
 
         Returns:
             dict containing median/IQR for:
+                DEM
                 SLOPE
                 LAPLACE
                 RR
+
+        These statistics are stored on the wrapper and later serialized by
+        ``Trainer.save_model`` so inference can normalize tiles identically.
         """
 
         rng = np.random.default_rng(seed)
@@ -446,12 +504,27 @@ class DatasetWrapper():
 
 
 class VetoDatasetWrapper():
+    """Prepare candidate samples for the veto-classifier training stage.
+
+    Candidate files contain context bands, candidate masks, scalar features,
+    and labels generated upstream from detector predictions. This wrapper
+    creates the split and normalization metadata consumed by ``VetoDataset``
+    and, in turn, ``VetoTrainer``.
+    """
 
     def __init__(self, root):
+        """Initialize the candidate-data root and statistics container."""
         self.root = Path(root)
         self.normalization_stats = {}
 
     def get_loaders(self, random_train=True, folded_out_region=None, batch_size=16):
+        """Split candidate files and return veto train/validation loaders.
+
+        Random splitting is used when ``random_train`` is true. Otherwise a
+        geographic holdout must be supplied. Statistics are learned before
+        constructing ``VetoDataset`` instances, so augmented training and
+        validation samples share the training partition's normalization.
+        """
         
         all_paths = list(self.root.glob('*.npz'))
 
@@ -482,10 +555,17 @@ class VetoDatasetWrapper():
         return train_loader, val_loader
 
     def _get_region(self, path):
+        """Read a candidate sample's geographic region metadata."""
         with np.load(path, allow_pickle=True) as tile:
             return tile["region"].item()
 
     def _estimate_normalisation_stats(self, n_samples_per_tile=5000, seed=42):
+        """Estimate robust statistics for veto image and scalar inputs.
+
+        The sampled context, candidate DEM, and scalar values become the
+        normalization metadata passed to ``VetoDataset`` and later packaged
+        into ``Vetoer.pt`` by ``VetoTrainer``.
+        """
 
         channels = ['DEM', 'SLOPE']
         scalar_names = list(VETO_SCALAR_NAMES)

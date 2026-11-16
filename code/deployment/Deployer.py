@@ -60,7 +60,9 @@ class Deployer:
         self.cfg = config.get()
         self.base_res = None
 
-        self.norm_stats = model_state_dict['norm_stats']
+        self.norm_stats = model_state_dict['norm_stats'] # Normilisation stats for the Mask R-CNN model, used for normalizing input DEM tiles before prediction. 
+        # normalisation stats are calculated in the training script from the training set (see modelling/Trainer.py and loaders/DatasetTools.py).
+
         self.model = ModelWrapper(
             model_state_dict['model_state_dict'],
             self.cfg.score_threshold,
@@ -70,7 +72,7 @@ class Deployer:
         if self.cfg.to_veto:
             self.veto_model = Vetoer()
             self.veto_model.load_state_dict(veto_model_dict['state'])
-            self.veto_norm_stats = veto_model_dict['norm_stats']
+            self.veto_norm_stats = veto_model_dict['norm_stats'] 
             self.veto_model.to(self.cfg.device)
             self.veto_model.eval()
 
