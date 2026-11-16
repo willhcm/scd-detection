@@ -56,7 +56,6 @@ class SCDModel():
         self.out_path = out_path
         self.run_name = run_name
         self.to_veto = to_veto
-        self.native_res = native_res
 
         # config needs the resolved DEM path and its nodata value, so it is
         # initialised after the DEM has been found/merged.
@@ -107,6 +106,7 @@ class SCDModel():
                 self.NODATA = src.nodata
                 self.DEM_bounds = src.bounds
                 self.DEM_crs = src.crs
+                self.tiles_names = [Path(dem_path).name]
             return dem_path
         elif os.path.isdir(dem_path):
             return self._build_dem(dem_path)
