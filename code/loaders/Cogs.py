@@ -830,6 +830,7 @@ class ShapeLabels:
             dtype=np.uint8,
             all_touched=False,
         )
+    
 # ChatGPT assistance with this function too!
 # convertion to UTM from global DD
 def _utm_epsg(src_crs, bounds):
@@ -837,9 +838,7 @@ def _utm_epsg(src_crs, bounds):
         raise ValueError("Cannot determine UTM zone without a source CRS.")
 
     epsg = src_crs.to_epsg()
-    if src_crs.is_projected and epsg is not None and (
-        32601 <= epsg <= 32660 or 32701 <= epsg <= 32760
-    ):
+    if src_crs.is_projected and src_crs.utm_zone is not None and epsg is not None:
         return epsg
 
     transformer = Transformer.from_crs(src_crs, "EPSG:4326", always_xy=True)
