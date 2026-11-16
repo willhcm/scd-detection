@@ -19,6 +19,7 @@ from rasterio.warp import Resampling, calculate_default_transform, reproject
 from scipy.ndimage import gaussian_filter, laplace, sobel
 from shapely.geometry import box
 import matplotlib.pyplot as plt
+from pyproj import CRS as PyCRS, Transformer
 
 CODE_DIR = Path("../../../code").resolve()
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -831,35 +832,26 @@ class ShapeLabels:
             all_touched=False,
         )
     
-# ChatGPT assistance with this function too!
-# convertion to UTM from global DD
+
+
+
 def _utm_epsg(src_crs, bounds):
     if src_crs is None:
-        raise ValueError("Cannot determine UTM zone without a source CRS.")
+        raise ValueError("no source CRS, can't pick a UTM zone")
 
-    epsg = src_crs.to_epsg()
-    if src_crs.is_projected and src_crs.utm_zone is not None and epsg is not None:
+    crs = PyCRS.from_user_input(src_crs)
+    epsg = crs.to_epsg()
+    if crs.is_projected and crs.utm_zone is not None and epsg is not None:
         return epsg
 
-    transformer = Transformer.from_crs(src_crs, "EPSG:4326", always_xy=True)
     minx, miny, maxx, maxy = bounds
-    lon = (minx + maxx) / 2
-    lat = (miny + maxy) / 2
-    lon_wgs, lat_wgs = transformer.transform(lon, lat)
-    if not np.isfinite([lon_wgs, lat_wgs]).all():
-        raise ValueError(
-            "Could not transform raster centre to WGS84: "
-            f"crs={src_crs}, bounds={bounds}, "
-            f"centre=({lon}, {lat}), transformed=({lon_wgs}, {lat_wgs})"
-        )
-    if not -180 <= lon_wgs <= 180 or not -90 <= lat_wgs <= 90:
-        raise ValueError(
-            "Raster centre transformed outside WGS84 bounds: "
-            f"crs={src_crs}, bounds={bounds}, "
-            f"transformed=({lon_wgs}, {lat_wgs})"
-        )
-    zone = int((lon_wgs + 180) / 6) + 1
-    return 32600 + zone if lat_wgs >= 0 else 32700 + zone
+    x, y = (minx + maxx) / 2, (miny + maxy) / 2
+    lon, lat = Transformer.from_crs(crs, "EPSG:4326", always_xy=True).transform(x, y)
+    if not (np.isfinite(lon) and np.isfinite(lat)):
+        raise ValueError(f"bad centre transform: crs={src_crs}, bounds={bounds}")
+
+    zone = int((lon + 180) / 6) + 1
+    return (32600 if lat >= 0 else 32700) + zone
 
 # same as previously, except reprojection function changes to use variables resolution instead of a fixed target_res throughout.
 # again, for SNIP approach and scale normalisation.
