@@ -97,7 +97,7 @@ class Trainer():
         tuple
             The metric dictionary and the best model state dictionary.
         """
-        train_loader, val_loader = self.dset.get_loaders(folded_out_region, batch_size, random_train=random_train, test_size=test_size, exclude_region=exclude_region)
+        train_loader, val_loader = self.dset.get_loaders(folded_out_region, batch_size, random_train=random_train, test_size=test_size)
         model = MaskRCNN()
 
         print(f"Training on {len(train_loader.dataset)} samples, validating on {len(val_loader.dataset)} samples.")
