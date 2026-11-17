@@ -108,6 +108,20 @@ class Tuner():
             geometries.append(shape(geometry))
             object_ids.append(int(object_id))
 
+        # sieve out small objects that are below the minimum size threshold
+        min_object_m2 = area["model"].config.get().min_object_m2
+        if min_object_m2 > 0:
+            with rasterio.open(area["model"].dem_path) as dem:
+                pixel_area_m2 = abs(dem.transform.a * dem.transform.e)
+            min_pixels = int(np.ceil(min_object_m2 / pixel_area_m2))
+            filtered_geometries, filtered_object_ids = [], []
+            for geom, obj_id in zip(geometries, object_ids):
+                if geom.area >= min_pixels * pixel_area_m2:
+                    filtered_geometries.append(geom)
+                    filtered_object_ids.append(obj_id)
+            geometries = filtered_geometries
+            object_ids = filtered_object_ids
+
         return gpd.GeoDataFrame(
             {"object_id": object_ids, "geometry": geometries},
             crs=results["crs"],
