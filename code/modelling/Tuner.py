@@ -109,7 +109,7 @@ class Tuner():
             object_ids.append(int(object_id))
 
         # sieve out small objects that are below the minimum size threshold
-        min_object_m2 = area["model"].config.get().min_object_m2
+        min_object_m2 = area["model"].config.min_object_m2
         if min_object_m2 > 0:
             with rasterio.open(area["model"].dem_path) as dem:
                 pixel_area_m2 = abs(dem.transform.a * dem.transform.e)
