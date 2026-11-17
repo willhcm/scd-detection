@@ -79,6 +79,7 @@ class Deployer:
             self.veto_model.eval()
 
         self.run_id= str(uuid.uuid4())  # unique identifier for this run, used for scratch directory naming
+        self.scratch_root = REPO_ROOT / "scratch"
         self.scratch_dir = REPO_ROOT / "scratch" / "deploy" / self.run_id
         self.scratch_dir.mkdir(parents=True, exist_ok=True)
 
@@ -209,9 +210,6 @@ class Deployer:
         base = preds[base_res]
         transform, crs = base["transform"], base["crs"]
         h, w = base["prob"].shape
-
-        self.scratch_dir = REPO_ROOT / "scratch" / "merge" / self.run_id
-        self.scratch_dir.mkdir(parents=True, exist_ok=True)
 
         # Pass 1: provisional predictions from the plain merge.
         provisional = self.max_prob(preds, base_res, transform, crs, (h, w), self.scratch_dir / "provisional.npy")
@@ -494,13 +492,10 @@ class Deployer:
         for k, v in saved.items():
             print(f" {k} saved to: {v}")
 
-        self.scratch_dir.rmdir()  # remove the scratch directory after use
-        self.rp_scratch_dir.rmdir()  # remove the ResPredictor scratch directory after use
         return gdf
 
     def cleanup(self):
-        for kind in ("predict", "merge"):
-            shutil.rmtree(REPO_ROOT / "scratch" / kind / self.run_id, ignore_errors=True)
+        shutil.rmtree(self.scratch_root, ignore_errors=True)
 
 # self contained res predictor to decrease amount of calculations needed to be made repetitively!
 class ResPredictor():
@@ -527,6 +522,8 @@ class ResPredictor():
         self.batch_size = cfg.batch_size
         self.NODATA = cfg.nodata
         self.sigma_px = cfg.sigma_px
+        self.scratch_dir = REPO_ROOT / "scratch" / "predict" / self.run_id
+        self.scratch_dir.mkdir(parents=True, exist_ok=True)
 
         self.overlap_px = max(
             4,
@@ -640,11 +637,9 @@ class ResPredictor():
             transform = dem_source.transform
 
             # saved on file to reduce memory failure
-            self.scratch = REPO_ROOT / 'scratch' / 'predict' / self.run_id / f"{resolution:g}m"
-            self.scratch.mkdir(parents=True, exist_ok=True)
             tag = f"{resolution:g}m"
-            prob_map = np.lib.format.open_memmap(self.scratch / f"prob_{tag}.npy", mode="w+", dtype=np.float32, shape=(h, w))
-            weight_map = np.lib.format.open_memmap(self.scratch / f"weight_{tag}.npy", mode="w+", dtype=np.float32, shape=(h, w))
+            prob_map = np.lib.format.open_memmap(self.scratch_dir / f"prob_{tag}.npy", mode="w+", dtype=np.float32, shape=(h, w))
+            weight_map = np.lib.format.open_memmap(self.scratch_dir / f"weight_{tag}.npy", mode="w+", dtype=np.float32, shape=(h, w))
 
             # calculate streides and tile size in meetres
             stride_px = max(1, int(round(self.tile_size * self.stride_frac)))
