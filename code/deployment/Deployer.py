@@ -78,7 +78,7 @@ class Deployer:
             self.veto_model.to(self.cfg.device)
             self.veto_model.eval()
 
-        self.run_id= str(uuid.uuid4())  # unique identifier for this run, used for scratch directory naming
+        self.run_id = 'Tuning'  # unique identifier for this run, used for scratch directory naming
         self.scratch_root = REPO_ROOT / "scratch"
         self.scratch_dir = REPO_ROOT / "scratch" / "deploy" / self.run_id
         self.scratch_dir.mkdir(parents=True, exist_ok=True)
