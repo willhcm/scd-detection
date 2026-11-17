@@ -62,6 +62,12 @@ class Tuner():
             area_name = area.get("name", f"area-{len(self.area_models) + 1}")
             if area.get("label_path") is None:
                 raise ValueError(f"Test area {area_name} needs a label_path.")
+
+            labels = gpd.read_file(area["label_path"])
+            with rasterio.open(area["dem_path"]) as dem:
+                if labels.crs != dem.crs:
+                    labels = labels.to_crs(dem.crs)
+
             self.area_models.append({
                 "name": area_name,
                 "model": SCDModel(
@@ -76,7 +82,7 @@ class Tuner():
                     to_veto=area.get("to_veto", True),
                     requested_returns={"predictions", "transform", "crs"},
                 ),
-                "labels": gpd.read_file(area["label_path"]),
+                "labels": labels,
             })
 
         self.model = self.area_models[0]["model"]
@@ -108,11 +114,7 @@ class Tuner():
         )
 
     def run(self, params):
-        with ThreadPoolExecutor(max_workers=len(self.area_models)) as executor:
-            predictions = list(executor.map(
-                lambda area: self._run_area(area, params),
-                self.area_models,
-            ))
+        predictions = [self._run_area(a, params) for a in self.area_models]
         return predictions[0] if len(predictions) == 1 else predictions
 
     def _evaluate_area(self, preds, area):
@@ -189,7 +191,7 @@ class Tuner():
             ).astype(bool)
 
         prediction_mask = scene_mask(preds)
-        label_mask = scene_mask(self.labels)
+        label_mask = scene_mask(labels)
 
         true_positive = np.count_nonzero(prediction_mask & label_mask & valid_pixels)
         false_positive = np.count_nonzero(
@@ -250,26 +252,16 @@ class Tuner():
         if len(preds) != len(self.area_models):
             raise ValueError("Number of prediction sets must match test areas.")
 
-        with ThreadPoolExecutor(max_workers=len(self.area_models)) as executor:
-            area_metrics = list(executor.map(
-                self._evaluate_area,
-                preds,
-                self.area_models,
-            ))
+        area_metrics = [
+            self._evaluate_area(p, a) for p, a in zip(preds, self.area_models)
+        ]
 
-        flat_pixel_iou = sum(
-            metric["pixel_iou"] for metric in area_metrics
-        ) / len(area_metrics)
-        flat_object_f1 = sum(
-            metric["object_f1"] for metric in area_metrics
-        ) / len(area_metrics)
-
+        n = len(area_metrics)
         return {
-            "object_f1": flat_object_f1,
-            "pixel_iou": flat_pixel_iou,
+            "object_f1": sum(m["object_f1"] for m in area_metrics) / n,
+            "pixel_iou": sum(m["pixel_iou"] for m in area_metrics) / n,
             "area_metrics": {
-                area["name"]: metric
-                for area, metric in zip(self.area_models, area_metrics)
+                a["name"]: m for a, m in zip(self.area_models, area_metrics)
             },
         }
 
