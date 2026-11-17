@@ -17,7 +17,7 @@ def main(
     LORO_CV=False,
     random_split=False,
     device="cuda" if torch.cuda.is_available() else "cpu", 
-    for_inference=False,):
+    test_size=0.2,):
 
     """Train an SCD detection MaskRCNN using the selected training strategy.
 
@@ -68,15 +68,8 @@ def main(
             out_path=out_path,
             epochs=epochs,
             batch_size=batch_size,
-            exclude_region=folded_out_regions[0] if folded_out_regions else None
-        )
-
-    elif for_inference:
-        trainer.train_for_inference(
-            epochs=epochs,
-            batch_size=batch_size,
-            out_path=out_path,
-        )
+            exclude_region=folded_out_regions[0] if folded_out_regions else None,
+            test_size=test_size,)
 
     else:
         trainer.train_fold(
@@ -96,7 +89,7 @@ if __name__ == "__main__":
     parser.add_argument("--LORO_CV", action="store_true", help="Perform Leave-One-Region-Out Cross-Validation.")
     parser.add_argument("--random_split", action="store_true", help="Perform random split training instead of LORO-CV.")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device to run the model on (e.g., 'cuda' or 'cpu').")
-    parser.add_argument("--for_inference", action="store_true", help="Train a model for inference (no validation).")
+    parser.add_argument("--test_size", type=float, default=0.2, help="Proportion of the dataset to include in the validation split when using random split training.")
     args = parser.parse_args()
 
     main(**vars(args))

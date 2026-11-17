@@ -263,18 +263,9 @@ class Trainer():
             results[region] = self.train_fold(region, out_path=fold_out_path, epochs=epochs, batch_size=batch_size)
 
         np.savez_compressed(out_path / "LORO_CV_results.npz", **results)
-
-    def train_for_inference(self, epochs=50, batch_size=8, out_path=None):
-        """Train a single model on all available data for inference.
-
-        This method is intended for production use, where the goal is to
-        maximize the training data available to the model. It does not
-        perform validation or early stopping, and it saves only the final
-        checkpoint.
-        """
         
 
-    def random_split(self, out_path, epochs=50, batch_size=8, exclude_region=None):
+    def random_split(self, out_path, epochs=50, batch_size=8, exclude_region=None, test_size=0.2):
         """Train one reproducible random 80/20 split.
 
         The split is delegated to :class:`DatasetWrapper`, and all outputs are
@@ -284,7 +275,7 @@ class Trainer():
         fold_out_path = out_path / "random_split"
         fold_out_path.mkdir(parents=True, exist_ok=True)
 
-        results, state = self.train_fold(folded_out_region=exclude_region, epochs=epochs, batch_size=batch_size, out_path=fold_out_path, random_train=True)
+        results, state = self.train_fold(folded_out_region=exclude_region, epochs=epochs, batch_size=batch_size, out_path=fold_out_path, random_train=True, test_size=test_size)
 
         np.savez_compressed(fold_out_path / "random_split_results.npz", **results)
 
