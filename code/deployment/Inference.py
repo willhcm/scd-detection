@@ -152,10 +152,13 @@ class SCDModel():
 
         print('Running SCD model prediction...')
 
-        results = self.deployer.sweep()
-
-        print(f'Saving results to {self.out_path}...')
-        self.deployer.save_predictions(results, self.out_path)
+        try:
+            results = self.deployer.sweep()
+            print(f'Saving results to {self.out_path}...')
+            self.deployer.save_predictions(results, self.out_path)
+        finally:
+            self.deployer.cleanup()  # remove the deployer scratch directory after use
+       
 
         # write bounds of DEM to a text file for reference
         with open(self.out_path / "covered_bounds.txt", "a") as f:

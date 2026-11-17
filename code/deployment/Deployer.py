@@ -32,6 +32,8 @@ from scipy.ndimage import binary_dilation, label
 from affine import Affine
 import rasterio
 from scipy import ndimage
+import shutil
+import uuid
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TILE_ORDER = ['DEM', 'DEM_SLOPE', 'RR','LAPLACE']
@@ -76,6 +78,10 @@ class Deployer:
             self.veto_model.to(self.cfg.device)
             self.veto_model.eval()
 
+        self.run_id= str(uuid.uuid4())  # unique identifier for this run, used for scratch directory naming
+        self.scratch_dir = REPO_ROOT / "scratch" / "deploy" / self.run_name
+        self.scratch_dir.mkdir(parents=True, exist_ok=True)
+
     def predict(self):
         """
         Predicts the probability maps for each resolution in cfg.resolutions using the Mask R-CNN model. Calls ResPredictor for each resolution and returns a dictionary of predictions.
@@ -90,9 +96,9 @@ class Deployer:
                 self.model,
                 self.norm_stats,
                 cfg=self.cfg,
-            )
+                run_id=self.run_id)
 
-            prob_map, transform, crs, self.rp_scratch_dir = predictor.predict()
+            prob_map, transform, crs = predictor.predict()
 
             preds[res] = {
                 "prob": prob_map,
@@ -491,6 +497,10 @@ class Deployer:
         self.scratch_dir.rmdir()  # remove the scratch directory after use
         self.rp_scratch_dir.rmdir()  # remove the ResPredictor scratch directory after use
         return gdf
+
+    def cleanup(self):
+        for kind in ("predict", "merge"):
+            shutil.rmtree(REPO_ROOT / "scratch" / kind / self.run_id, ignore_errors=True)
 
 # self contained res predictor to decrease amount of calculations needed to be made repetitively!
 class ResPredictor():
