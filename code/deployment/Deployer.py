@@ -495,7 +495,12 @@ class Deployer:
         return gdf
 
     def cleanup(self):
-        shutil.rmtree(self.scratch_root, ignore_errors=True)
+
+        def report(func, path, exc_info):
+            print(f"cleanup failed on {path}: {exc_info[1]}")
+
+        for sub in ("deploy", "predict"):
+            shutil.rmtree(self.scratch_root / sub / self.run_id, onerror=report)
 
 # self contained res predictor to decrease amount of calculations needed to be made repetitively!
 class ResPredictor():
