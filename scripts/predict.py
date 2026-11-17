@@ -28,7 +28,7 @@ def main(
     return_provisional=False,
     return_unvetoed=False,
     **config_overrides):
-    
+
     """Run SCD inference from parsed command-line arguments.
 
     Parameters
@@ -119,7 +119,6 @@ def main(
         resolutions=resolutions,
         out_path=out_path,
         hyperparams=overrides,
-        run_name=run_name,
         to_veto=not no_veto,
         requested_returns=requested_returns)
 
