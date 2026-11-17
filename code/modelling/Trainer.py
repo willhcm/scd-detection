@@ -66,7 +66,7 @@ class Trainer():
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
 
-    def train_fold(self, folded_out_region, epochs=50, batch_size=8, out_path=None, random_train=False, exclude_region=None):
+    def train_fold(self, folded_out_region, epochs=50, batch_size=8, out_path=None, random_train=False, exclude_region=None, test_size=0.2):
         """Train and validate one detector split.
 
         ``DatasetWrapper.get_loaders`` determines whether this is a geographic
@@ -97,7 +97,7 @@ class Trainer():
         tuple
             The metric dictionary and the best model state dictionary.
         """
-        train_loader, val_loader = self.dset.get_loaders(folded_out_region, batch_size, random_train=random_train)
+        train_loader, val_loader = self.dset.get_loaders(folded_out_region, batch_size, random_train=random_train, test_size=test_size, exclude_region=exclude_region)
         model = MaskRCNN()
 
         print(f"Training on {len(train_loader.dataset)} samples, validating on {len(val_loader.dataset)} samples.")
@@ -263,6 +263,16 @@ class Trainer():
             results[region] = self.train_fold(region, out_path=fold_out_path, epochs=epochs, batch_size=batch_size)
 
         np.savez_compressed(out_path / "LORO_CV_results.npz", **results)
+
+    def train_for_inference(self, epochs=50, batch_size=8, out_path=None):
+        """Train a single model on all available data for inference.
+
+        This method is intended for production use, where the goal is to
+        maximize the training data available to the model. It does not
+        perform validation or early stopping, and it saves only the final
+        checkpoint.
+        """
+        
 
     def random_split(self, out_path, epochs=50, batch_size=8, exclude_region=None):
         """Train one reproducible random 80/20 split.

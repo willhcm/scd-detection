@@ -45,7 +45,7 @@ class DatasetWrapper():
         self.resolutions_positive_distribution = {}
         self.normalization_stats = {}
 
-    def get_loaders(self, folded_out_region, batch_size, random_train=False):
+    def get_loaders(self, folded_out_region, batch_size, random_train=False, test_size=0.2):
         """Build the detector train and validation loaders.
 
         This is the main handoff to ``Trainer``. It selects a geographic
@@ -54,12 +54,15 @@ class DatasetWrapper():
         variable-length instance targets.
         """
         if random_train:
-            train_set, val_set = self.generate_random_split(train_ratio=0.8, exclude_region=folded_out_region)
+            train_set, val_set = self.generate_random_split(test_size=test_size, exclude_region=folded_out_region)
         else:
             train_set, val_set = self.generate_dataset(folded_out_region)
 
         sampler = self._diameter_weighted_sampler(train_set.paths, alpha=0.4)
 
+        if 0.05 > test_size > 0.5:
+            raise ValueError("test_size must be between 0.05 and 0.5.")
+        
         train_loader = DataLoader(train_set,
                     num_workers=0,
                     batch_size=batch_size,
@@ -74,7 +77,7 @@ class DatasetWrapper():
 
         return train_loader, val_loader
 
-    def generate_random_split(self, train_ratio=0.8, exclude_region=None):
+    def generate_random_split(self, test_size=0.2, exclude_region=None):
         """Create a reproducible random split and normalized datasets.
 
         Normalization is learned after splitting and therefore excludes
@@ -89,9 +92,9 @@ class DatasetWrapper():
 
         self.train_paths, self.val_paths = train_test_split(
             self.all_paths,
-            test_size=1-train_ratio,
+            test_size=test_size,
             random_state=42)
-
+            
         self._analyze_dataset()
         self._estimate_normalization_stats(self.train_paths)
         return MaskRCNNDataset(self.train_paths, self.normalization_stats, augment=True), MaskRCNNDataset(self.val_paths, self.normalization_stats, augment=False)

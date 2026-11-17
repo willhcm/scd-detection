@@ -16,8 +16,9 @@ def main(
     run=None,
     LORO_CV=False,
     random_split=False,
-    model="MaskRCNN",
-):
+    device="cuda" if torch.cuda.is_available() else "cpu", 
+    for_inference=False,):
+
     """Train an SCD detection MaskRCNN using the selected training strategy.
 
     Parameters
@@ -36,6 +37,8 @@ def main(
         Run leave-one-region-out cross-validation.
     random_split : bool, optional
         Use a random train/validation split.
+    device : str, optional
+        Device to run the model on (e.g., 'cuda' or 'cpu').
     model : str, optional
         Model type to train, such as ``"MaskRCNN"`` or ``"UNET"``.
 
@@ -52,18 +55,9 @@ def main(
     """
 
     folded_out_regions = [] if folded_out_regions is None else folded_out_regions
-    trainer = Trainer(root, device="cuda" if torch.cuda.is_available() else "cpu")
+    trainer = Trainer(root, device=device)
     out_path = REPO_ROOT / "results" / "training" / run
     out_path.mkdir(parents=True, exist_ok=True)
-
-    if model.upper() != "MASKRCNN":
-        trainer.train_unet_fold(
-            folded_out_region=folded_out_regions[0] if folded_out_regions else None,
-            epochs=epochs,
-            batch_size=batch_size,
-            out_path=out_path,
-            random_train=random_split)
-        return
 
     if LORO_CV:
         regions = folded_out_regions
@@ -75,6 +69,13 @@ def main(
             epochs=epochs,
             batch_size=batch_size,
             exclude_region=folded_out_regions[0] if folded_out_regions else None
+        )
+
+    elif for_inference:
+        trainer.train_for_inference(
+            epochs=epochs,
+            batch_size=batch_size,
+            out_path=out_path,
         )
 
     else:
@@ -94,7 +95,8 @@ if __name__ == "__main__":
     parser.add_argument("--run", type=str, default=None, help="Name of the run to save the best model and training metrics.")
     parser.add_argument("--LORO_CV", action="store_true", help="Perform Leave-One-Region-Out Cross-Validation.")
     parser.add_argument("--random_split", action="store_true", help="Perform random split training instead of LORO-CV.")
-    parser.add_argument("--model", type=str, default="MaskRCNN", help="Model to train.")
+    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device to run the model on (e.g., 'cuda' or 'cpu').")
+    parser.add_argument("--for_inference", action="store_true", help="Train a model for inference (no validation).")
     args = parser.parse_args()
 
     main(**vars(args))
