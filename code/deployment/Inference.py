@@ -176,6 +176,7 @@ class SCDModel():
             device=self.device,
             nodata=self.NODATA if self.NODATA is not None else -9999,
             to_veto=self.to_veto,
+            run_name = self.run_name,
             **(hyperparams or {}),
             requested_returns=requested_returns)
 

@@ -27,8 +27,8 @@ def main(
     return_raw=False,
     return_provisional=False,
     return_unvetoed=False,
-    **config_overrides,
-):
+    **config_overrides):
+    
     """Run SCD inference from parsed command-line arguments.
 
     Parameters

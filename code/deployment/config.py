@@ -8,6 +8,7 @@ class DeployConfig:
     device: str = "cpu"
     nodata: float = -9999
     native_res: float = 30
+    run_name: str= None
 
     # tiling
     tile_size: int = 512

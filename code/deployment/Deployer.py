@@ -371,7 +371,6 @@ class Deployer:
 
     # merges all veto-cleaned predictions and then sieves remaining predictions
     # which are too physically small to be reasonably resolvable given the native DEM. 
-
     def polygonize(self, array, transform, crs, threshold=0.0):
         """
         Converts a binary mask array into a GeoDataFrame of polygons.
@@ -507,6 +506,7 @@ class ResPredictor():
         self.res = res
         self.model = model
         self.norm_stats = norm_stats
+        self.run_name = cfg.run_name
 
         self.device = cfg.device
         self.dem_path = cfg.dem_path
@@ -628,7 +628,7 @@ class ResPredictor():
             transform = dem_source.transform
 
             # saved on file to reduce memory failure
-            scratch = REPO_ROOT / 'scratch' / 'predict' / f"{resolution:g}m"
+            scratch = REPO_ROOT / 'scratch' / 'predict' / self.run_name / f"{resolution:g}m"
             scratch.mkdir(parents=True, exist_ok=True)
             tag = f"{resolution:g}m"
             prob_map = np.lib.format.open_memmap(scratch / f"prob_{tag}.npy", mode="w+", dtype=np.float32, shape=(h, w))
