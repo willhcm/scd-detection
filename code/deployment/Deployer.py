@@ -79,7 +79,7 @@ class Deployer:
             self.veto_model.eval()
 
         self.run_id= str(uuid.uuid4())  # unique identifier for this run, used for scratch directory naming
-        self.scratch_dir = REPO_ROOT / "scratch" / "deploy" / self.run_name
+        self.scratch_dir = REPO_ROOT / "scratch" / "deploy" / self.run_id
         self.scratch_dir.mkdir(parents=True, exist_ok=True)
 
     def predict(self):
@@ -210,7 +210,7 @@ class Deployer:
         transform, crs = base["transform"], base["crs"]
         h, w = base["prob"].shape
 
-        self.scratch_dir = REPO_ROOT / "scratch" / "merge" / self.run_name
+        self.scratch_dir = REPO_ROOT / "scratch" / "merge" / self.run_id
         self.scratch_dir.mkdir(parents=True, exist_ok=True)
 
         # Pass 1: provisional predictions from the plain merge.
@@ -511,15 +511,15 @@ class ResPredictor():
     Internally calls ModelWrapper.predict() to run the model on each tile, and merges the results into a single probability map.
     """
 
-    def __init__(self, res, model, norm_stats, cfg=None):
+    def __init__(self, res, model, norm_stats, run_id, cfg=None):
 
         cfg = cfg or config.get()
 
         self.res = res
         self.model = model
         self.norm_stats = norm_stats
-        self.run_name = cfg.run_name
 
+        self.run_id = run_id
         self.device = cfg.device
         self.dem_path = cfg.dem_path
         self.tile_size = cfg.tile_size
@@ -640,7 +640,7 @@ class ResPredictor():
             transform = dem_source.transform
 
             # saved on file to reduce memory failure
-            self.scratch = REPO_ROOT / 'scratch' / 'predict' / self.run_name / f"{resolution:g}m"
+            self.scratch = REPO_ROOT / 'scratch' / 'predict' / self.run_id / f"{resolution:g}m"
             self.scratch.mkdir(parents=True, exist_ok=True)
             tag = f"{resolution:g}m"
             prob_map = np.lib.format.open_memmap(self.scratch / f"prob_{tag}.npy", mode="w+", dtype=np.float32, shape=(h, w))
