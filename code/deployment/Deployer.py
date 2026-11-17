@@ -92,7 +92,7 @@ class Deployer:
                 cfg=self.cfg,
             )
 
-            prob_map, transform, crs = predictor.predict()
+            prob_map, transform, crs, self.rp_scratch_dir = predictor.predict()
 
             preds[res] = {
                 "prob": prob_map,
@@ -204,13 +204,13 @@ class Deployer:
         transform, crs = base["transform"], base["crs"]
         h, w = base["prob"].shape
 
-        scratch_dir = REPO_ROOT / "scratch" / "merge"
-        scratch_dir.mkdir(parents=True, exist_ok=True)
+        self.scratch_dir = REPO_ROOT / "scratch" / "merge" / self.run_name
+        self.scratch_dir.mkdir(parents=True, exist_ok=True)
 
         # Pass 1: provisional predictions from the plain merge.
-        provisional = self.max_prob(preds, base_res, transform, crs, (h, w), scratch_dir / "provisional.npy")
+        provisional = self.max_prob(preds, base_res, transform, crs, (h, w), self.scratch_dir / "provisional.npy")
 
-        labels_path = scratch_dir / "labels.npy"
+        labels_path = self.scratch_dir / "labels.npy"
         labels = np.lib.format.open_memmap(
             labels_path,
             mode="w+",
@@ -258,7 +258,7 @@ class Deployer:
         keep[1:] = obj_score >= cfg.keep_threshold
 
         merged = np.lib.format.open_memmap(
-            scratch_dir / "weighted_merged.npy",
+            self.scratch_dir / "weighted_merged.npy",
             mode="w+", dtype=np.float32, shape=(h, w))
 
         for r0 in range(0, h, band):
@@ -488,6 +488,8 @@ class Deployer:
         for k, v in saved.items():
             print(f" {k} saved to: {v}")
 
+        self.scratch_dir.rmdir()  # remove the scratch directory after use
+        self.rp_scratch_dir.rmdir()  # remove the ResPredictor scratch directory after use
         return gdf
 
 # self contained res predictor to decrease amount of calculations needed to be made repetitively!
@@ -628,11 +630,11 @@ class ResPredictor():
             transform = dem_source.transform
 
             # saved on file to reduce memory failure
-            scratch = REPO_ROOT / 'scratch' / 'predict' / self.run_name / f"{resolution:g}m"
-            scratch.mkdir(parents=True, exist_ok=True)
+            self.scratch = REPO_ROOT / 'scratch' / 'predict' / self.run_name / f"{resolution:g}m"
+            self.scratch.mkdir(parents=True, exist_ok=True)
             tag = f"{resolution:g}m"
-            prob_map = np.lib.format.open_memmap(scratch / f"prob_{tag}.npy", mode="w+", dtype=np.float32, shape=(h, w))
-            weight_map = np.lib.format.open_memmap(scratch / f"weight_{tag}.npy", mode="w+", dtype=np.float32, shape=(h, w))
+            prob_map = np.lib.format.open_memmap(self.scratch / f"prob_{tag}.npy", mode="w+", dtype=np.float32, shape=(h, w))
+            weight_map = np.lib.format.open_memmap(self.scratch / f"weight_{tag}.npy", mode="w+", dtype=np.float32, shape=(h, w))
 
             # calculate streides and tile size in meetres
             stride_px = max(1, int(round(self.tile_size * self.stride_frac)))
@@ -754,7 +756,7 @@ class ResPredictor():
             if progress is not None:
                 progress.close()
             os.remove(dem_source.temp_path)
-            
+
         return prob_map, transform, dem_source.crs
 
     @staticmethod

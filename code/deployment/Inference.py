@@ -179,7 +179,8 @@ class SCDModel():
             run_name = self.run_name,
             **(hyperparams or {}),
             requested_returns=requested_returns)
-
+        
+        self.config = config.get()
         return Deployer(self.MaskRCNN_model_state, self.veto_model_state)
 
     def _resolve_data_source(self, dem_path):
