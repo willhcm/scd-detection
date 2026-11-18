@@ -10,6 +10,8 @@ sys.path.insert(0, str(REPO_ROOT / "code"))
 from deployment.config import DeployConfig
 import deployment.config as config
 from deployment.Inference import SCDModel
+import signal
+import sys
 
 # set by their own arguments (or read from the DEM), so no override flag
 NOT_OVERRIDABLE = {"dem_path", "resolutions", "device", "nodata", "to_veto"}
@@ -74,6 +76,8 @@ def main(
     if run_name is None:
         raise ValueError("run_name is required.")
 
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(1))
+
     resolutions = [1.0] if resolutions is None else resolutions
     names = {f.name for f in fields(DeployConfig)} - NOT_OVERRIDABLE
     overrides = {k: v for k, v in config_overrides.items() if k in names}
@@ -81,14 +85,12 @@ def main(
         "return_all": return_all,
         "return_raw": return_raw,
         "return_provisional": return_provisional,
-        "return_unvetoed": return_unvetoed,
-    }
+        "return_unvetoed": return_unvetoed}
 
     requested_returns = {
         k.split("_")[1]: True
         for k, value in requested_flags.items()
-        if value
-    }
+        if value}
 
     requested_returns["predictions"] = True
     requested_returns['transform'] = True

@@ -489,6 +489,8 @@ class Deployer:
             if path.exists():
                 shutil.rmtree(path, onerror=report)
 
+        print(f"Cleaned up scratch directory: {self.scratch_dir}")
+
 # self contained res predictor to decrease amount of calculations needed to be made repetitively!
 class ResPredictor():
     """
