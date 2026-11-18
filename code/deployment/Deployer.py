@@ -77,6 +77,7 @@ class Deployer:
             self.veto_norm_stats = veto_model_dict['norm_stats'] 
             self.veto_model.to(self.cfg.device)
             self.veto_model.eval()
+            self.postprocessor = PostProcessor(self.veto_model, self.veto_norm_stats, cfg=self.cfg)
 
         self.run_id = uuid.uuid4().hex
         self.scratch_root = REPO_ROOT / "scratch"
@@ -232,11 +233,7 @@ class Deployer:
         
         labels[:] = labels_array
         labels.flush()
-        del labels_array, mask, provisional # free memory
-
-        provisional_path = self.scratch_dir / "provisional.npy"
-        if provisional_path.exists():
-            shutil.rmtree(provisional_path, ignore_errors=True)
+        del labels_array, mask
 
         # banded for RAM.
         counts = np.zeros(n_objects + 1, dtype=np.int64)
@@ -279,6 +276,12 @@ class Deployer:
 
         merged.flush()
         labels.flush()
+
+        del provisional
+        provisional_path = self.scratch_dir / "provisional.npy"
+        if provisional_path.exists():
+            shutil.rmtree(provisional_path, ignore_errors=True)
+        
         return merged, labels, transform, crs, obj_score
         
 
@@ -313,12 +316,6 @@ class Deployer:
         return out
     
     def veto(self, merged, labels, transform, crs):
-
-        self.postprocessor = PostProcessor(
-            self.veto_model,
-            self.veto_norm_stats,
-            cfg=self.cfg)
-        
         return self.postprocessor.predict(merged, labels, transform, crs)
 
     def sweep(self):
@@ -493,8 +490,10 @@ class Deployer:
             path = self.scratch_root / sub / self.run_id
             if path.exists():
                 shutil.rmtree(path, onerror=report)
-        if self.postprocessor.dem_source.temp_path.exists():
-            shutil.rmtree(self.postprocessor.dem_source.temp_path, onerror=report)
+
+        if self.postprocessor is not None:
+            if self.postprocessor.dem_source.temp_path.exists():
+                shutil.rmtree(self.postprocessor.dem_source.temp_path, onerror=report)
 
         print(f"Cleaned up scratch directory: {self.scratch_dir}")
 
