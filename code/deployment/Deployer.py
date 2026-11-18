@@ -234,8 +234,9 @@ class Deployer:
         labels.flush()
         del labels_array, mask, provisional # free memory
 
-        if self.scratch_dir / "provisional.npy".exists():
-            os.remove(self.scratch_dir / "provisional.npy")
+        provisional_path = self.scratch_dir / "provisional.npy"
+        if provisional_path.exists():
+            shutil.rmtree(provisional_path, ignore_errors=True)
 
         # banded for RAM.
         counts = np.zeros(n_objects + 1, dtype=np.int64)
