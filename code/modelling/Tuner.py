@@ -85,54 +85,16 @@ class Tuner():
                 "labels": labels,
             })
 
-        self.model = self.area_models[0]["model"]
-        self.labels = self.area_models[0]["labels"]
-
     def _run_area(self, area, params):
-        # Deployment still has legacy module-global config consumers. Keep the
-        # complete sweep under the lock so another area cannot replace the
-        # active DEM/config while this area is running.
         with self._config_lock:
             area["model"].set_params(**params)
             deployer = area["model"].deployer
             results = deployer.sweep()
 
-        labels = np.asarray(results["predictions"]).astype(np.int32)
-        geometries, object_ids = [], []
-        for geometry, object_id in shapes(
-            labels,
-            mask=labels > 0,
-            transform=results["transform"],
-            connectivity=8):
+        deployer.save_predictions(results, area["model"].out_path)
+        deployer.cleanup()  # remove the deployer scratch directory after use
 
-            geometries.append(shape(geometry))
-            object_ids.append(int(object_id))
-
-        min_m2 = (area["model"].config.native_res ** 2) * area["model"].config.min_native_pixels # resolution constraint, an area.
-        min_pixels = int(np.ceil(max(min_m2, area["model"].config.min_object_m2) / (deployer.base_res ** 2)))
-
-        transform = results['transform']
-        crs = results['crs']
-        lab = np.asarray(results['predictions']).astype(np.int32)
-
-        # drop objects below the minimum size, keeping the original ids
-        counts = np.bincount(lab.ravel())
-        lab[(counts < min_pixels)[lab]] = 0
-
-        print(f"Polygonizing {np.count_nonzero(lab)} positive pixels", flush=True)
-
-        gdf = deployer.polygonize(lab, transform, crs, threshold=0.0)
-
-        print(f"Polygonized {len(gdf)} objects", flush=True)
-
-        score = results.get("obj_score")
-        if score is not None and not gdf.empty:
-            gdf["score"] = score[gdf["object_id"].to_numpy() - 1]
-
-        if not gdf.empty:
-            gdf["area_m2"] = gdf.geometry.area
-
-        return gdf
+        return deployer.results_to_gdf(results)
 
     def run(self, params):
         predictions = [self._run_area(a, params) for a in self.area_models]
