@@ -13,6 +13,7 @@ from deployment.Deployer import Deployer
 import numpy as np
 import rasterio as rio
 import subprocess
+from dataclasses import replace
 
 # main class for whole model. calls deployer internally (which itself calls ResPredictor (which itself uses MaskRCNN wrapper class) and PostProcessor classes)
 #
@@ -109,19 +110,19 @@ class SCDModel():
         self.dem_path = self._resolve_data_source(dem_path)
         self.deployer = self._create_deployer(hyperparams, requested_returns)
 
-    # PUBLIC METHODS
     def set_params(self, **params):
-        """Update deployment parameters and rebuild the deployer.
-
+        """Set hyperparameters for the inference workflow.
+        
         Parameters
         ----------
         **params
             Values for fields in :class:`deployment.config.DeployConfig`.
             The existing configuration is replaced with these overrides,
             and the deployer is rebuilt so it uses the updated snapshot.
+        
         """
-        # Deployer snapshots the config on init, so it has to be rebuilt.
-        config.update(**params)
+        self.config = replace(self.config, **params)
+        config.use(self.config)
         self.deployer = Deployer(self.MaskRCNN_model_state, self.veto_model_state)
 
     def predict(self):
@@ -157,7 +158,8 @@ class SCDModel():
             print(f'Saving results to {self.out_path}...')
             self.deployer.save_predictions(results, self.out_path)
         finally:
-            self.deployer.cleanup()  # remove the deployer scratch directory after use      
+            self.deployer.cleanup()  # remove the deployer scratch directory after use    
+
         # write bounds of DEM to a text file for reference
         with open(self.out_path / "covered_bounds.txt", "a") as f:
             f.write(f"Run: {self.run_name}\n")

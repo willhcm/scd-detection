@@ -56,6 +56,10 @@ def update(**kwargs):
     _cfg = replace(get(), **kwargs)
     return _cfg
 
+def use(cfg):
+    global _cfg
+    _cfg = cfg
+    return cfg
 
 def get():
     if _cfg is None:

@@ -86,15 +86,29 @@ class Tuner():
             })
 
     def _run_area(self, area, params):
+        """Run inference on a single test area with the given hyperparameters.
+        
+        Parameters
+        ----------
+        area : dict
+            A dictionary containing the SCDModel and labels for a test area.
+        params : dict
+            Hyperparameters to set for the SCDModel before running inference.
+        Returns
+        -------
+        geopandas.GeoDataFrame
+            The results of the inference as a GeoDataFrame.
+        """
         with self._config_lock:
             area["model"].set_params(**params)
             deployer = area["model"].deployer
-            results = deployer.sweep()
-
-        deployer.save_predictions(results, area["model"].out_path)
-        deployer.cleanup()  # remove the deployer scratch directory after use
-
-        return deployer.results_to_gdf(results)
+            try:
+                results = deployer.sweep()
+                gdf = deployer.results_to_gdf(results)
+            finally:
+                results = None
+                deployer.cleanup()
+        return gdf
 
     def run(self, params):
         predictions = [self._run_area(a, params) for a in self.area_models]
@@ -249,7 +263,7 @@ class Tuner():
         }
 
     def tune(self, param_grid):
-        best_object_f1 = -1
+        best_pixel_iou = -1
         best_params = None
         best_results = None
 
@@ -260,18 +274,18 @@ class Tuner():
             print(f"Evaluating params: {params}")
             preds = self.run(params)
             metrics = self.evaluate_results(preds)
-            object_f1 = metrics["object_f1"]
+            pixel_iou = metrics["pixel_iou"]
 
-            print(f"Params: {params}, Object F1: {object_f1:.4f}")
+            print(f"Params: {params}, Pixel IoU: {pixel_iou:.4f}")
 
-            if object_f1 > best_object_f1:
-                best_object_f1 = object_f1
+            if pixel_iou > best_pixel_iou:
+                best_pixel_iou = pixel_iou
                 best_params = params
                 best_results = metrics
 
         print(
-            f"Best params: {best_params}, Best Object F1: "
-            f"{best_object_f1:.4f}"
+            f"Best params: {best_params}, Best Pixel IoU: "
+            f"{best_pixel_iou:.4f}"
         )
         return best_params, best_results
 
@@ -341,10 +355,10 @@ class Tuner():
             metrics = self.evaluate_results(preds)
             trial.set_user_attr("metrics", metrics)
             print(
-                f"Trial {trial.number}: object F1 = "
-                f"{metrics['object_f1']:.4f}")
+                f"Trial {trial.number}: pixel IoU = "
+                f"{metrics['pixel_iou']:.4f}")
             
-            return metrics["object_f1"]
+            return metrics["pixel_iou"]
 
         study.optimize(objective, n_trials=n_trials)
 
@@ -355,5 +369,5 @@ class Tuner():
             best_results = self.evaluate_results(preds)
 
         print(f"Best params: {study.best_params}")
-        print(f"Best Object F1: {study.best_value:.4f}")
+        print(f"Best Pixel IoU: {study.best_value:.4f}")
         return study.best_params, best_results

@@ -78,7 +78,7 @@ class Deployer:
             self.veto_model.to(self.cfg.device)
             self.veto_model.eval()
 
-        self.run_id = 'Tuning'  # unique identifier for this run, used for scratch directory naming
+        self.run_id = uuid.uuid4().hex
         self.scratch_root = REPO_ROOT / "scratch"
         self.scratch_dir = REPO_ROOT / "scratch" / "deploy" / self.run_id
         self.scratch_dir.mkdir(parents=True, exist_ok=True)
@@ -404,6 +404,23 @@ class Deployer:
         gdf = gpd.GeoDataFrame({"object_id": ids, "geometry": geoms}, crs=crs)
         return gdf
 
+    def results_to_gdf(self, results):
+        cfg = self.cfg
+        min_m2 = (cfg.native_res ** 2) * cfg.min_native_pixels
+        min_pixels = int(np.ceil(max(min_m2, cfg.min_object_m2) / (self.base_res ** 2)))
+
+        lab = np.asarray(results["predictions"]).astype(np.int32)
+        counts = np.bincount(lab.ravel())
+        lab[(counts < min_pixels)[lab]] = 0
+        gdf = self.polygonize(lab, results["transform"], results["crs"])
+
+        score = results.get("obj_score")
+        if score is not None and not gdf.empty:
+            gdf["score"] = score[gdf["object_id"].to_numpy() - 1]
+        if not gdf.empty:
+            gdf["area_m2"] = gdf.geometry.area
+        return gdf
+
     def save_predictions(self, results, output_path):
         """
         Saves the merged predictions to disk in the specified format (shapefile, GeoTIFF, or NumPy array) based on the requested returns in the configuration.
@@ -425,29 +442,8 @@ class Deployer:
         cfg = self.cfg
         requested_returns = cfg.requested_returns
 
-        # process and polygonize the predictions, filtering out small objects based on the native resolution and minimum object size.
-        # native res should determine smallest resolvable objects.
-        min_m2 = (cfg.native_res ** 2) * cfg.min_native_pixels # resolution constrain, an area.
-        min_pixels = int(np.ceil(max(min_m2, cfg.min_object_m2) / (self.base_res ** 2)))
-
-        transform = results['transform']
-        crs = results['crs']
-        lab = np.asarray(results['predictions']).astype(np.int32)
-
-        # drop objects below the minimum size, keeping the original ids
-        counts = np.bincount(lab.ravel())
-        lab[(counts < min_pixels)[lab]] = 0
-
-        print(f"Polygonizing {np.count_nonzero(lab)} positive pixels", flush=True)
-
-        gdf = self.polygonize(lab, transform, crs, threshold=0.0)
-
-        score = results.get("obj_score")
-        if score is not None and not gdf.empty:
-            gdf["score"] = score[gdf["object_id"].to_numpy() - 1]
-
-        if not gdf.empty:
-            gdf["area_m2"] = gdf.geometry.area
+        gdf = self.results_to_gdf(results)
+        transform, crs = results["transform"], results["crs"]
 
         # polygonize rejected objects (at veto stage)
         if "rejected" in results:
@@ -461,26 +457,16 @@ class Deployer:
         output_path.mkdir(parents=True, exist_ok=True)
 
         NPYS = ["raw", "provisional", "obj_score", 'unvetoed']
-        TIFS = ['rejected']
+        GDFS = ['rejected']
         saved = {}
 
         for req in requested_returns:
             if req == "predictions":
                 out_path = output_path / "predictions.shp"
                 gdf.to_file(out_path, driver="ESRI Shapefile")
-            elif req in TIFS:
-                out_path = output_path / f"{req}.tif"
-                with rasterio.open(
-                    out_path,
-                    "w",
-                    driver="GTiff",
-                    height=results[req].shape[0],
-                    width=results[req].shape[1],
-                    count=1,
-                    dtype=results[req].dtype,
-                    crs=results['crs'],
-                    transform=results['transform']) as dst:
-                    dst.write(results[req], 1)
+            elif req in GDFS:
+                out_path = output_path / f"{req}.shp"
+                results[req].to_file(out_path, driver="ESRI Shapefile")
             elif req in NPYS:
                 out_path = output_path / f"{req}.npy"
                 np.save(out_path, results[req])
@@ -495,12 +481,13 @@ class Deployer:
         return gdf
 
     def cleanup(self):
-
         def report(func, path, exc_info):
             print(f"cleanup failed on {path}: {exc_info[1]}")
 
         for sub in ("deploy", "predict"):
-            shutil.rmtree(self.scratch_root / sub / self.run_id, onerror=report)
+            path = self.scratch_root / sub / self.run_id
+            if path.exists():
+                shutil.rmtree(path, onerror=report)
 
 # self contained res predictor to decrease amount of calculations needed to be made repetitively!
 class ResPredictor():
