@@ -11,6 +11,8 @@ RESULTS_DIR = REPO_ROOT / "results"
 sys.path.insert(0, str(REPO_ROOT / "code"))
 from deployment.config import DeployConfig
 from modelling.Tuner import Tuner
+import signal
+import sys
 
 # keys must be DeployConfig field names
 # Used for discrete grid search.
@@ -57,6 +59,8 @@ DEPLOYER_PARAMS = {
 VETO_ONLY = {'veto_threshold'}
 
 def main(args):
+
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(1))
 
     valid = {f.name for f in fields(DeployConfig)}
     unknown = (set(PARAM_SPACE) | set(DEPLOYER_PARAMS)) - valid

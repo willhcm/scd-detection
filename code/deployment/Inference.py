@@ -14,6 +14,7 @@ import numpy as np
 import rasterio as rio
 import subprocess
 from dataclasses import replace
+import shutil
 
 # main class for whole model. calls deployer internally (which itself calls ResPredictor (which itself uses MaskRCNN wrapper class) and PostProcessor classes)
 #
@@ -158,7 +159,7 @@ class SCDModel():
             print(f'Saving results to {self.out_path}...')
             self.deployer.save_predictions(results, self.out_path)
         finally:
-            self.deployer.cleanup()  # remove the deployer scratch directory after use    
+            self.deployer.cleanup()  # remove scratch and tempfiles after use
 
         # write bounds of DEM to a text file for reference
         with open(self.out_path / "covered_bounds.txt", "a") as f:

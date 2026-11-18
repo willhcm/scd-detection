@@ -218,7 +218,7 @@ class Deployer:
         labels = np.lib.format.open_memmap(
             labels_path,
             mode="w+",
-            dtype=np.int32,
+            dtype=np.int16,
             shape=(h, w))
 
         # Threshold the provisional map to identify candidate objects.
@@ -232,7 +232,10 @@ class Deployer:
         
         labels[:] = labels_array
         labels.flush()
-        del labels_array, mask # free memory
+        del labels_array, mask, provisional # free memory
+
+        if self.scratch_dir / "provisional.npy".exists():
+            os.remove(self.scratch_dir / "provisional.npy")
 
         # banded for RAM.
         counts = np.zeros(n_objects + 1, dtype=np.int64)
@@ -275,7 +278,7 @@ class Deployer:
 
         merged.flush()
         labels.flush()
-        return merged, labels, transform, crs, obj_score, provisional
+        return merged, labels, transform, crs, obj_score
         
 
     def max_prob(self, preds, base_res, transform, crs, shape, path):
@@ -309,11 +312,13 @@ class Deployer:
         return out
     
     def veto(self, merged, labels, transform, crs):
-        return PostProcessor(
+
+        self.postprocessor = PostProcessor(
             self.veto_model,
             self.veto_norm_stats,
-            cfg=self.cfg,
-        ).predict(merged, labels, transform, crs)
+            cfg=self.cfg)
+        
+        return self.postprocessor.predict(merged, labels, transform, crs)
 
     def sweep(self):
 
@@ -346,14 +351,13 @@ class Deployer:
         predictions = self.predict()
 
         print("Inference complete; starting weighted vote", flush=True)
-        merged, objects, transform, crs, obj_score, provisional = self.weighted_vote(predictions)
+        merged, objects, transform, crs, obj_score = self.weighted_vote(predictions)
 
         available = {
             "raw": predictions,
             "unvetoed": merged,
             "predictions": objects,
             "obj_score": obj_score,
-            "provisional": provisional,
             "transform": transform,
             "crs": crs,
         }
@@ -488,6 +492,8 @@ class Deployer:
             path = self.scratch_root / sub / self.run_id
             if path.exists():
                 shutil.rmtree(path, onerror=report)
+        if self.postprocessor.dem_source.temp_path.exists():
+            shutil.rmtree(self.postprocessor.dem_source.temp_path, onerror=report)
 
         print(f"Cleaned up scratch directory: {self.scratch_dir}")
 
@@ -632,10 +638,16 @@ class ResPredictor():
 
             # saved on file to reduce memory failure
             tag = f"{resolution:g}m"
-            prob_map = np.lib.format.open_memmap(self.scratch_dir / f"prob_{tag}.npy", mode="w+", dtype=np.float32, shape=(h, w))
-            weight_map = np.lib.format.open_memmap(self.scratch_dir / f"weight_{tag}.npy", mode="w+", dtype=np.float32, shape=(h, w))
+            prob_map = np.lib.format.open_memmap(
+                self.scratch_dir / f"prob_{tag}.npy", mode="w+", dtype=np.float32, shape=(h, w))
+            for r in range(0, h, 1024):
+                prob_map[r:r + 1024] = np.nan      # rows no tile ever touches stay NaN
 
+            ts = self.tile_size
+            acc = wband = None
+            band_top = None
             # calculate streides and tile size in meetres
+
             stride_px = max(1, int(round(self.tile_size * self.stride_frac)))
             stride_m = stride_px * resolution
             tile_w_m = self.tile_size * resolution
@@ -697,22 +709,51 @@ class ResPredictor():
                 # outputs (prob map)
                 masks = self.model.predict(x, resolutions, self.device) 
 
-                # saves to correct locations in global prob_map and weight_map
                 for mask, (row0, col0) in zip(masks, batch_locs):
                     pred = mask.numpy() if torch.is_tensor(mask) else np.asarray(mask)
-                    row1, col1 = row0 + self.tile_size, col0 + self.tile_size
-                    prob_map[row0:row1, col0:col1] += pred * weight_kernel
-                    weight_map[row0:row1, col0:col1] += weight_kernel
+                    r0 = row0 - band_top
+                    acc[r0:r0 + ts, col0:col0 + ts] += pred * weight_kernel
+                    wband[r0:r0 + ts, col0:col0 + ts] += weight_kernel
                     predicted_tiles += 1
 
                 # clears batch
                 batch_tiles.clear()
                 batch_locs.clear()
 
+            def finalize(lo, hi):
+                # band rows [lo, hi) are done, so divide and write them out
+                top = band_top + lo
+                a, b = max(top, 0), min(band_top + hi, h)
+                if b <= a:
+                    return
+                p = acc[a - band_top:b - band_top]
+                wt = wband[a - band_top:b - band_top]
+                out = np.full(p.shape, np.nan, dtype=np.float32)
+                ok = wt > 0
+                out[ok] = p[ok] / wt[ok]
+                prob_map[a:b] = out
+
+            def advance_band(r):
+                # called at the start of each strip, r is its top row in the raster
+                nonlocal acc, wband, band_top
+                new_acc = np.zeros((ts, w), dtype=np.float32)
+                new_w = np.zeros((ts, w), dtype=np.float32)
+                if band_top is not None:
+                    keep = max(0, min(r + ts, band_top + ts) - band_top)
+                    finalize(keep, ts)
+                    if keep > 0:
+                        d = band_top - r
+                        new_acc[d:d + keep] = acc[:keep]
+                        new_w[d:d + keep] = wband[:keep]
+                acc, wband, band_top = new_acc, new_w, r
+
             with torch.inference_mode():
 
                 for y0 in y_positions:
                     strip, strip_minx = self._make_row_strip(dem_source, y0, x_positions, tile_w_m, resolution)
+
+                    _, strip_row0 = ~transform * (x_positions[0], y0 + tile_w_m)
+                    advance_band(int(round(strip_row0)))
 
                     for x0 in x_positions:
 
@@ -737,20 +778,12 @@ class ResPredictor():
 
                         progress.update(1)
 
-                flush_batch()
+                    flush_batch()
 
-            
-            # normalise in row chunks so the memmaps never need to be fully in memory.
-            # chunk step must equal chunk height or rows get divided more than once.
-            chunk = 1024
-            for r in range(0, h, chunk):
-                p, wt = prob_map[r:r + chunk], weight_map[r:r + chunk]
-                ok = wt > 0
-                p[ok] /= wt[ok]
-                p[~ok] = np.nan
+            if band_top is not None:
+                finalize(0, ts)
             prob_map.flush()
-            del weight_map
-
+            
         finally:
             if progress is not None:
                 progress.close()
