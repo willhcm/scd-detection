@@ -103,6 +103,8 @@ class Tuner():
             area["model"].set_params(**params)
             deployer = area["model"].deployer
             try:
+                cfg = deployer.cfg
+                print(area["name"], cfg.dem_path, cfg.resolutions, cfg.native_res, cfg.score_threshold, cfg.keep_threshold)
                 results = deployer.sweep()
                 gdf = deployer.results_to_gdf(results)
             finally:
