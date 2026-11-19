@@ -492,7 +492,7 @@ class Deployer:
                 shutil.rmtree(path, onerror=report)
 
         if self.postprocessor is not None:
-            if self.postprocessor.dem_source.temp_path.exists():
+            if Path(self.postprocessor.dem_source.temp_path).exists():
                 shutil.rmtree(self.postprocessor.dem_source.temp_path, onerror=report)
 
         print(f"Cleaned up scratch directory: {self.scratch_dir}")
