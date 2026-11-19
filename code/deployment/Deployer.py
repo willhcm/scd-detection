@@ -227,11 +227,11 @@ class Deployer:
         # to be replaced with a tiled implementation.
         mask = np.isfinite(provisional) & (provisional >= cfg.object_threshold)
 
-        labels_array = np.zeros(mask.shape, dtype=np.int16)
+        labels_array = np.zeros(mask.shape, dtype=np.int32)
         n_objects = label(mask, structure=np.ones((3, 3), dtype=np.int16), output=labels_array)
 
         labels = np.lib.format.open_memmap(
-            labels_path, mode="w+", dtype=np.int16, shape=(h, w))
+            labels_path, mode="w+", dtype=np.int32, shape=(h, w))
 
         print(labels_array.dtype, labels_array.min(), labels_array.max(), n_objects)
         
