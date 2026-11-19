@@ -227,9 +227,13 @@ class Deployer:
         # to be replaced with a tiled implementation.
         mask = np.isfinite(provisional) & (provisional >= cfg.object_threshold)
 
-        labels_array, n_objects = label(
-            mask,
-            structure=np.ones((3, 3), dtype=np.uint8))
+        labels_array = np.zeros(mask.shape, dtype=np.int16)
+        n_objects = label(mask, structure=np.ones((3, 3), dtype=np.uint8), output=labels_array)
+
+        labels = np.lib.format.open_memmap(
+            labels_path, mode="w+", dtype=np.int16, shape=(h, w))
+
+        print(labels_array.dtype, labels_array.min(), labels_array.max(), n_objects)
         
         labels[:] = labels_array
         labels.flush()
@@ -278,9 +282,9 @@ class Deployer:
         labels.flush()
 
         del provisional
-        provisional_path = self.scratch_dir / "provisional.npy"
+        provisional_path = Path(self.scratch_dir / "provisional.npy")
         if provisional_path.exists():
-            shutil.rmtree(provisional_path, ignore_errors=True)
+            provisional_path.unlink(missing_ok=True)
         
         return merged, labels, transform, crs, obj_score
         
