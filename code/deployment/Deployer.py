@@ -228,7 +228,7 @@ class Deployer:
         mask = np.isfinite(provisional) & (provisional >= cfg.object_threshold)
 
         labels_array = np.zeros(mask.shape, dtype=np.int16)
-        n_objects = label(mask, structure=np.ones((3, 3), dtype=np.uint8), output=labels_array)
+        n_objects = label(mask, structure=np.ones((3, 3), dtype=np.int16), output=labels_array)
 
         labels = np.lib.format.open_memmap(
             labels_path, mode="w+", dtype=np.int16, shape=(h, w))
