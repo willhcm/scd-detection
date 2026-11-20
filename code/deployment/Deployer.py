@@ -100,12 +100,14 @@ class Deployer:
                 cfg=self.cfg,
                 run_id=self.run_id)
 
-            prob_map, transform, crs = predictor.predict()
+            prob_map, transform, crs, memmap_path = predictor.predict()
 
             preds[res] = {
                 "prob": prob_map,
                 "transform": transform,
-                "crs": crs}
+                "crs": crs,
+                "memmap_path": memmap_path}
+
 
         return preds   
 
@@ -249,6 +251,16 @@ class Deployer:
         weights = np.exp(-off ** 2 / (2 * cfg.size_sigma ** 2))   # 1 inside the interval 
 
         stats = self.object_scores(preds, labels, n_objects, base_res, transform, crs)
+
+        if "raw" not in cfg.requested_returns:
+            paths = []
+            for res, items in preds.items():
+                paths.append(items["memmap_path"])
+                items['probs'] = None
+            del base
+            for f in paths:
+                Path(f).unlink(missing_ok=True)
+            
         obj_score = (stats[1:] * weights).max(axis=1)
 
         keep = np.zeros(n_objects + 1, dtype=bool)
@@ -511,6 +523,7 @@ class ResPredictor():
         self.batch_size = cfg.batch_size
         self.NODATA = cfg.nodata
         self.sigma_px = cfg.sigma_px
+        self.base_res = min(cfg.resolutions)
         self.scratch_dir = REPO_ROOT / "scratch" / "predict" / self.run_id
         self.scratch_dir.mkdir(parents=True, exist_ok=True)
 
@@ -625,12 +638,12 @@ class ResPredictor():
             h, w = dem_source.height, dem_source.width
             transform = dem_source.transform
 
-            # saved on file to reduce memory failure
             tag = f"{resolution:g}m"
+            dtype = np.float16 if resolution == self.base_res else np.float32 # can be f16 for base as it is never reprojected in GDAL. other resolutions are and GDL doesnt support float16
             prob_map = np.lib.format.open_memmap(
-                self.scratch_dir / f"prob_{tag}.npy", mode="w+", dtype=np.float32, shape=(h, w))
+                self.scratch_dir / f"prob_{tag}.npy", mode="w+", dtype=dtype, shape=(h, w))
             for r in range(0, h, 1024):
-                prob_map[r:r + 1024] = np.nan      # rows no tile ever touches stay NaN
+                prob_map[r:r + 1024] = np.nan
 
             ts = self.tile_size
             acc = wband = None
@@ -778,7 +791,7 @@ class ResPredictor():
                 progress.close()
             os.remove(dem_source.temp_path)
 
-        return prob_map, transform, dem_source.crs
+        return prob_map, transform, dem_source.crs, memmap_path
 
     @staticmethod
     def handle_outliers(band):
