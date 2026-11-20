@@ -494,7 +494,7 @@ class Deployer:
 
         if self.postprocessor is not None:
             if Path(self.postprocessor.dem_source.temp_path).exists():
-                shutil.rmtree(self.postprocessor.dem_source.temp_path, onerror=report)
+                os.unlink(self.postprocessor.dem_source.temp_path) # remove the temporary DEM file created by the PostProcessor's WindowedDataSource
 
         print(f"Cleaned up scratch directory: {self.scratch_dir}")
 
@@ -791,7 +791,7 @@ class ResPredictor():
                 progress.close()
             os.remove(dem_source.temp_path)
 
-        return prob_map, transform, dem_source.crs, memmap_path
+        return prob_map, transform, dem_source.crs
 
     @staticmethod
     def handle_outliers(band):
