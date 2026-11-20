@@ -39,7 +39,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 TILE_ORDER = ['DEM', 'DEM_SLOPE', 'RR','LAPLACE']
 
 class Deployer:
-
     """
     Deployer class for running inference on a DEM using a Mask R-CNN model and a Veto classifier.
     Handles loading the DEM, running predictions at multiple resolutions, merging the predictions,
@@ -207,6 +206,7 @@ class Deployer:
         cfg = self.cfg
         band = cfg.merge_band
 
+        # lowest resolution grid in predictions is used as the common grid shape for merged map and object labels. This is the "base" resolution.
         base_res = min(preds)
         self.base_res = base_res
 
@@ -214,7 +214,11 @@ class Deployer:
         transform, crs = base["transform"], base["crs"]
         h, w = base["prob"].shape
 
-        # Pass 1: provisional predictions from the plain merge.
+
+        # get maximum probabilty from all resolutions for each pixel (reprojecting coarser resolutions to common 'base' grid). This is the provisional merged map.
+        # this merged map is then thresholded to identify candidate objects, which are then labelled and their sizes estimated.
+        # the sizes are used for object-size-aware weighting of the predictions from each resolution, which are then merged to produce the final merged map.
+        # an object size is measured in base-grid pixels, and the weighting is based on the resolution interval that an object of that size was trained to be seen at (see cfg.object_fraction, cfg.size_sigma).
         merged = self.max_prob(preds, base_res, transform, crs, (h, w), self.scratch_dir / "merged.npy")
         labels_path = self.scratch_dir / "labels.npy"
 
@@ -250,8 +254,10 @@ class Deployer:
         off = np.maximum(lo - log_res[None, :], 0) + np.maximum(log_res[None, :] - hi, 0) # offset of each resolution from the interval for each object
         weights = np.exp(-off ** 2 / (2 * cfg.size_sigma ** 2))   # 1 inside the interval 
 
+        # matrix for max object prob per object per resolution
         stats = self.object_scores(preds, labels, n_objects, base_res, transform, crs)
 
+        # no longer need dictionary of predictions from each resolution (was of form {res: {prob, transform, crs, memmap_path}}), so delete to free memory and storage
         if "raw" not in cfg.requested_returns:
             paths = []
             for res, items in preds.items():
@@ -260,12 +266,13 @@ class Deployer:
             del base
             for f in paths:
                 Path(f).unlink(missing_ok=True)
-            
-        obj_score = (stats[1:] * weights).max(axis=1)
 
+        # compute the weighted max probability for each object across resolutions, then threshold to keep or reject
+        obj_score = (stats[1:] * weights).max(axis=1)
         keep = np.zeros(n_objects + 1, dtype=bool)
         keep[1:] = obj_score >= cfg.keep_threshold
 
+        # write the final merged map and labels to disk, sieving out rejected objects
         for r0 in range(0, h, band):
             r1 = min(r0 + band, h)
             prov = merged[r0:r1]          # view into the file, edits go to disk
@@ -280,6 +287,10 @@ class Deployer:
         
 
     def max_prob(self, preds, base_res, transform, crs, shape, path):
+        """
+        Merges predictions from multiple resolutions into a single probability map by taking the maximum probability for each pixel across all resolutions.
+        Pixel space is defined by the lowest resolution in preds (base_res). Coarser resolutions are reprojected to the base grid using nearest-neighbor resampling.
+        """
         h, w = shape
         band = self.cfg.merge_band
         out = np.lib.format.open_memmap(
