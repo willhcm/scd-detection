@@ -651,8 +651,8 @@ class ResPredictor():
 
             tag = f"{resolution:g}m"
             dtype = np.float16 if resolution == self.base_res else np.float32 # can be f16 for base as it is never reprojected in GDAL. other resolutions are and GDL doesnt support float16
-            prob_map = np.lib.format.open_memmap(
-                self.scratch_dir / f"prob_{tag}.npy", mode="w+", dtype=dtype, shape=(h, w))
+            memmap_path = self.scratch_dir / f"prob_{tag}.npy"
+            prob_map = np.lib.format.open_memmap(memmap_path, mode="w+", dtype=dtype, shape=(h, w))
             for r in range(0, h, 1024):
                 prob_map[r:r + 1024] = np.nan
 
@@ -802,7 +802,7 @@ class ResPredictor():
                 progress.close()
             os.remove(dem_source.temp_path)
 
-        return prob_map, transform, dem_source.crs
+        return prob_map, transform, dem_source.crs, memmap_path
 
     @staticmethod
     def handle_outliers(band):
