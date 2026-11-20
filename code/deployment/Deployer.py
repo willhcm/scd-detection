@@ -357,12 +357,6 @@ class Deployer:
         print("Inference complete; starting weighted vote", flush=True)
         merged, objects, transform, crs, obj_score = self.weighted_vote(predictions)
 
-        if 'raw' not in requested_returns:
-            del predictions
-            scratch_dir = self.scratch_root / 'predict' / self.run_id
-            if scratch_dir.exists():
-                shutil.rmtree(scratch_dir)
-
         available = {
             "raw": predictions,
             "unvetoed": merged,
@@ -371,6 +365,14 @@ class Deployer:
             "transform": transform,
             "crs": crs,
         }
+
+        if 'raw' not in requested_returns:
+            del predictions
+            scratch_dir = self.scratch_root / 'predict' / self.run_id
+            if scratch_dir.exists():
+                shutil.rmtree(scratch_dir)
+            available.pop('raw', None)
+
 
         if self.cfg.to_veto:
             print("Applying Veto classifier to merged predictions...", flush=True)
