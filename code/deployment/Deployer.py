@@ -213,31 +213,19 @@ class Deployer:
         h, w = base["prob"].shape
 
         # Pass 1: provisional predictions from the plain merge.
-        provisional = self.max_prob(preds, base_res, transform, crs, (h, w), self.scratch_dir / "provisional.npy")
-
+        merged = self.max_prob(preds, base_res, transform, crs, (h, w), self.scratch_dir / "merged.npy")
         labels_path = self.scratch_dir / "labels.npy"
-        labels = np.lib.format.open_memmap(
-            labels_path,
-            mode="w+",
-            dtype=np.int16,
-            shape=(h, w))
 
         # Threshold the provisional map to identify candidate objects.
         # For very large rasters, connected-component labeling may need
         # to be replaced with a tiled implementation.
-        mask = np.isfinite(provisional) & (provisional >= cfg.object_threshold)
-
-        labels_array = np.zeros(mask.shape, dtype=np.int32)
-        n_objects = label(mask, structure=np.ones((3, 3), dtype=np.int16), output=labels_array)
-
         labels = np.lib.format.open_memmap(
             labels_path, mode="w+", dtype=np.int32, shape=(h, w))
 
-        print(labels_array.dtype, labels_array.min(), labels_array.max(), n_objects)
-        
-        labels[:] = labels_array
+        mask = np.isfinite(merged) & (merged >= cfg.object_threshold)
+        n_objects = label(mask, structure=np.ones((3, 3), dtype=np.uint8), output=labels)
         labels.flush()
-        del labels_array, mask
+        del mask
 
         # banded for RAM.
         counts = np.zeros(n_objects + 1, dtype=np.int64)
@@ -266,26 +254,16 @@ class Deployer:
         keep = np.zeros(n_objects + 1, dtype=bool)
         keep[1:] = obj_score >= cfg.keep_threshold
 
-        merged = np.lib.format.open_memmap(
-            self.scratch_dir / "weighted_merged.npy",
-            mode="w+", dtype=np.float32, shape=(h, w))
-
         for r0 in range(0, h, band):
             r1 = min(r0 + band, h)
-            prov = np.asarray(provisional[r0:r1])
+            prov = merged[r0:r1]          # view into the file, edits go to disk
             lab = np.asarray(labels[r0:r1])
             kept = keep[lab]
-            merged[r0:r1] = np.where(kept, prov, np.where(np.isnan(prov), np.nan, 0.0))
+            prov[~kept & ~np.isnan(prov)] = 0
             labels[r0:r1] = np.where(kept, lab, 0)
 
         merged.flush()
         labels.flush()
-
-        del provisional
-        provisional_path = Path(self.scratch_dir / "provisional.npy")
-        if provisional_path.exists():
-            provisional_path.unlink(missing_ok=True)
-        
         return merged, labels, transform, crs, obj_score
         
 
@@ -293,25 +271,26 @@ class Deployer:
         h, w = shape
         band = self.cfg.merge_band
         out = np.lib.format.open_memmap(
-            path, mode="w+", dtype=np.float32, shape=(h, w))
+            path, mode="w+", dtype=np.float16, shape=(h, w))
 
         for r0 in range(0, h, band):
             r1 = min(r0 + band, h)
             band_shape = (r1 - r0, w)
             band_tf = transform * Affine.translation(0, r0)
-            best = np.full(band_shape, np.nan, dtype=np.float32)
+            best = np.full(band_shape, np.nan, dtype=np.float16)
 
             for res, pred in preds.items():
                 if res == base_res:
-                    cur = np.asarray(pred["prob"][r0:r1], dtype=np.float32)
+                    cur = np.asarray(pred["prob"][r0:r1], dtype=np.float16)
                 else:
-                    cur = np.full(band_shape, np.nan, dtype=np.float32)
+                    tmp = np.full(band_shape, np.nan, dtype=np.float32)
                     reproject(
-                        source=pred["prob"], destination=cur,
+                        source=pred["prob"], destination=tmp,
                         src_transform=pred["transform"], src_crs=pred["crs"],
                         src_nodata=np.nan, dst_transform=band_tf, dst_crs=crs,
                         dst_nodata=np.nan, resampling=Resampling.nearest,
                         init_dest_nodata=True)
+                    cur = tmp.astype(np.float16)
                 best = np.fmax(best, cur)
 
             out[r0:r1] = best
@@ -354,6 +333,12 @@ class Deployer:
 
         print("Inference complete; starting weighted vote", flush=True)
         merged, objects, transform, crs, obj_score = self.weighted_vote(predictions)
+
+        if 'raw' not in requested_returns:
+            del predictions
+            scratch_dir = self.scratch_root / 'predict' / self.run_id
+            if scratch_dir.exists():
+                shutil.rmtree(scratch_dir)
 
         available = {
             "raw": predictions,
