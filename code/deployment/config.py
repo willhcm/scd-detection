@@ -1,5 +1,6 @@
 from dataclasses import dataclass, replace, field
-
+from pathlib import Path
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 @dataclass(frozen=True)
 class DeployConfig:
@@ -42,6 +43,13 @@ class DeployConfig:
     min_object_m2: float = 400.0  # 20m x 20m
     min_native_pixels: int = 25
     requested_returns: set = None
+
+    # memory management
+    scratch_root = Path(REPO_ROOT) / "scratch"
+    deployer_scratch = Path(REPO_ROOT) / "scratch" / "deploy"
+    predictor_scratch = Path(REPO_ROOT) / "scratch" / "predict"
+    merged_path = deployer_scratch / "merged.npy"
+    labels_path = deployer_scratch / "labels.npy"
 
 _cfg = None
 

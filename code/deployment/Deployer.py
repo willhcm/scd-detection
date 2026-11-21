@@ -79,8 +79,8 @@ class Deployer:
             self.postprocessor = PostProcessor(self.veto_model, self.veto_norm_stats, cfg=self.cfg)
 
         self.run_id = uuid.uuid4().hex
-        self.scratch_root = REPO_ROOT / "scratch"
-        self.scratch_dir = REPO_ROOT / "scratch" / "deploy" / self.run_id
+        self.scratch_root = self.cfg.scratch_root
+        self.scratch_dir = self.cfg.scratch_deploy / self.run_id
         self.scratch_dir.mkdir(parents=True, exist_ok=True)
 
     def predict(self):
@@ -219,8 +219,8 @@ class Deployer:
         # this merged map is then thresholded to identify candidate objects, which are then labelled and their sizes estimated.
         # the sizes are used for object-size-aware weighting of the predictions from each resolution, which are then merged to produce the final merged map.
         # an object size is measured in base-grid pixels, and the weighting is based on the resolution interval that an object of that size was trained to be seen at (see cfg.object_fraction, cfg.size_sigma).
-        merged = self.max_prob(preds, base_res, transform, crs, (h, w), self.scratch_dir / "merged.npy")
-        labels_path = self.scratch_dir / "labels.npy"
+        merged = self.max_prob(preds, base_res, transform, crs, (h, w), self.cfg.merged_path)
+        labels_path = self.cfg.labels_path
 
         # Threshold the provisional map to identify candidate objects.
         # For very large rasters, connected-component labeling may need
@@ -373,7 +373,6 @@ class Deployer:
                 shutil.rmtree(scratch_dir)
             available.pop('raw', None)
 
-
         if self.cfg.to_veto:
             print("Applying Veto classifier to merged predictions...", flush=True)
             veto_results = self.veto(merged, objects, transform, crs)
@@ -500,10 +499,9 @@ class Deployer:
         def report(func, path, exc_info):
             print(f"cleanup failed on {path}: {exc_info[1]}")
 
-        for sub in ("deploy", "predict"):
-            path = self.scratch_root / sub / self.run_id
-            if path.exists():
-                shutil.rmtree(path, onerror=report)
+        for p in [self.cfg.deployer_scratch, self.cfg.predictor_scratch]:
+            if p.exists():
+                shutil.rmtree(p, onerror=report)
 
         if self.postprocessor is not None:
             if Path(self.postprocessor.dem_source.temp_path).exists():

@@ -240,12 +240,16 @@ class PostProcessor:
         # gets region properties (i.e. area, centroid, bbox)
         objects = regionprops(labeled, intensity_image=prob_raster)
 
-        # create empty arrays to stamp values onto
-        stitched = np.zeros_like(prob_raster, dtype=np.float32)
-        veto_map = np.zeros_like(prob_raster, dtype=np.int8) #int8, only positive 1 or 0.
+        shape = prob_raster.shape
 
-        # Stores the veto probability for each assessed object.
-        veto_probability_map = np.zeros_like(prob_raster, dtype=np.float16)
+        if self.cfg.merged_path.exists():
+            os.unlink(self.cfg.merged_path)
+            prob_raster = None
+            del prob_raster
+
+        # create empty arrays to stamp values onto
+        stitched = np.zeros(shape, dtype=np.float16) # stamped with accepted object mean intensity
+        veto_map = np.zeros(shape, dtype=np.int16) # stamped with -1 for rejected objects, 0 for unassessed, and 1 for accepted objects. discretised representation of the veto decision.
 
         # init tracking ints and lists for each batch 
         accepted = 0
@@ -295,8 +299,6 @@ class PostProcessor:
             # stamp obj probability onto output arrays
             for obj, probability in zip(batch_objs, probabilities):
                 probability = float(probability)
-
-                self._stamp(veto_probability_map, obj, probability)
 
                 if probability >= self.veto_threshold:
                     self._stamp(stitched, obj,obj.mean_intensity)
@@ -385,8 +387,7 @@ class PostProcessor:
             "transform": transform,
             "crs": crs}
 
-        out.update({k: v for k, v in {
-            "veto_probability_map": veto_probability_map,
-            'rejected': rejected_labels}.items() if k in requested_returns and k in available_returns})
+        if 'rejected' in requested_returns and 'rejected' in available_returns:
+            out['rejected'] = rejected_labels
 
         return out
