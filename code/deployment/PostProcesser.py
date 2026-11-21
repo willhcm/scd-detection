@@ -247,9 +247,7 @@ class PostProcessor:
             prob_raster = None
             del prob_raster
 
-        # create empty arrays to stamp values onto
-        stitched = np.zeros(shape, dtype=np.float16) # stamped with accepted object mean intensity
-        veto_map = np.zeros(shape, dtype=np.int16) # stamped with -1 for rejected objects, 0 for unassessed, and 1 for accepted objects. discretised representation of the veto decision.
+        rejected_ids = []
 
         # init tracking ints and lists for each batch 
         accepted = 0
@@ -296,18 +294,12 @@ class PostProcessor:
                 # sigmoid for probs
                 probabilities = torch.sigmoid(logits).cpu().numpy()
 
-            # stamp obj probability onto output arrays
             for obj, probability in zip(batch_objs, probabilities):
-                probability = float(probability)
-
                 if probability >= self.veto_threshold:
-                    self._stamp(stitched, obj,obj.mean_intensity)
                     accepted += 1
-
                 else:
-                    self._stamp(veto_map, obj, -1.0)
+                    rejected_ids.append(obj.label)
                     rejected += 1
-
                 predicted += 1
 
             # empty batch lists
@@ -377,17 +369,16 @@ class PostProcessor:
         )
 
         requested_returns = self.cfg.requested_returns
-        available_returns = {"predictions", "transform", "crs", "veto_probability_map", 'rejected'}
 
-        accepted_labels = np.where(stitched > 0, labeled, 0).astype(np.int32)
-        rejected_labels = np.where(veto_map < 0, labeled, 0).astype(np.int32)
+        # look up table (lut) to map old labels to new labels, with rejected objects mapped to 0
+        lut = np.arange(labeled.max() + 1, dtype=np.int32)
+        lut[rejected_ids] = 0
 
-        out = {
-            "predictions": accepted_labels,
-            "transform": transform,
-            "crs": crs}
+        out = {"predictions": lut[labeled], "transform": transform, "crs": crs}
 
-        if 'rejected' in requested_returns and 'rejected' in available_returns:
-            out['rejected'] = rejected_labels
+        if 'rejected' in requested_returns:
+            lut[:] = 0
+            lut[rejected_ids] = rejected_ids
+            out['rejected'] = lut[labeled]
 
         return out
