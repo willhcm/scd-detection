@@ -80,7 +80,7 @@ class Deployer:
 
         self.run_id = uuid.uuid4().hex
         self.scratch_root = self.cfg.scratch_root
-        self.scratch_dir = self.cfg.scratch_deploy / self.run_id
+        self.scratch_dir = self.cfg.deployer_scratch / self.run_id
         self.scratch_dir.mkdir(parents=True, exist_ok=True)
 
     def predict(self):
