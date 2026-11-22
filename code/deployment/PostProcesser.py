@@ -10,6 +10,7 @@ from helpers.VetoHelpers import build_veto_data, normalise_veto_data, VETO_BAND_
 from loaders.Cogs import WindowedDataSource
 import os
 from pathlib import Path
+import gc
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -228,24 +229,25 @@ class PostProcessor:
         }
 
     @staticmethod
-    def _stamp(canvas, obj, value):
-        rows = obj.coords[:, 0]
-        cols = obj.coords[:, 1]
+    def _apply_lut(lut, labeled, rows=2048):
+        # lookup in strips so the int64 index copy never covers the whole raster
+        out = np.empty(labeled.shape, dtype=lut.dtype)
+        for i in range(0, labeled.shape[0], rows):
+            out[i:i + rows] = lut[labeled[i:i + rows]]
+        return out
 
-        # stamps in place
-        canvas[rows, cols] = value
+    def predict(self, results):
+        """
+        Apply the veto classifier to the merged predictions.
+        """
 
-    def predict(self, prob_raster, labeled, transform, crs,):
+        labeled = results["predictions"]
+        transform = results["transform"]
+        crs = results["crs"]
 
         # gets region properties (i.e. area, centroid, bbox)
-        objects = regionprops(labeled, intensity_image=prob_raster)
-
-        shape = prob_raster.shape
-
-        if self.cfg.merged_path.exists():
-            os.unlink(self.cfg.merged_path)
-            prob_raster = None
-            del prob_raster
+        # cache=False so coords aren't held for every object
+        objects = regionprops(labeled, cache=False)
 
         rejected_ids = []
 
@@ -315,7 +317,6 @@ class PostProcessor:
             # if cant build tile, just accept
             if tile is None:
                 skipped += 1
-                self._stamp(stitched, obj, obj.mean_intensity)
                 accepted += 1
 
                 # update progress
@@ -342,8 +343,7 @@ class PostProcessor:
                     predicted=predicted,
                     accepted=accepted,
                     rejected=rejected,
-                    skipped=skipped,
-                )
+                    skipped=skipped)
 
             progress.update(1)
 
@@ -357,28 +357,31 @@ class PostProcessor:
             predicted=predicted,
             accepted=accepted,
             rejected=rejected,
-            skipped=skipped,
-        )
+            skipped=skipped)
 
         progress.close()
 
         print(
             f"{accepted} objects retained, "
             f"{rejected} objects rejected, "
-            f"{skipped} objects could not be assessed."
-        )
+            f"{skipped} objects could not be assessed.")
+
+        # done with the objects, free them before the big allocations
+        del objects
+        gc.collect()
 
         requested_returns = self.cfg.requested_returns
+        rejected_ids = np.asarray(rejected_ids, dtype=np.int64)
 
         # look up table (lut) to map old labels to new labels, with rejected objects mapped to 0
         lut = np.arange(labeled.max() + 1, dtype=np.int32)
         lut[rejected_ids] = 0
 
-        out = {"predictions": lut[labeled], "transform": transform, "crs": crs}
+        out = {"predictions": self._apply_lut(lut, labeled), "transform": transform, "crs": crs}
 
         if 'rejected' in requested_returns:
-            lut[:] = 0
+            lut = np.zeros_like(lut)
             lut[rejected_ids] = rejected_ids
-            out['rejected'] = lut[labeled]
+            out['rejected'] = self._apply_lut(lut, labeled)
 
         return out

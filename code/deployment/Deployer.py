@@ -262,7 +262,7 @@ class Deployer:
             paths = []
             for res, items in preds.items():
                 paths.append(items["memmap_path"])
-                items['probs'] = None
+                items['prob'] = None
             del base
             for f in paths:
                 Path(f).unlink(missing_ok=True)
@@ -283,7 +283,17 @@ class Deployer:
 
         merged.flush()
         labels.flush()
-        return merged, labels, transform, crs, obj_score
+
+        out = {
+            "predictions": labels,
+            "transform": transform,
+            "crs": crs,
+            "obj_score": obj_score}
+
+        if "unvetoed" in cfg.requested_returns:
+            out["unvetoed"] = merged
+
+        return out
         
 
     def max_prob(self, preds, base_res, transform, crs, shape, path):
@@ -321,28 +331,20 @@ class Deployer:
         out.flush()
         return out
     
-    def veto(self, merged, labels, transform, crs):
-        return self.postprocessor.predict(merged, labels, transform, crs)
+    def veto(self, results):
+        return self.postprocessor.predict(results)
 
     def sweep(self):
-
-        # Docstring generation aided by Github Copilot Free.
         """
         Runs the full inference pipeline: predicts probability maps at multiple resolutions, merges them, and applies the Veto classifier if enabled.
 
         Returns
         -------
         dict with keys:
-            raw: dict
-                Predictions at each resolution.
             predictions: np.ndarray
                 Merged probability map (Veto-cleaned if cfg.to_veto).
             transform: affine.Affine
             crs: rasterio.crs.CRS
-            support: np.ndarray
-                Support count for each pixel in the merged probability map.
-            coverage: np.ndarray
-                Coverage count for each pixel in the merged probability map.
 
         If cfg.to_veto is True, also:
             rejected: np.ndarray
@@ -355,37 +357,33 @@ class Deployer:
         predictions = self.predict()
 
         print("Inference complete; starting weighted vote", flush=True)
-        merged, objects, transform, crs, obj_score = self.weighted_vote(predictions)
-
-        available = {
-            "raw": predictions,
-            "unvetoed": merged,
-            "predictions": objects,
-            "obj_score": obj_score,
-            "transform": transform,
-            "crs": crs,
-        }
+        results = self.weighted_vote(predictions)
 
         if 'raw' not in requested_returns:
             del predictions
             scratch_dir = self.scratch_root / 'predict' / self.run_id
             if scratch_dir.exists():
                 shutil.rmtree(scratch_dir)
-            available.pop('raw', None)
+
+        if 'unvetoed' not in requested_returns:
+            results['unvetoed'] = None
+            del results['unvetoed']
+            scratch_dir = self.cfg.merged_path
+            if scratch_dir.exists():
+                scratch_dir.unlink()
 
         if self.cfg.to_veto:
             print("Applying Veto classifier to merged predictions...", flush=True)
-            veto_results = self.veto(merged, objects, transform, crs)
-            available.update({
+            veto_results = self.veto(results)
+            results.update({
                 "predictions": veto_results['predictions'],
                 "transform": veto_results['transform'],
                 "crs": veto_results['crs']})
 
-            for k in ["rejected", "veto_probability_map"]:
-                if k in veto_results:
-                    available[k] = veto_results[k]
+            if 'rejected' in veto_results:
+                results['rejected'] = veto_results['rejected']
 
-        return {k: v for k, v in available.items() if k in requested_returns}
+        return {k: v for k, v in results.items() if k in requested_returns}
 
 
     # merges all veto-cleaned predictions and then sieves remaining predictions
@@ -420,13 +418,26 @@ class Deployer:
         return gdf
 
     def results_to_gdf(self, results):
+        # banded bincounts to manage memory usage, then sieve out small objects before polygonizing.
+
         cfg = self.cfg
         min_m2 = (cfg.native_res ** 2) * cfg.min_native_pixels
         min_pixels = int(np.ceil(max(min_m2, cfg.min_object_m2) / (self.base_res ** 2)))
 
-        lab = np.asarray(results["predictions"]).astype(np.int32)
-        counts = np.bincount(lab.ravel())
-        lab[(counts < min_pixels)[lab]] = 0
+        lab = np.asarray(results["predictions"])
+        if lab.dtype != np.int32:
+            lab = lab.astype(np.int32)
+        band = cfg.merge_band
+
+        counts = np.zeros(int(lab.max()) + 1, dtype=np.int64)
+        for r0 in range(0, lab.shape[0], band):
+            counts += np.bincount(lab[r0:r0 + band].ravel(), minlength=counts.size)
+
+        small = counts < min_pixels
+        for r0 in range(0, lab.shape[0], band):
+            chunk = lab[r0:r0 + band]   # view, edits in place
+            chunk[small[chunk]] = 0
+
         gdf = self.polygonize(lab, results["transform"], results["crs"])
 
         score = results.get("obj_score")
@@ -503,7 +514,7 @@ class Deployer:
             if p.exists():
                 shutil.rmtree(p, onerror=report)
 
-        if self.postprocessor is not None:
+        if not self.cfg.to_veto:
             if Path(self.postprocessor.dem_source.temp_path).exists():
                 os.unlink(self.postprocessor.dem_source.temp_path) # remove the temporary DEM file created by the PostProcessor's WindowedDataSource
 
