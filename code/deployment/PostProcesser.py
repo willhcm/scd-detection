@@ -33,7 +33,7 @@ class Object():
             "circ": self.circularity,
             "depth_m": np.nan if self.depth is None else float(self.depth),
             "dw_ratio": np.nan if self.depth_width_ratio is None else float(self.depth_width_ratio),
-            "elongation": self.object.major_axis_length / self.object.minor_axis_length if self.object.minor_axis_length > 0 else 0.0,
+            "elongation": self.object.axis_major_length / self.object.minor_axis_length if self.object.minor_axis_length > 0 else 0.0,
             "eccentricity": self.object.eccentricity,
         }
 
@@ -208,6 +208,11 @@ class PostProcessor:
             candidate_mask=candidate_mask,
         )
 
+        # edit object, prior to normalisation
+        candidate = Object(obj)
+        candidate.depth_width_ratio = scalar_features[3]
+        candidate.depth = scalar_features[3] * diameter_m
+
         # handles empty scalar features in case some error in calculation 
         if image is None or candidate_image is None or scalar_features is None:
             return None
@@ -231,11 +236,6 @@ class PostProcessor:
         image = np.asarray(image, dtype=np.float32)
 
         scalar_features = np.asarray(scalar_features, dtype=np.float32).reshape(-1)
-
-        # edit object
-        candidate = Object(obj)
-        candidate.depth_width_ratio = scalar_features[3]
-        candidate.depth = scalar_features[3] * diameter_m
 
         return {
             "image": np.ascontiguousarray(
