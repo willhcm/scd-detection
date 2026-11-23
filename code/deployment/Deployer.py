@@ -240,7 +240,7 @@ class Deployer:
             counts += np.bincount(labels[r0:r0 + band].ravel(), minlength=n_objects + 1)
 
         areas = counts[1:] * (base_res ** 2)
-        sizes = np.sqrt(areas) # eq diameter in metres
+        sizes = np.sqrt(2 * np.sqrt(areas / np.pi)) # eq diameter in metres
 
         resolutions = np.array(sorted(preds), dtype=np.float64) # preds is a dict of {res: {prob, transform, crs}}
 
@@ -381,18 +381,32 @@ class Deployer:
                 "predictions": veto_results['predictions'],
                 "transform": veto_results['transform'],
                 "crs": veto_results['crs'],
+                "embeddings": veto_results['embeddings'],
                 "features": veto_results['features']})
             
             if 'rejected' in veto_results:
                 results['rejected'] = veto_results['rejected']
 
-        return {k: v for k, v in results.items() if k in requested_returns or k == "features"}
+        keep_always = {"features", "obj_score", 'embeddings'} # for object metadata and scoring!
+        return {k: v for k, v in results.items() if k in requested_returns or k in keep_always}
 
     @staticmethod
     def attach_features(gdf, features):
         if gdf.empty or not features:
             return gdf
         table = pd.DataFrame.from_dict(features, orient="index")
+        return gdf.join(table, on="object_id")
+
+    @staticmethod
+    def attach_embeddings(gdf, embeddings):
+        if gdf.empty or not embeddings:
+            return gdf
+        # skipped objects have a bare nan instead of a vector
+        ids = [k for k, v in embeddings.items() if np.ndim(v) > 0]
+        if not ids:
+            return gdf
+        arr = np.stack([np.asarray(embeddings[k], dtype=np.float32).ravel() for k in ids])
+        table = pd.DataFrame(arr, index=ids, columns=[f"emb_{i}" for i in range(arr.shape[1])])
         return gdf.join(table, on="object_id")
 
     # merges all veto-cleaned predictions and then sieves remaining predictions

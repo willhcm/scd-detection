@@ -21,6 +21,7 @@ class Object():
         self.object = object
         self.depth_width_ratio = None
         self.depth = None
+        self.veto_embedding = None
         self.circularity = (4 * np.pi * object.area) / (object.perimeter ** 2) if object.perimeter > 0 else 0.0
 
     def __getattr__(self, name):
@@ -33,8 +34,9 @@ class Object():
             "circ": self.circularity,
             "depth_m": np.nan if self.depth is None else float(self.depth),
             "dw_ratio": np.nan if self.depth_width_ratio is None else float(self.depth_width_ratio),
-            "elongation": self.object.axis_major_length / self.object.minor_axis_length if self.object.minor_axis_length > 0 else 0.0,
+            "elongation": self.object.axis_major_length / self.object.axis_minor_length if self.object.minor_axis_length > 0 else 0.0,
             "eccentricity": self.object.eccentricity,
+            'embedding': self.veto_embedding if self.veto_embedding is not None else np.nan,
         }
 
 
@@ -279,6 +281,7 @@ class PostProcessor:
         objects = regionprops(labeled, cache=False)
 
         rejected_ids = []
+        embeddings = {}
         features = {}
 
         # init tracking ints and lists for each batch 
@@ -317,20 +320,27 @@ class PostProcessor:
             # predict
             with torch.inference_mode():
 
-                logits = self.model(
+                logits, embeds = self.model(
                     dem_tensor,
                     candidate_tensor,
                     scalar_tensor,
-                ).view(-1)
+                    return_embeddings=True
+                )
+
+                logits = logits.view(-1)
+
+                embeds = embeds.cpu().numpy()
 
                 # sigmoid for probs
                 probabilities = torch.sigmoid(logits).cpu().numpy()
 
-            for obj, probability in zip(batch_objs, probabilities):
+            for i, (obj, probability) in enumerate(zip(batch_objs, probabilities) ):
                 features[obj.label] = obj.as_dict()
                 if probability >= self.veto_threshold:
                     accepted += 1
+                    embeddings[obj.label] = embeds[i]
                 else:
+                    embeddings[obj.label] = embeds[i]
                     rejected_ids.append(obj.label)
                     rejected += 1
                 predicted += 1
@@ -350,6 +360,7 @@ class PostProcessor:
                 skipped += 1
                 accepted += 1
 
+                embeddings[obj.label] = np.nan
                 features[obj.label] = Object(obj).as_dict()
 
                 # update progress
@@ -410,7 +421,7 @@ class PostProcessor:
         lut = np.arange(labeled.max() + 1, dtype=np.int32)
         lut[rejected_ids] = 0
 
-        out = {"predictions": self._apply_lut(lut, labeled), "transform": transform, "crs": crs, "features": features}
+        out = {"predictions": self._apply_lut(lut, labeled), "transform": transform, "crs": crs, "features": features, "embeddings": embeddings}
 
         if 'rejected' in requested_returns:
             lut = np.zeros_like(lut)

@@ -84,14 +84,14 @@ class Vetoer(nn.Module):
 
         image_features = torch.cat([context_features, candidate_features], dim=1)
         # squeeze the image features
-        image_features = self.squeezer(image_features)
+        image_features_small = self.squeezer(image_features)
 
         # concat encodings
-        fused = self.fuser(torch.cat([image_features, scalar_features], dim=1))
+        fused = self.fuser(torch.cat([image_features_small, scalar_features], dim=1))
 
         # classify and return
         if return_embeddings:
-            return self.classifier(fused).squeeze(1), fused
+            return self.classifier(fused).squeeze(1), torch.cat([image_features_small, scalar_features], dim=1)
         
         return self.classifier(fused).squeeze(1)     
 
