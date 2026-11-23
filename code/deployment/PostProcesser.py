@@ -14,6 +14,30 @@ import gc
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+
+class Object():
+    """ Takes a regionprops object and extracts the relevant attributes for vetoing. Allows addition of other attributes such as depth_width_ratio """
+    def __init__(self, object):
+        self.object = object
+        self.depth_width_ratio = None
+        self.depth = None
+        self.circularity = (4 * np.pi * object.area) / (object.perimeter ** 2) if object.perimeter > 0 else 0.0
+
+    def __getattr__(self, name):
+        if name == 'object':
+            raise AttributeError(name)
+        return getattr(self.object, name)
+
+    def as_dict(self):
+        return {
+            "circ": self.circularity,
+            "depth_m": np.nan if self.depth is None else float(self.depth),
+            "dw_ratio": np.nan if self.depth_width_ratio is None else float(self.depth_width_ratio),
+            "elongation": self.object.major_axis_length / self.object.minor_axis_length if self.object.minor_axis_length > 0 else 0.0,
+            "eccentricity": self.object.eccentricity,
+        }
+
+
 class PostProcessor:
     """
     A class to handle post-processing of predictions, including vetoing false positives.
@@ -208,6 +232,11 @@ class PostProcessor:
 
         scalar_features = np.asarray(scalar_features, dtype=np.float32).reshape(-1)
 
+        # edit object
+        candidate = Object(obj)
+        candidate.depth_width_ratio = scalar_features[3]
+        candidate.depth = scalar_features[3] * diameter_m
+
         return {
             "image": np.ascontiguousarray(
                 image,
@@ -221,7 +250,7 @@ class PostProcessor:
                 scalar_features,
                 dtype=np.float32,
             ),
-            "obj": obj,
+            "obj": candidate,
             "context_bounds": context_bounds,
             "crop_width_m": crop_width_m,
             "context_width_m": context_width_m,
@@ -250,6 +279,7 @@ class PostProcessor:
         objects = regionprops(labeled, cache=False)
 
         rejected_ids = []
+        features = {}
 
         # init tracking ints and lists for each batch 
         accepted = 0
@@ -297,6 +327,7 @@ class PostProcessor:
                 probabilities = torch.sigmoid(logits).cpu().numpy()
 
             for obj, probability in zip(batch_objs, probabilities):
+                features[obj.label] = obj.as_dict()
                 if probability >= self.veto_threshold:
                     accepted += 1
                 else:
@@ -319,6 +350,8 @@ class PostProcessor:
                 skipped += 1
                 accepted += 1
 
+                features[obj.label] = Object(obj).as_dict()
+
                 # update progress
                 progress.update(1)
                 progress.set_postfix(
@@ -333,7 +366,7 @@ class PostProcessor:
             batch_dem.append(tile["image"])
             batch_candidate.append(tile["candidate"])
             batch_scalars.append(tile["scalar_features"])
-            batch_objs.append(obj)
+            batch_objs.append(tile['obj'])
 
             # when batch lists are full (i.e. at batch_size, send to model and predict)
             if len(batch_objs) >= self.batch_size:
@@ -377,7 +410,7 @@ class PostProcessor:
         lut = np.arange(labeled.max() + 1, dtype=np.int32)
         lut[rejected_ids] = 0
 
-        out = {"predictions": self._apply_lut(lut, labeled), "transform": transform, "crs": crs}
+        out = {"predictions": self._apply_lut(lut, labeled), "transform": transform, "crs": crs, "features": features}
 
         if 'rejected' in requested_returns:
             lut = np.zeros_like(lut)

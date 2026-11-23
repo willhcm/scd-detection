@@ -34,6 +34,7 @@ import rasterio
 from scipy import ndimage
 import shutil
 import uuid
+import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TILE_ORDER = ['DEM', 'DEM_SLOPE', 'RR','LAPLACE']
@@ -331,6 +332,8 @@ class Deployer:
         out.flush()
         return out
     
+
+    
     def veto(self, results):
         return self.postprocessor.predict(results)
 
@@ -366,8 +369,7 @@ class Deployer:
                 shutil.rmtree(scratch_dir)
 
         if 'unvetoed' not in requested_returns:
-            results['unvetoed'] = None
-            del results['unvetoed']
+            results.pop('unvetoed', None)
             scratch_dir = self.cfg.merged_path
             if scratch_dir.exists():
                 scratch_dir.unlink()
@@ -378,13 +380,20 @@ class Deployer:
             results.update({
                 "predictions": veto_results['predictions'],
                 "transform": veto_results['transform'],
-                "crs": veto_results['crs']})
-
+                "crs": veto_results['crs'],
+                "features": veto_results['features']})
+            
             if 'rejected' in veto_results:
                 results['rejected'] = veto_results['rejected']
 
-        return {k: v for k, v in results.items() if k in requested_returns}
+        return {k: v for k, v in results.items() if k in requested_returns or k == "features"}
 
+    @staticmethod
+    def attach_features(gdf, features):
+        if gdf.empty or not features:
+            return gdf
+        table = pd.DataFrame.from_dict(features, orient="index")
+        return gdf.join(table, on="object_id")
 
     # merges all veto-cleaned predictions and then sieves remaining predictions
     # which are too physically small to be reasonably resolvable given the native DEM. 
@@ -445,6 +454,9 @@ class Deployer:
             gdf["score"] = score[gdf["object_id"].to_numpy() - 1]
         if not gdf.empty:
             gdf["area_m2"] = gdf.geometry.area
+        
+        gdf = self.attach_features(gdf, results.get("features"))
+        
         return gdf
 
     def save_predictions(self, results, output_path):
@@ -477,6 +489,7 @@ class Deployer:
             if not np.all(rejected == 0):
                 rejected_gdf = self.polygonize(rejected, transform, crs, threshold=0.0)
                 rejected_gdf["area_m2"] = rejected_gdf.geometry.area
+                rejected_gdf = self.attach_features(rejected_gdf, results.get("features"))
                 results["rejected"] = rejected_gdf
     
         output_path = Path(output_path)
