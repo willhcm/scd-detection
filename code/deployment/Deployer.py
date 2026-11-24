@@ -468,8 +468,9 @@ class Deployer:
             gdf["score"] = score[gdf["object_id"].to_numpy() - 1]
         if not gdf.empty:
             gdf["area_m2"] = gdf.geometry.area
-        
+
         gdf = self.attach_features(gdf, results.get("features"))
+        gdf = self.attach_embeddings(gdf, results.get("embeddings"))
         
         return gdf
 
