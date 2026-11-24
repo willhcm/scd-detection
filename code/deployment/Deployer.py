@@ -411,7 +411,7 @@ class Deployer:
 
     # merges all veto-cleaned predictions and then sieves remaining predictions
     # which are too physically small to be reasonably resolvable given the native DEM. 
-    def polygonize(self, array, transform, crs, threshold=0.0):
+    def polygonize(self, array, transform, crs, threshold=0.0,  band=4096):
         """
         Converts a binary mask array into a GeoDataFrame of polygons.
 
@@ -431,14 +431,20 @@ class Deployer:
         gdf: geopandas.GeoDataFrame
             GeoDataFrame containing the polygons of the objects in the input array.
         """
-
+        
+        array = np.asarray(array)
         geoms, ids = [], []
-        for geom, v in shapes(array.astype(np.int32), mask=array > threshold, transform=transform, connectivity=8):
-            geoms.append(shape(geom))
-            ids.append(int(v))
+        for r0 in range(0, array.shape[0], band):
+            chunk = array[r0:r0 + band]
+            if chunk.dtype != np.int32:
+                chunk = chunk.astype(np.int32)
+            band_tf = transform * Affine.translation(0, r0)
+            for geom, v in shapes(chunk, mask=chunk > threshold, transform=band_tf, connectivity=8):
+                geoms.append(shape(geom))
+                ids.append(int(v))
 
         gdf = gpd.GeoDataFrame({"object_id": ids, "geometry": geoms}, crs=crs)
-        return gdf
+        return gdf.dissolve(by="object_id", as_index=False)
 
     def results_to_gdf(self, results):
         # banded bincounts to manage memory usage, then sieve out small objects before polygonizing.
