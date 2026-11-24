@@ -240,7 +240,7 @@ class Deployer:
             counts += np.bincount(labels[r0:r0 + band].ravel(), minlength=n_objects + 1)
 
         areas = counts[1:] * (base_res ** 2)
-        sizes = np.sqrt(2 * np.sqrt(areas / np.pi)) # eq diameter in metres
+        sizes = 2 * np.sqrt(areas / np.pi) # eq diameter in metres
 
         resolutions = np.array(sorted(preds), dtype=np.float64) # preds is a dict of {res: {prob, transform, crs}}
 
