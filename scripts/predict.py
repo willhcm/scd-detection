@@ -12,6 +12,8 @@ import deployment.config as config
 from deployment.Inference import SCDModel
 import signal
 import sys
+import cProfile
+import pstats
 
 # set by their own arguments (or read from the DEM), so no override flag
 NOT_OVERRIDABLE = {"dem_path", "resolutions", "device", "nodata", "to_veto"}
@@ -78,6 +80,9 @@ def main(
 
     signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(1))
 
+    profiler = cProfile.Profile()
+    profiler.enable()
+
     resolutions = [1.0] if resolutions is None else resolutions
     names = {f.name for f in fields(DeployConfig)} - NOT_OVERRIDABLE
     overrides = {k: v for k, v in config_overrides.items() if k in names}
@@ -129,6 +134,14 @@ def main(
         print(f"  {k} = {v}")
 
     results = scd_model.predict()
+
+    profiler.disable()
+
+    # Print profiling results
+    stats = pstats.Stats(profiler)
+    stats.sort_stats(pstats.SortKey.TIME)
+    stats.print_stats(50)
+    profiler.dump_stats(out_path / "deployment.prof")
 
     return results
 

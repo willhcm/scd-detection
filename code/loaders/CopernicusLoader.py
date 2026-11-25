@@ -67,7 +67,7 @@ class Cop30Loader:
         with ThreadPoolExecutor(self.workers) as pool:
             return list(pool.map(self._fetch, names))
 
-    def warp_zone(self, epsg, out_path, res=30, buffer_deg=1, lat_range=None):
+    def warp_zone(self, epsg, out_path, res=30, buffer_deg=0.25, lat_range=None):
         names = self.wanted(epsg, buffer_deg, lat_range)
         if not names:
             raise ValueError(f"no tiles for {epsg}")
