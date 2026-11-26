@@ -464,6 +464,7 @@ class Deployer:
     def results_to_gdf(self, results):
         # banded bincounts to manage memory usage, then sieve out small objects before polygonizing.
 
+        log.info("Converting results to GeoDataFrame")
         cfg = self.cfg
         min_m2 = (cfg.native_res ** 2) * cfg.min_native_pixels
         min_pixels = int(np.ceil(max(min_m2, cfg.min_object_m2) / (self.base_res ** 2)))
@@ -473,6 +474,9 @@ class Deployer:
             lab = lab.astype(np.int32)
         band = cfg.merge_band
 
+        del results["predictions"]  # free up memory
+
+        log.info('Getting object counts and sieving out small objects')
         counts = np.zeros(int(lab.max()) + 1, dtype=np.int64)
         for r0 in range(0, lab.shape[0], band):
             counts += np.bincount(lab[r0:r0 + band].ravel(), minlength=counts.size)
@@ -482,6 +486,7 @@ class Deployer:
             chunk = lab[r0:r0 + band]   # view, edits in place
             chunk[small[chunk]] = 0
 
+        log.info(f"Polygonizing  objects")
         gdf = self.polygonize(lab, results["transform"], results["crs"])
 
         score = results.get("obj_score")
@@ -490,8 +495,11 @@ class Deployer:
         if not gdf.empty:
             gdf["area_m2"] = gdf.geometry.area
 
+        log.info(f"Attaching features and embeddings to GeoDataFrame")
         gdf = self.attach_features(gdf, results.get("features"))
         gdf = self.attach_embeddings(gdf, results.get("embeddings"))
+
+        del results["predictions"], results["obj_score"], results["features"]
         
         return gdf
 
