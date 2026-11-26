@@ -107,12 +107,14 @@ class SCDModel():
         self.run_name = run_name
         self.to_veto = to_veto
 
+        system.init() # gets capability of the system to ensure machine resources are being utilised.
+
         # config needs the resolved DEM path and its nodata value, so it is
         # initialised after the DEM has been found/merged.
         self.dem_path = self._resolve_data_source(dem_path)
         self.deployer = self._create_deployer(hyperparams, requested_returns)
 
-        system.init() # gets capability of the system to ensure machine resources are being utilised.
+
 
     def set_params(self, **params):
         """Set hyperparameters for the inference workflow.
