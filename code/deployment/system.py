@@ -37,6 +37,7 @@ class SystemConfig:
         if self.gdal_threads is None:
             object.__setattr__(self, "gdal_threads", self.cpu_count - 1 if self.cpu_count > 1 else 1)
 
+        print(f"SystemConfig: cpu_count={self.cpu_count}, gdal_threads={self.gdal_threads}")
 _cfg = None
 
 

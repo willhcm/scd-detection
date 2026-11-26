@@ -5,6 +5,7 @@
 
 # ChatGPT assistance with these lines for importing whenever used
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import sys
 CODE_DIR = Path("../../code").resolve()
@@ -36,6 +37,8 @@ from scipy import ndimage
 import shutil
 import uuid
 import pandas as pd
+import deployment.optimisation as opt
+import deployment.system as system
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TILE_ORDER = ['DEM', 'DEM_SLOPE', 'RR','LAPLACE']
@@ -43,9 +46,11 @@ TILE_ORDER = ['DEM', 'DEM_SLOPE', 'RR','LAPLACE']
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
     datefmt="%H:%M:%S",
-    level=logging.INFO,
-)
+    level=logging.INFO)
+
 log = logging.getLogger(__name__)
+
+
 
 class Deployer:
     """
@@ -146,14 +151,14 @@ class Deployer:
         # inverse transforms for same-crs preds, lets us skip reproject
         inv_tf = {res: ~p["transform"] for res, p in items if p["crs"] == crs}
 
-        for r0 in range(0, h, band):
+        def do_band(r0):
             r1 = min(r0 + band, h)
             band_labels = np.asarray(labels[r0:r1])
 
             # only care about pixels that are actually in an object
             rows, cols = np.nonzero(band_labels)
             if rows.size == 0:
-                continue
+                return None
 
             # sort by object id once, reused for every resolution
             pixel_ids = band_labels[rows, cols]
@@ -165,6 +170,9 @@ class Deployer:
             # pixel centres in map coords (band is offset by r0 rows)
             map_x, map_y = transform * (cols + 0.5, rows + r0 + 0.5)
             band_tf = transform * Affine.translation(0, r0)
+
+            # this band's own result, merged into scores by the main thread
+            band_max = np.zeros((object_ids.size, len(items)), dtype=np.float32)
 
             for j, (res, pred) in enumerate(items):
                 prob = pred["prob"]
@@ -195,9 +203,20 @@ class Deployer:
 
                 # nan counts as 0, then max within each object's run
                 vals_sorted = np.nan_to_num(vals[sort_idx], nan=0.0)
-                run_max = np.maximum.reduceat(vals_sorted, run_starts)
-                # max with existing so objects crossing band edges keep their best
-                scores[object_ids, j] = np.maximum(scores[object_ids, j], run_max)
+                band_max[:, j] = np.maximum.reduceat(vals_sorted, run_starts)
+
+            return object_ids, band_max
+
+        # threads only compute, the merge below stays on the main thread so there are no races.
+        # half the cores since each band holds a few band x w arrays
+        workers = max(1, system.get().cpu_count // 2)
+        with ThreadPoolExecutor(workers) as ex:
+            for res_band in ex.map(do_band, range(0, h, band)):
+                if res_band is None:
+                    continue
+                ids, band_max = res_band
+                # ids are unique within a band. max with existing so objects crossing band edges keep their best
+                scores[ids] = np.maximum(scores[ids], band_max)
 
         return scores
     
@@ -320,8 +339,8 @@ class Deployer:
         band = self.cfg.merge_band
         out = np.lib.format.open_memmap(
             path, mode="w+", dtype=np.float16, shape=(h, w))
-
-        for r0 in range(0, h, band):
+        
+        def do_band(r0):
             r1 = min(r0 + band, h)
             band_shape = (r1 - r0, w)
             band_tf = transform * Affine.translation(0, r0)
@@ -340,8 +359,11 @@ class Deployer:
                         init_dest_nodata=True)
                     cur = tmp.astype(np.float16)
                 best = np.fmax(best, cur)
-
             out[r0:r1] = best
+
+        workers = max(1, system.get().cpu_count // 2)
+        with ThreadPoolExecutor(workers) as ex:
+            list(ex.map(do_band, range(0, h, band)))
 
         out.flush()
         return out
@@ -606,6 +628,10 @@ class ResPredictor():
         self.scratch_dir = REPO_ROOT / "scratch" / "predict" / self.run_id
         self.scratch_dir.mkdir(parents=True, exist_ok=True)
 
+        n = system.get().cpu_count()
+        self._filt_pool = ThreadPoolExecutor(min(5, n))
+        self._norm_pool = ThreadPoolExecutor(n)
+
         self.overlap_px = max(
             4,
             int(round(
@@ -664,19 +690,17 @@ class ResPredictor():
 
         invalid = np.isclose(dem_padded, self.NODATA) | ~np.isfinite(dem_padded)
 
-        invalid = binary_dilation(
-            invalid,
-            iterations=int(np.ceil(3 * self.sigma_px))
-        )
+        fs = [
+            self._filt_pool.submit(sobel, dem_padded, axis=0),
+            self._filt_pool.submit(sobel, dem_padded, axis=1),
+            self._filt_pool.submit(gaussian_filter, dem_padded, sigma=self.sigma_px),
+            self._filt_pool.submit(laplace, dem_padded),
+            self._filt_pool.submit(binary_dilation, invalid, iterations=int(np.ceil(2 * self.sigma_px))),
+        ]
+        sx, sy, smoothed, lap, invalid = [f.result() for f in fs]
 
-        sx = sobel(dem_padded, axis=0)
-        sy = sobel(dem_padded, axis=1)
         slope = np.sqrt(sx ** 2 + sy ** 2)
-
-        smoothed = gaussian_filter(dem_padded, sigma=self.sigma_px)
         rr = dem_padded - smoothed
-
-        lap = laplace(dem_padded)
 
         # cut to size!
         s, e = self.overlap_px, self.overlap_px + self.tile_size
@@ -780,17 +804,15 @@ class ResPredictor():
             # Claude assistance with this function. optimising and batching by-hand was something i hadnt done before!
             def flush_batch():
                 # variable declared in nested function (has access to all internal variables.)
+
                 nonlocal predicted_tiles
                 if not batch_tiles:
                     return
 
-                # create tensor from batch_tiles list.
-                stacked = np.stack(batch_tiles, axis=0)
-                x = torch.from_numpy(stacked).float()
-                resolutions = torch.full((len(batch_tiles), 1), res_value, dtype=torch.float32)
-
-                # outputs (prob map)
-                masks = self.model.predict(x, resolutions, self.device) 
+                tiles = list(self._norm_pool.map(self._prepare_tile, batch_tiles))
+                x = torch.from_numpy(np.stack(tiles)).float()
+                resolutions = torch.full((len(tiles), 1), res_value, dtype=torch.float32)
+                masks = self.model.predict(x, resolutions, self.device)
 
                 for mask, (row0, col0) in zip(masks, batch_locs):
                     pred = mask.numpy() if torch.is_tensor(mask) else np.asarray(mask)
@@ -830,38 +852,36 @@ class ResPredictor():
                         new_w[d:d + keep] = wband[:keep]
                 acc, wband, band_top = new_acc, new_w, r
 
+            make = lambda y: self._make_row_strip(dem_source, y, x_positions, tile_w_m, resolution)
+
             with torch.inference_mode():
+                    for y0, (strip, strip_minx) in opt.prefetch(make, y_positions):
+                        _, strip_row0 = ~transform * (x_positions[0], y0 + tile_w_m)
+                        advance_band(int(round(strip_row0)))
 
-                for y0 in y_positions:
-                    strip, strip_minx = self._make_row_strip(dem_source, y0, x_positions, tile_w_m, resolution)
+                        for x0 in x_positions:
 
-                    _, strip_row0 = ~transform * (x_positions[0], y0 + tile_w_m)
-                    advance_band(int(round(strip_row0)))
+                            tile = self._tile_from_strip(strip, strip_minx, x0, resolution)
 
-                    for x0 in x_positions:
+                            col0, row0 = ~transform * (x0, y0 + tile_w_m)
+                            col0, row0 = int(round(col0)), int(round(row0))
+                            row1, col1 = row0 + self.tile_size, col0 + self.tile_size
 
-                        tile = self._tile_from_strip(strip, strip_minx, x0, resolution)
+                            in_bounds = row0 >= 0 and col0 >= 0 and row1 <= h and col1 <= w
 
-                        col0, row0 = ~transform * (x0, y0 + tile_w_m)
-                        col0, row0 = int(round(col0)), int(round(row0))
-                        row1, col1 = row0 + self.tile_size, col0 + self.tile_size
+                            if tile is None or not in_bounds:
+                                skipped_tiles += 1
+                            else:
+                                batch_tiles.append(tile)
+                                batch_locs.append((row0, col0))
 
-                        in_bounds = row0 >= 0 and col0 >= 0 and row1 <= h and col1 <= w
+                                if len(batch_tiles) >= self.batch_size:
+                                    flush_batch()
+                                    progress.set_postfix(predicted=predicted_tiles, skipped=skipped_tiles)
 
-                        if tile is None or not in_bounds:
-                            skipped_tiles += 1
-                        else:
-                            tile = self._prepare_tile(tile)
-                            batch_tiles.append(tile)
-                            batch_locs.append((row0, col0))
+                            progress.update(1)
 
-                            if len(batch_tiles) >= self.batch_size:
-                                flush_batch()
-                                progress.set_postfix(predicted=predicted_tiles, skipped=skipped_tiles)
-
-                        progress.update(1)
-
-                    flush_batch()
+                        flush_batch()
 
             if band_top is not None:
                 finalize(0, ts)
@@ -870,6 +890,8 @@ class ResPredictor():
         finally:
             if progress is not None:
                 progress.close()
+            self._filt_pool.shutdown()
+            self._norm_pool.shutdown()
             os.remove(dem_source.temp_path)
 
         log.info(f"Finished inference at {resolution:g} m resolution")
@@ -877,9 +899,8 @@ class ResPredictor():
 
     @staticmethod
     def handle_outliers(band):
-        p995 = np.nanpercentile(band, 99.5)
-        p005 = np.nanpercentile(band, 0.5)
-        band = np.clip(band, p005, p995) 
+        lo, hi = np.nanpercentile(band, [0.5, 99.5])
+        band = np.clip(band, lo, hi)
 
         return band
         
