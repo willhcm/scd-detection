@@ -474,7 +474,7 @@ class Deployer:
             lab = lab.astype(np.int32)
         band = cfg.merge_band
 
-        del results["predictions"]  # free up memory
+        del results["predictions"] 
 
         log.info('Getting object counts and sieving out small objects')
         counts = np.zeros(int(lab.max()) + 1, dtype=np.int64)
@@ -499,8 +499,6 @@ class Deployer:
         gdf = self.attach_features(gdf, results.get("features"))
         gdf = self.attach_embeddings(gdf, results.get("embeddings"))
 
-        del results["predictions"], results["obj_score"], results["features"]
-        
         return gdf
 
     def save_predictions(self, results, output_path):

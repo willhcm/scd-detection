@@ -15,6 +15,7 @@ import rasterio as rio
 import subprocess
 from dataclasses import replace
 import shutil
+import deployment.system as system
 
 # main class for whole model. calls deployer internally (which itself calls ResPredictor (which itself uses MaskRCNN wrapper class) and PostProcessor classes)
 #
@@ -110,6 +111,8 @@ class SCDModel():
         # initialised after the DEM has been found/merged.
         self.dem_path = self._resolve_data_source(dem_path)
         self.deployer = self._create_deployer(hyperparams, requested_returns)
+
+        system.init() # gets capability of the system to ensure machine resources are being utilised.
 
     def set_params(self, **params):
         """Set hyperparameters for the inference workflow.

@@ -20,6 +20,7 @@ from scipy.ndimage import gaussian_filter, laplace, sobel
 from shapely.geometry import box
 import matplotlib.pyplot as plt
 from pyproj import CRS as PyCRS, Transformer
+import deployment.system as system
 
 CODE_DIR = Path("../../../code").resolve()
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -253,8 +254,7 @@ class WindowedDataSource:
                         src_nodata=nodata,
                         dst_nodata=nodata,
                         resampling=Resampling.cubic,
-                        num_threads=4,
-                    )
+                        num_threads=system.get().gdal_threads)
 
         return dst_path
 
