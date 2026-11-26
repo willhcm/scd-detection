@@ -10,6 +10,7 @@ import sys
 CODE_DIR = Path("../../code").resolve()
 sys.path.insert(0, str(CODE_DIR))
 import numpy as np
+import logging
 
 from rasterio.warp import reproject
 import os
@@ -39,6 +40,13 @@ import pandas as pd
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TILE_ORDER = ['DEM', 'DEM_SLOPE', 'RR','LAPLACE']
 
+logging.basicConfig(
+    format="%(asctime)s %(levelname)s %(message)s",
+    datefmt="%H:%M:%S",
+    level=logging.INFO,
+)
+log = logging.getLogger(__name__)
+
 class Deployer:
     """
     Deployer class for running inference on a DEM using a Mask R-CNN model and a Veto classifier.
@@ -61,6 +69,7 @@ class Deployer:
         # snapshot, so changing the config mid-run can't alter this instance
         self.cfg = config.get()
         self.base_res = None
+        log.info(f"Initializing Deployer")
 
         self.norm_stats = model_state_dict['norm_stats'] # Normilisation stats for the Mask R-CNN model, used for normalizing input DEM tiles before prediction. 
         # normalisation stats are calculated in the training script from the training set (see modelling/Trainer.py and loaders/DatasetTools.py).
@@ -220,9 +229,11 @@ class Deployer:
         # this merged map is then thresholded to identify candidate objects, which are then labelled and their sizes estimated.
         # the sizes are used for object-size-aware weighting of the predictions from each resolution, which are then merged to produce the final merged map.
         # an object size is measured in base-grid pixels, and the weighting is based on the resolution interval that an object of that size was trained to be seen at (see cfg.object_fraction, cfg.size_sigma).
+        log.info("Calculating provisional merged map")
         merged = self.max_prob(preds, base_res, transform, crs, (h, w), self.cfg.merged_path)
         labels_path = self.cfg.labels_path
 
+        log.info("Starting weighted voting across resolutions")
         # Threshold the provisional map to identify candidate objects.
         # For very large rasters, connected-component labeling may need
         # to be replaced with a tiled implementation.
@@ -256,6 +267,7 @@ class Deployer:
         weights = np.exp(-off ** 2 / (2 * cfg.size_sigma ** 2))   # 1 inside the interval 
 
         # matrix for max object prob per object per resolution
+        log.info("Calculating object scores for each resolution")
         stats = self.object_scores(preds, labels, n_objects, base_res, transform, crs)
 
         # no longer need dictionary of predictions from each resolution (was of form {res: {prob, transform, crs, memmap_path}}), so delete to free memory and storage
@@ -269,11 +281,13 @@ class Deployer:
                 Path(f).unlink(missing_ok=True)
 
         # compute the weighted max probability for each object across resolutions, then threshold to keep or reject
+        log.info("Calculating weighted max probability for each object across resolutions")
         obj_score = (stats[1:] * weights).max(axis=1)
         keep = np.zeros(n_objects + 1, dtype=bool)
         keep[1:] = obj_score >= cfg.keep_threshold
 
         # write the final merged map and labels to disk, sieving out rejected objects
+        log.info("Writing final merged map and labels to disk, sieving out rejected objects")
         for r0 in range(0, h, band):
             r1 = min(r0 + band, h)
             prov = merged[r0:r1]          # view into the file, edits go to disk
@@ -356,6 +370,7 @@ class Deployer:
                 Probability map from the Veto classifier.
         """
 
+        log.info("Starting inference sweep")
         requested_returns = self.cfg.requested_returns
         predictions = self.predict()
 
@@ -431,7 +446,7 @@ class Deployer:
         gdf: geopandas.GeoDataFrame
             GeoDataFrame containing the polygons of the objects in the input array.
         """
-        
+
         array = np.asarray(array)
         geoms, ids = [], []
         for r0 in range(0, array.shape[0], band):
@@ -501,6 +516,8 @@ class Deployer:
         cfg = self.cfg
         requested_returns = cfg.requested_returns
 
+        log.info(f"Saving predictions to {output_path} with requested returns: {requested_returns}")
+
         gdf = self.results_to_gdf(results)
         transform, crs = results["transform"], results["crs"]
 
@@ -566,7 +583,7 @@ class ResPredictor():
     def __init__(self, res, model, norm_stats, run_id, cfg=None):
 
         cfg = cfg or config.get()
-
+        log.info(f"Initializing ResPredictor for resolution {res:g} m")
         self.res = res
         self.model = model
         self.norm_stats = norm_stats
@@ -684,10 +701,12 @@ class ResPredictor():
     # changed for batching approach for optimisation - takes long time to predict 1000kms^2
     def predict(self):
 
+        log.info('creating data source for ResPredictor.predict (includes reprojection of DEM to target resolution)')
         resolution = self.res
         res_value = np.log1p(resolution) / np.log1p(self.norm_stats["max_res"])
         dem_source = WindowedDataSource.from_tiff_utm(self.dem_path, resolution=resolution)
         progress = None
+        log.info(f"Starting inference at {resolution:g} m resolution")
 
         try:
 
@@ -847,6 +866,7 @@ class ResPredictor():
                 progress.close()
             os.remove(dem_source.temp_path)
 
+        log.info(f"Finished inference at {resolution:g} m resolution")
         return prob_map, transform, dem_source.crs, memmap_path
 
     @staticmethod
