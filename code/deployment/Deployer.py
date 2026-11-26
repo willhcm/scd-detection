@@ -628,7 +628,7 @@ class ResPredictor():
         self.scratch_dir = REPO_ROOT / "scratch" / "predict" / self.run_id
         self.scratch_dir.mkdir(parents=True, exist_ok=True)
 
-        n = system.get().cpu_count()
+        n = system.get().cpu_count
         self._filt_pool = ThreadPoolExecutor(min(5, n))
         self._norm_pool = ThreadPoolExecutor(n)
 
@@ -695,7 +695,7 @@ class ResPredictor():
             self._filt_pool.submit(sobel, dem_padded, axis=1),
             self._filt_pool.submit(gaussian_filter, dem_padded, sigma=self.sigma_px),
             self._filt_pool.submit(laplace, dem_padded),
-            self._filt_pool.submit(binary_dilation, invalid, iterations=int(np.ceil(2 * self.sigma_px))),
+            self._filt_pool.submit(binary_dilation, invalid, iterations=int(np.ceil(3 * self.sigma_px))),
         ]
         sx, sy, smoothed, lap, invalid = [f.result() for f in fs]
 
